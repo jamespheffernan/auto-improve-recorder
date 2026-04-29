@@ -35,9 +35,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func setupStatusItem() {
-        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = item.button {
-            button.title = "🎙 AIR"
+            button.image = NSImage(systemSymbolName: "mic.circle.fill", accessibilityDescription: "Auto Improve Recorder")
+            button.image?.isTemplate = true
+            button.imagePosition = .imageOnly
             button.toolTip = "Auto Improve Recorder"
         }
         statusItem = item
