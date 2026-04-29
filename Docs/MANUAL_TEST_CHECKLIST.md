@@ -7,6 +7,8 @@
 - Open Settings from the menu bar item.
 - Confirm Parakeet runtime, script, and cache paths are auto-filled.
 - Enter an OpenAI API key and close/reopen Settings to confirm it reloads from Keychain.
+- Confirm Transcription defaults to `Local Parakeet`.
+- Switch Transcription to `Fastest`, close/reopen Settings, and confirm the choice persists.
 
 ## Recording
 
@@ -22,6 +24,9 @@
 
 ## Transcription
 
+- In `Local Parakeet`, record a short sentence and confirm the app transcribes through the local server mode.
+- In `Fastest`, record a short sentence with a saved OpenAI API key and confirm the result is copied after the streaming transcript finalizes.
+- In `Fastest`, remove the OpenAI API key or disconnect the network, record again, and confirm the app falls back to Parakeet using the saved WAV.
 - Confirm the result is copied to the clipboard after transcription/improve.
 - Open Preview from the menu bar and verify the raw transcript is preserved.
 - If Parakeet fails, confirm the preview shows the failure instead of silently dropping the recording.

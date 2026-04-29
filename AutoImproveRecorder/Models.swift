@@ -54,6 +54,22 @@ enum AutoImproveMode: String, CaseIterable, Identifiable {
     }
 }
 
+enum TranscriptionMode: String, CaseIterable, Identifiable {
+    case localParakeet
+    case fastest
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .localParakeet:
+            return "Local Parakeet"
+        case .fastest:
+            return "Fastest"
+        }
+    }
+}
+
 enum OutputMode: String, CaseIterable, Identifiable {
     case verbatim
     case lightCleanup

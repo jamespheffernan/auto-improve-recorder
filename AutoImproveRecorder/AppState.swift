@@ -19,6 +19,9 @@ final class AppState: ObservableObject {
     @Published var autoImproveMode: AutoImproveMode = .automatic {
         didSet { defaults.set(autoImproveMode.rawValue, forKey: Keys.autoImproveMode) }
     }
+    @Published var transcriptionMode: TranscriptionMode = .localParakeet {
+        didSet { defaults.set(transcriptionMode.rawValue, forKey: Keys.transcriptionMode) }
+    }
     @Published var thresholdWords: Int = 75 {
         didSet { defaults.set(thresholdWords, forKey: Keys.thresholdWords) }
     }
@@ -52,9 +55,11 @@ final class AppState: ObservableObject {
 
     private let defaults = UserDefaults.standard
     private let audioRecorder = AudioRecorder()
+    private var activeStreamingTranscriber: OpenAIRealtimeTranscriber?
 
     private enum Keys {
         static let autoImproveMode = "autoImproveMode"
+        static let transcriptionMode = "transcriptionMode"
         static let thresholdWords = "thresholdWords"
         static let modificationStrength = "modificationStrength"
         static let outputMode = "outputMode"
@@ -67,6 +72,7 @@ final class AppState: ObservableObject {
     private init() {
         apiKey = KeychainStore.loadOpenAIAPIKey() ?? ""
         autoImproveMode = AutoImproveMode(rawValue: defaults.string(forKey: Keys.autoImproveMode) ?? "") ?? .automatic
+        transcriptionMode = TranscriptionMode(rawValue: defaults.string(forKey: Keys.transcriptionMode) ?? "") ?? .localParakeet
         let savedThreshold = defaults.integer(forKey: Keys.thresholdWords)
         thresholdWords = savedThreshold > 0 ? savedThreshold : 75
         let savedStrength = defaults.integer(forKey: Keys.modificationStrength)
@@ -133,21 +139,33 @@ final class AppState: ObservableObject {
     func stopRecording() {
         guard case .recording = phase else { return }
         unregisterCancelHotKey?()
+        let streamingTranscriber = activeStreamingTranscriber
+        activeStreamingTranscriber = nil
         guard let audioURL = audioRecorder.stop() else {
+            if let streamingTranscriber {
+                Task { await streamingTranscriber.cancel() }
+            }
             failWithMessage("Recording stopped before an audio file was created.")
             return
         }
 
         phase = .transcribing
-        statusMessage = "Transcribing with local Parakeet."
+        statusMessage = streamingTranscriber == nil
+            ? "Transcribing with local Parakeet."
+            : "Finalizing OpenAI streaming transcript."
         showPill?()
-        Task { await processRecording(audioURL: audioURL) }
+        Task { await processRecording(audioURL: audioURL, streamingTranscriber: streamingTranscriber) }
     }
 
     func cancelRecording() {
         guard case .recording = phase else { return }
         unregisterCancelHotKey?()
+        let streamingTranscriber = activeStreamingTranscriber
+        activeStreamingTranscriber = nil
         let audioURL = audioRecorder.stop()
+        if let streamingTranscriber {
+            Task { await streamingTranscriber.cancel() }
+        }
         if let audioURL {
             try? FileManager.default.removeItem(at: audioURL)
         }
@@ -186,10 +204,29 @@ final class AppState: ObservableObject {
     private func startRecordingFlow() async {
         do {
             try await AudioRecorder.requestMicrophonePermission()
-            let audioURL = try audioRecorder.start()
+
+            let streamingTranscriber = await prepareStreamingTranscriberIfNeeded()
+            let audioURL: URL
+            do {
+                audioURL = try audioRecorder.start { buffer in
+                    streamingTranscriber?.appendAudioBuffer(buffer)
+                }
+            } catch {
+                if let streamingTranscriber {
+                    await streamingTranscriber.cancel()
+                }
+                throw error
+            }
+            activeStreamingTranscriber = streamingTranscriber
             session = TranscriptSession(audioURL: audioURL, rawTranscript: "", improvedText: "", message: nil, improveFailed: false)
             showRawTranscript = false
-            statusMessage = nil
+            if streamingTranscriber != nil {
+                statusMessage = "Recording with OpenAI realtime transcription."
+            } else if transcriptionMode == .fastest {
+                statusMessage = "Recording for Parakeet fallback."
+            } else {
+                statusMessage = nil
+            }
             phase = .recording(audioURL)
             registerCancelHotKey?()
             showPill?()
@@ -198,14 +235,9 @@ final class AppState: ObservableObject {
         }
     }
 
-    private func processRecording(audioURL: URL) async {
+    private func processRecording(audioURL: URL, streamingTranscriber: OpenAIRealtimeTranscriber?) async {
         do {
-            let transcriber = ParakeetTranscriber(
-                pythonPath: parakeetRuntimePath,
-                scriptPath: parakeetScriptPath,
-                cachePath: parakeetCachePath
-            )
-            let result = try await transcriber.transcribe(audioURL: audioURL)
+            let result = try await transcribe(audioURL: audioURL, streamingTranscriber: streamingTranscriber)
             session.rawTranscript = result.text
             session.improvedText = result.text
             session.message = nil
@@ -241,6 +273,56 @@ final class AppState: ObservableObject {
             statusMessage = error.localizedDescription
             finishProcessing()
         }
+    }
+
+    private func prepareStreamingTranscriberIfNeeded() async -> OpenAIRealtimeTranscriber? {
+        guard transcriptionMode == .fastest else { return nil }
+
+        if apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            statusMessage = "Fastest mode needs an OpenAI API key. Falling back to Parakeet."
+            return nil
+        }
+
+        let transcriber = OpenAIRealtimeTranscriber(apiKey: apiKey)
+        do {
+            try await transcriber.start()
+            return transcriber
+        } catch {
+            statusMessage = "OpenAI streaming unavailable; falling back to Parakeet."
+            NSLog("OpenAI realtime transcription start failed: \(error.localizedDescription)")
+            await transcriber.cancel()
+            return nil
+        }
+    }
+
+    private func transcribe(audioURL: URL, streamingTranscriber: OpenAIRealtimeTranscriber?) async throws -> TranscriptionResult {
+        let startedAt = Date()
+
+        if transcriptionMode == .fastest, let streamingTranscriber {
+            do {
+                let result = try await streamingTranscriber.finish()
+                let elapsed = Date().timeIntervalSince(startedAt)
+                statusMessage = String(format: "OpenAI transcript ready in %.1fs.", elapsed)
+                return result
+            } catch {
+                NSLog("OpenAI realtime transcription finalize failed; falling back to Parakeet: \(error.localizedDescription)")
+                statusMessage = "OpenAI streaming failed; falling back to Parakeet."
+            }
+        } else if transcriptionMode == .fastest {
+            statusMessage = "Fastest unavailable; falling back to Parakeet."
+        }
+
+        let fallbackStartedAt = Date()
+        let transcriber = ParakeetTranscriber(
+            pythonPath: parakeetRuntimePath,
+            scriptPath: parakeetScriptPath,
+            cachePath: parakeetCachePath
+        )
+        let result = try await transcriber.transcribe(audioURL: audioURL)
+        let elapsed = Date().timeIntervalSince(fallbackStartedAt)
+        NSLog("Parakeet transcription finished in %.2fs via fallback/local mode.", elapsed)
+        statusMessage = String(format: "Parakeet transcript ready in %.1fs.", elapsed)
+        return result
     }
 
     private func improveCurrentTranscript(force: Bool) async {

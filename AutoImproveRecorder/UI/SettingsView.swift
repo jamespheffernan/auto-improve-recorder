@@ -8,6 +8,11 @@ struct SettingsView: View {
             Section("OpenAI") {
                 SecureField("API key", text: $state.apiKey)
                     .textFieldStyle(.roundedBorder)
+                Picker("Transcription", selection: $state.transcriptionMode) {
+                    ForEach(TranscriptionMode.allCases) { mode in
+                        Text(mode.label).tag(mode)
+                    }
+                }
                 Picker("Auto-improve", selection: $state.autoImproveMode) {
                     ForEach(AutoImproveMode.allCases) { mode in
                         Text(mode.label).tag(mode)

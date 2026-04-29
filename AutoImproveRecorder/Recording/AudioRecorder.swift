@@ -19,6 +19,8 @@ enum AudioRecorderError: LocalizedError {
 }
 
 final class AudioRecorder {
+    typealias AudioBufferHandler = (AVAudioPCMBuffer) -> Void
+
     private let engine = AVAudioEngine()
     private var audioFile: AVAudioFile?
     private var currentURL: URL?
@@ -43,7 +45,7 @@ final class AudioRecorder {
         }
     }
 
-    func start() throws -> URL {
+    func start(streamHandler: AudioBufferHandler? = nil) throws -> URL {
         if engine.isRunning {
             engine.stop()
             engine.inputNode.removeTap(onBus: 0)
@@ -72,6 +74,7 @@ final class AudioRecorder {
             } catch {
                 NSLog("AudioRecorder write failed: \(error.localizedDescription)")
             }
+            streamHandler?(buffer)
         }
 
         engine.prepare()
