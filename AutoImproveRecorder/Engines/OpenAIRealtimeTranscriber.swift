@@ -146,8 +146,9 @@ private final class PCM16MonoAudioConverter {
 
 private actor OpenAIRealtimeTranscriptionConnection {
     private let apiKey: String
-    private let model = "gpt-4o-transcribe"
-    private let webSocketURL = URL(string: "wss://api.openai.com/v1/realtime?intent=transcription")
+    private let realtimeModel = "gpt-realtime"
+    private let transcriptionModel = "gpt-4o-transcribe"
+    private let webSocketURL = URL(string: "wss://api.openai.com/v1/realtime?model=gpt-realtime")
 
     private var urlSession: URLSession?
     private var webSocketTask: URLSessionWebSocketTask?
@@ -200,25 +201,35 @@ private actor OpenAIRealtimeTranscriptionConnection {
         }
 
         try await sendEvent([
-            "type": "transcription_session.update",
-            "input_audio_format": "pcm16",
-            "input_audio_transcription": [
-                "model": model,
-                "prompt": "",
-                "language": "en"
-            ],
-            "turn_detection": [
-                "type": "server_vad",
-                "threshold": 0.5,
-                "prefix_padding_ms": 300,
-                "silence_duration_ms": 500
-            ],
-            "input_audio_noise_reduction": [
-                "type": "near_field"
+            "type": "session.update",
+            "session": [
+                "type": "transcription",
+                "audio": [
+                    "input": [
+                        "format": [
+                            "type": "audio/pcm",
+                            "rate": 24_000
+                        ],
+                        "noise_reduction": [
+                            "type": "near_field"
+                        ],
+                        "transcription": [
+                            "model": transcriptionModel,
+                            "prompt": "",
+                            "language": "en"
+                        ],
+                        "turn_detection": [
+                            "type": "server_vad",
+                            "threshold": 0.5,
+                            "prefix_padding_ms": 300,
+                            "silence_duration_ms": 500
+                        ]
+                    ]
+                ]
             ]
         ])
 
-        NSLog("OpenAI realtime transcription started with \(model).")
+        NSLog("OpenAI realtime transcription started with \(realtimeModel) / \(transcriptionModel).")
     }
 
     func enqueueAudio(_ data: Data) {
@@ -263,7 +274,7 @@ private actor OpenAIRealtimeTranscriptionConnection {
 
             if !text.isEmpty, quietFor >= 0.7, sawCompletionAfterFinish || waitedForFinalize >= 1.5 {
                 logFinish(text: text, usedTimeout: false)
-                return TranscriptionResult(text: text, engineName: "OpenAI Realtime \(model)")
+                return TranscriptionResult(text: text, engineName: "OpenAI Realtime \(transcriptionModel)")
             }
 
             try await Task.sleep(nanoseconds: 150_000_000)
@@ -274,7 +285,7 @@ private actor OpenAIRealtimeTranscriptionConnection {
             throw OpenAIRealtimeTranscriptionError.emptyTranscript
         }
         logFinish(text: text, usedTimeout: true)
-        return TranscriptionResult(text: text, engineName: "OpenAI Realtime \(model)")
+        return TranscriptionResult(text: text, engineName: "OpenAI Realtime \(transcriptionModel)")
     }
 
     func cancel() {

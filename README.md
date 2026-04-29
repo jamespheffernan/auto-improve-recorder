@@ -66,7 +66,7 @@ The microphone picker is an MVP preference surface. Recording currently uses the
 
 `FIELD_THEORY_PARAKEET_CACHE_DIR` is set to the discovered cache directory so `onnx-asr` uses the installed local model cache.
 
-`Fastest` opens `wss://api.openai.com/v1/realtime?intent=transcription` with the saved OpenAI API key, sends `transcription_session.update`, converts each captured microphone buffer to 16-bit mono PCM at 24 kHz, and streams `input_audio_buffer.append` events while the WAV is still being written. On stop, the app commits/finalizes the streaming buffer, uses the ordered completed transcript events when available, and then runs the same improve/copy flow. If the realtime path returns an error or an empty transcript, Parakeet transcribes the saved WAV.
+`Fastest` opens `wss://api.openai.com/v1/realtime?model=gpt-realtime` with the saved OpenAI API key, sends the current GA `session.update` transcription-session shape (`session.type = transcription`, `audio.input.format = audio/pcm` at 24 kHz, `audio.input.transcription.model = gpt-4o-transcribe`), converts each captured microphone buffer to 16-bit mono PCM at 24 kHz, and streams `input_audio_buffer.append` events while the WAV is still being written. On stop, the app commits/finalizes the streaming buffer, uses the ordered completed transcript events when available, and then runs the same improve/copy flow. If the realtime path returns an error or an empty transcript, Parakeet transcribes the saved WAV.
 
 ## Reliability behavior
 
