@@ -146,9 +146,8 @@ private final class PCM16MonoAudioConverter {
 
 private actor OpenAIRealtimeTranscriptionConnection {
     private let apiKey: String
-    private let realtimeModel = "gpt-realtime"
     private let transcriptionModel = "gpt-4o-transcribe"
-    private let webSocketURL = URL(string: "wss://api.openai.com/v1/realtime?model=gpt-realtime")
+    private let webSocketURL = URL(string: "wss://api.openai.com/v1/realtime?intent=transcription")
 
     private var urlSession: URLSession?
     private var webSocketTask: URLSessionWebSocketTask?
@@ -229,7 +228,7 @@ private actor OpenAIRealtimeTranscriptionConnection {
             ]
         ])
 
-        NSLog("OpenAI realtime transcription started with \(realtimeModel) / \(transcriptionModel).")
+        NSLog("OpenAI realtime transcription started with transcription session / \(transcriptionModel).")
     }
 
     func enqueueAudio(_ data: Data) {
