@@ -35,10 +35,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func setupStatusItem() {
-        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = item.button {
-            button.image = NSImage(systemSymbolName: "waveform", accessibilityDescription: "Auto Improve Recorder")
-            button.imagePosition = .imageOnly
+            button.title = "🎙 AIR"
+            button.toolTip = "Auto Improve Recorder"
         }
         statusItem = item
         rebuildMenu()
