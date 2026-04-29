@@ -49,7 +49,6 @@ enum ParakeetRuntimeDiscovery {
 struct ParakeetTranscriber: TranscriptionEngine {
     private let runtime: ParakeetRuntime
     private let modelName = "nemo-parakeet-tdt-0.6b-v2"
-    private let timeout: TimeInterval = 180
 
     init(pythonPath: String, scriptPath: String, cachePath: String) {
         self.runtime = ParakeetRuntime(
@@ -60,31 +59,80 @@ struct ParakeetTranscriber: TranscriptionEngine {
     }
 
     func transcribe(audioURL: URL) async throws -> TranscriptionResult {
-        try await Task.detached(priority: .userInitiated) {
-            try runTranscription(audioURL: audioURL)
-        }.value
+        let text = try await ParakeetServer.shared.transcribe(
+            audioURL: audioURL,
+            runtime: runtime,
+            modelName: modelName
+        )
+        return TranscriptionResult(text: text, engineName: "NVIDIA Parakeet TDT 0.6B server via onnx-asr")
+    }
+}
+
+actor ParakeetServer {
+    static let shared = ParakeetServer()
+
+    private var process: Process?
+    private var stdinPipe: Pipe?
+    private var stdoutHandle: FileHandle?
+    private var stderrPipe: Pipe?
+    private var activeRuntime: ParakeetRuntime?
+    private var activeModelName: String?
+    private let startupTimeout: TimeInterval = 45
+    private let transcriptionTimeout: TimeInterval = 180
+
+    func transcribe(audioURL: URL, runtime: ParakeetRuntime, modelName: String) async throws -> String {
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: audioURL.path) else {
+            throw TranscriptionEngineError.audioMissing(audioURL.path)
+        }
+
+        try await ensureServer(runtime: runtime, modelName: modelName)
+
+        let command: [String: Any] = [
+            "cmd": "transcribe",
+            "audio": audioURL.path,
+            "timestamps": false
+        ]
+        let commandData = try JSONSerialization.data(withJSONObject: command)
+        guard let commandLine = String(data: commandData, encoding: .utf8), let stdinPipe else {
+            throw TranscriptionEngineError.processFailed(status: -1, stderr: "Parakeet server stdin is unavailable.")
+        }
+
+        try stdinPipe.fileHandleForWriting.write(contentsOf: Data((commandLine + "\n").utf8))
+        let line = try await readLine(timeout: transcriptionTimeout)
+        let response = try parseResponse(line)
+
+        guard let ok = response["ok"] as? Bool, ok else {
+            let error = response["error"] as? String ?? "Unknown Parakeet server error."
+            throw TranscriptionEngineError.processFailed(status: -1, stderr: error)
+        }
+        guard let text = response["text"] as? String, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw TranscriptionEngineError.emptyTranscript
+        }
+        return text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private func runTranscription(audioURL: URL) throws -> TranscriptionResult {
+    private func ensureServer(runtime: ParakeetRuntime, modelName: String) async throws {
+        if let process, process.isRunning, activeRuntime == runtime, activeModelName == modelName {
+            return
+        }
+
+        stopServer()
+
         let fileManager = FileManager.default
         let pythonPath = runtime.normalizedPythonPath
-
         guard fileManager.isExecutableFile(atPath: pythonPath) else {
             throw TranscriptionEngineError.runtimeMissing(runtime.pythonPath)
         }
         guard fileManager.fileExists(atPath: runtime.scriptPath) else {
             throw TranscriptionEngineError.scriptMissing(runtime.scriptPath)
         }
-        guard fileManager.fileExists(atPath: audioURL.path) else {
-            throw TranscriptionEngineError.audioMissing(audioURL.path)
-        }
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: pythonPath)
         process.arguments = [
             runtime.scriptPath,
-            "--audio",
-            audioURL.path,
+            "--server",
             "--model",
             modelName
         ]
@@ -95,40 +143,83 @@ struct ParakeetTranscriber: TranscriptionEngine {
         }
         process.environment = environment
 
-        let stdout = Pipe()
-        let stderr = Pipe()
-        process.standardOutput = stdout
-        process.standardError = stderr
+        let stdinPipe = Pipe()
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        process.standardInput = stdinPipe
+        process.standardOutput = stdoutPipe
+        process.standardError = stderrPipe
+        stderrPipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            if !data.isEmpty, let text = String(data: data, encoding: .utf8), !text.isEmpty {
+                NSLog("Parakeet server: \(text.trimmingCharacters(in: .whitespacesAndNewlines))")
+            }
+        }
 
         try process.run()
 
-        let deadline = Date().addingTimeInterval(timeout)
-        while process.isRunning && Date() < deadline {
-            Thread.sleep(forTimeInterval: 0.1)
-        }
+        self.process = process
+        self.stdinPipe = stdinPipe
+        self.stdoutHandle = stdoutPipe.fileHandleForReading
+        self.stderrPipe = stderrPipe
+        self.activeRuntime = runtime
+        self.activeModelName = modelName
 
-        if process.isRunning {
+        let line = try await readLine(timeout: startupTimeout)
+        let response = try parseResponse(line)
+        guard let ok = response["ok"] as? Bool, ok, response["ready"] as? Bool == true else {
+            let error = response["error"] as? String ?? "Parakeet server did not become ready."
+            stopServer()
+            throw TranscriptionEngineError.processFailed(status: -1, stderr: error)
+        }
+    }
+
+    private func stopServer() {
+        stderrPipe?.fileHandleForReading.readabilityHandler = nil
+        stdinPipe?.fileHandleForWriting.closeFile()
+        stdoutHandle?.closeFile()
+        if let process, process.isRunning {
             process.terminate()
+        }
+        process = nil
+        stdinPipe = nil
+        stdoutHandle = nil
+        stderrPipe = nil
+        activeRuntime = nil
+        activeModelName = nil
+    }
+
+    private func readLine(timeout: TimeInterval) async throws -> String {
+        guard let stdoutHandle else {
+            throw TranscriptionEngineError.processFailed(status: -1, stderr: "Parakeet server stdout is unavailable.")
+        }
+
+        return try await Task.detached(priority: .userInitiated) {
+            let deadline = Date().addingTimeInterval(timeout)
+            var bytes: [UInt8] = []
+
+            while Date() < deadline {
+                let data = stdoutHandle.availableData
+                if data.isEmpty {
+                    Thread.sleep(forTimeInterval: 0.02)
+                    continue
+                }
+                for byte in data {
+                    if byte == 10 {
+                        return String(decoding: bytes, as: UTF8.self)
+                    }
+                    bytes.append(byte)
+                }
+            }
             throw TranscriptionEngineError.timedOut
+        }.value
+    }
+
+    private func parseResponse(_ line: String) throws -> [String: Any] {
+        let data = Data(line.utf8)
+        guard let response = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw TranscriptionEngineError.processFailed(status: -1, stderr: "Invalid Parakeet server response: \(line)")
         }
-
-        let outputData = stdout.fileHandleForReading.readDataToEndOfFile()
-        let errorData = stderr.fileHandleForReading.readDataToEndOfFile()
-        let output = String(decoding: outputData, as: UTF8.self)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let errorOutput = String(decoding: errorData, as: UTF8.self)
-
-        guard process.terminationStatus == 0 else {
-            throw TranscriptionEngineError.processFailed(
-                status: process.terminationStatus,
-                stderr: errorOutput
-            )
-        }
-
-        guard !output.isEmpty else {
-            throw TranscriptionEngineError.emptyTranscript
-        }
-
-        return TranscriptionResult(text: output, engineName: "NVIDIA Parakeet TDT 0.6B via onnx-asr")
+        return response
     }
 }
