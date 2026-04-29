@@ -1,0 +1,408 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		AIR0000000000000000000010 /* AutoImproveRecorderApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR0000000000000000000001 /* AutoImproveRecorderApp.swift */; };
+		AIR0000000000000000000011 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR0000000000000000000002 /* AppDelegate.swift */; };
+		AIR0000000000000000000012 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR0000000000000000000003 /* AppState.swift */; };
+		AIR0000000000000000000013 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR0000000000000000000004 /* Models.swift */; };
+		AIR0000000000000000000014 /* AudioRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR0000000000000000000005 /* AudioRecorder.swift */; };
+		AIR0000000000000000000015 /* TranscriptionEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR0000000000000000000006 /* TranscriptionEngine.swift */; };
+		AIR0000000000000000000016 /* ParakeetTranscriber.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR0000000000000000000007 /* ParakeetTranscriber.swift */; };
+		AIR0000000000000000000017 /* ImproveEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR0000000000000000000008 /* ImproveEngine.swift */; };
+		AIR0000000000000000000018 /* OpenAIImproveEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR0000000000000000000009 /* OpenAIImproveEngine.swift */; };
+		AIR0000000000000000000019 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR000000000000000000000A /* KeychainStore.swift */; };
+		AIR000000000000000000001A /* AccessibilityPasteController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR000000000000000000000B /* AccessibilityPasteController.swift */; };
+		AIR000000000000000000001B /* HotKeyCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR000000000000000000000C /* HotKeyCenter.swift */; };
+		AIR000000000000000000001C /* AudioInputDeviceDiscovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR000000000000000000000D /* AudioInputDeviceDiscovery.swift */; };
+		AIR000000000000000000001D /* RecorderPillView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR000000000000000000000E /* RecorderPillView.swift */; };
+		AIR000000000000000000001E /* PreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR000000000000000000000F /* PreviewView.swift */; };
+		AIR000000000000000000001F /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR0000000000000000000020 /* SettingsView.swift */; };
+		AIR0000000000000000000021 /* WindowControllers.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR0000000000000000000022 /* WindowControllers.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		AIR0000000000000000000001 /* AutoImproveRecorderApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoImproveRecorderApp.swift; sourceTree = "<group>"; };
+		AIR0000000000000000000002 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		AIR0000000000000000000003 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
+		AIR0000000000000000000004 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		AIR0000000000000000000005 /* AudioRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioRecorder.swift; sourceTree = "<group>"; };
+		AIR0000000000000000000006 /* TranscriptionEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptionEngine.swift; sourceTree = "<group>"; };
+		AIR0000000000000000000007 /* ParakeetTranscriber.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ParakeetTranscriber.swift; sourceTree = "<group>"; };
+		AIR0000000000000000000008 /* ImproveEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImproveEngine.swift; sourceTree = "<group>"; };
+		AIR0000000000000000000009 /* OpenAIImproveEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAIImproveEngine.swift; sourceTree = "<group>"; };
+		AIR000000000000000000000A /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
+		AIR000000000000000000000B /* AccessibilityPasteController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccessibilityPasteController.swift; sourceTree = "<group>"; };
+		AIR000000000000000000000C /* HotKeyCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotKeyCenter.swift; sourceTree = "<group>"; };
+		AIR000000000000000000000D /* AudioInputDeviceDiscovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioInputDeviceDiscovery.swift; sourceTree = "<group>"; };
+		AIR000000000000000000000E /* RecorderPillView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecorderPillView.swift; sourceTree = "<group>"; };
+		AIR000000000000000000000F /* PreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewView.swift; sourceTree = "<group>"; };
+		AIR0000000000000000000020 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		AIR0000000000000000000022 /* WindowControllers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowControllers.swift; sourceTree = "<group>"; };
+		AIR0000000000000000000023 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		AIR0000000000000000000024 /* AutoImproveRecorder.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AutoImproveRecorder.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		AIR0000000000000000000030 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		AIR0000000000000000000040 = {
+			isa = PBXGroup;
+			children = (
+				AIR0000000000000000000041 /* AutoImproveRecorder */,
+				AIR0000000000000000000042 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		AIR0000000000000000000041 /* AutoImproveRecorder */ = {
+			isa = PBXGroup;
+			children = (
+				AIR0000000000000000000001 /* AutoImproveRecorderApp.swift */,
+				AIR0000000000000000000002 /* AppDelegate.swift */,
+				AIR0000000000000000000003 /* AppState.swift */,
+				AIR0000000000000000000004 /* Models.swift */,
+				AIR0000000000000000000043 /* Recording */,
+				AIR0000000000000000000044 /* Engines */,
+				AIR0000000000000000000045 /* UI */,
+				AIR0000000000000000000046 /* Support */,
+				AIR0000000000000000000023 /* Info.plist */,
+			);
+			path = AutoImproveRecorder;
+			sourceTree = "<group>";
+		};
+		AIR0000000000000000000042 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				AIR0000000000000000000024 /* AutoImproveRecorder.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		AIR0000000000000000000043 /* Recording */ = {
+			isa = PBXGroup;
+			children = (
+				AIR0000000000000000000005 /* AudioRecorder.swift */,
+			);
+			path = Recording;
+			sourceTree = "<group>";
+		};
+		AIR0000000000000000000044 /* Engines */ = {
+			isa = PBXGroup;
+			children = (
+				AIR0000000000000000000006 /* TranscriptionEngine.swift */,
+				AIR0000000000000000000007 /* ParakeetTranscriber.swift */,
+				AIR0000000000000000000008 /* ImproveEngine.swift */,
+				AIR0000000000000000000009 /* OpenAIImproveEngine.swift */,
+			);
+			path = Engines;
+			sourceTree = "<group>";
+		};
+		AIR0000000000000000000045 /* UI */ = {
+			isa = PBXGroup;
+			children = (
+				AIR000000000000000000000E /* RecorderPillView.swift */,
+				AIR000000000000000000000F /* PreviewView.swift */,
+				AIR0000000000000000000020 /* SettingsView.swift */,
+				AIR0000000000000000000022 /* WindowControllers.swift */,
+			);
+			path = UI;
+			sourceTree = "<group>";
+		};
+		AIR0000000000000000000046 /* Support */ = {
+			isa = PBXGroup;
+			children = (
+				AIR000000000000000000000A /* KeychainStore.swift */,
+				AIR000000000000000000000B /* AccessibilityPasteController.swift */,
+				AIR000000000000000000000C /* HotKeyCenter.swift */,
+				AIR000000000000000000000D /* AudioInputDeviceDiscovery.swift */,
+			);
+			path = Support;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		AIR0000000000000000000050 /* AutoImproveRecorder */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AIR0000000000000000000060 /* Build configuration list for PBXNativeTarget "AutoImproveRecorder" */;
+			buildPhases = (
+				AIR0000000000000000000051 /* Sources */,
+				AIR0000000000000000000030 /* Frameworks */,
+				AIR0000000000000000000052 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = AutoImproveRecorder;
+			productName = AutoImproveRecorder;
+			productReference = AIR0000000000000000000024 /* AutoImproveRecorder.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		AIR0000000000000000000070 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2640;
+				LastUpgradeCheck = 2640;
+				TargetAttributes = {
+					AIR0000000000000000000050 = {
+						CreatedOnToolsVersion = 26.4.1;
+					};
+				};
+			};
+			buildConfigurationList = AIR0000000000000000000071 /* Build configuration list for PBXProject "AutoImproveRecorder" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = AIR0000000000000000000040;
+			productRefGroup = AIR0000000000000000000042 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				AIR0000000000000000000050 /* AutoImproveRecorder */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		AIR0000000000000000000052 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		AIR0000000000000000000051 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AIR0000000000000000000010 /* AutoImproveRecorderApp.swift in Sources */,
+				AIR0000000000000000000011 /* AppDelegate.swift in Sources */,
+				AIR0000000000000000000012 /* AppState.swift in Sources */,
+				AIR0000000000000000000013 /* Models.swift in Sources */,
+				AIR0000000000000000000014 /* AudioRecorder.swift in Sources */,
+				AIR0000000000000000000015 /* TranscriptionEngine.swift in Sources */,
+				AIR0000000000000000000016 /* ParakeetTranscriber.swift in Sources */,
+				AIR0000000000000000000017 /* ImproveEngine.swift in Sources */,
+				AIR0000000000000000000018 /* OpenAIImproveEngine.swift in Sources */,
+				AIR0000000000000000000019 /* KeychainStore.swift in Sources */,
+				AIR000000000000000000001A /* AccessibilityPasteController.swift in Sources */,
+				AIR000000000000000000001B /* HotKeyCenter.swift in Sources */,
+				AIR000000000000000000001C /* AudioInputDeviceDiscovery.swift in Sources */,
+				AIR000000000000000000001D /* RecorderPillView.swift in Sources */,
+				AIR000000000000000000001E /* PreviewView.swift in Sources */,
+				AIR000000000000000000001F /* SettingsView.swift in Sources */,
+				AIR0000000000000000000021 /* WindowControllers.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		AIR0000000000000000000080 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		AIR0000000000000000000081 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = Release;
+		};
+		AIR0000000000000000000082 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = "";
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_APP_SANDBOX = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = AutoImproveRecorder/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.fieldtheory.autoimproverecorder;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		AIR0000000000000000000083 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = "";
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_APP_SANDBOX = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = AutoImproveRecorder/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.fieldtheory.autoimproverecorder;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		AIR0000000000000000000060 /* Build configuration list for PBXNativeTarget "AutoImproveRecorder" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AIR0000000000000000000082 /* Debug */,
+				AIR0000000000000000000083 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		AIR0000000000000000000071 /* Build configuration list for PBXProject "AutoImproveRecorder" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AIR0000000000000000000080 /* Debug */,
+				AIR0000000000000000000081 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = AIR0000000000000000000070 /* Project object */;
+}
