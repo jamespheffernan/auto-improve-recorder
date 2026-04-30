@@ -55,7 +55,9 @@ final class AppState: ObservableObject {
     var menuNeedsUpdate: (() -> Void)?
     var registerCancelHotKey: (() -> Void)?
     var unregisterCancelHotKey: (() -> Void)?
-    var notifyCompletion: ((CompletionNotification) -> Void)?
+    var showProcessingSignal: (() -> Void)?
+    var flashReadySignal: (() -> Void)?
+    var hideProcessingSignal: (() -> Void)?
 
     private let defaults = UserDefaults.standard
     private let audioRecorder = AudioRecorder()
@@ -163,6 +165,7 @@ final class AppState: ObservableObject {
         statusMessage = streamingTranscriber == nil
             ? "Transcribing with local Parakeet."
             : "Finalizing OpenAI streaming transcript."
+        showProcessingSignal?()
         showPill?()
         Task { await processRecording(audioURL: audioURL, streamingTranscriber: streamingTranscriber) }
     }
@@ -183,6 +186,7 @@ final class AppState: ObservableObject {
         showRawTranscript = false
         phase = .idle
         statusMessage = "Recording cancelled."
+        hideProcessingSignal?()
         hidePill?()
     }
 
@@ -388,6 +392,7 @@ final class AppState: ObservableObject {
 
         phase = .improving
         statusMessage = "Improving with gpt-5.4-mini."
+        showProcessingSignal?()
         showPill?()
 
         do {
@@ -421,10 +426,9 @@ final class AppState: ObservableObject {
         if !text.isEmpty {
             copyToPasteboard(text)
             statusMessage = "Copied to clipboard."
-            notifyCompletion?(CompletionNotification(
-                title: "Ready to paste",
-                body: completionNotificationBody()
-            ))
+            flashReadySignal?()
+        } else {
+            hideProcessingSignal?()
         }
         hidePill?()
     }
@@ -457,6 +461,7 @@ final class AppState: ObservableObject {
         session.message = message
         phase = .failed
         statusMessage = message
+        hideProcessingSignal?()
         hidePill?()
         showPreview?()
     }

@@ -1,13 +1,13 @@
 import AppKit
-import UserNotifications
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUserNotificationCenterDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let state = AppState.shared
     private let hotKeyCenter = HotKeyCenter()
     private let pillController = FloatingPillWindowController()
     private let previewController = PreviewWindowController()
     private let settingsController = SettingsWindowController()
+    private let edgeGlowController = EdgeGlowWindowController()
     private var statusItem: NSStatusItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -20,11 +20,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUser
         state.menuNeedsUpdate = { [weak self] in self?.rebuildMenu() }
         state.registerCancelHotKey = { [weak self] in self?.hotKeyCenter.registerCancelHotKey() }
         state.unregisterCancelHotKey = { [weak self] in self?.hotKeyCenter.unregisterCancelHotKey() }
-        state.notifyCompletion = { [weak self] notification in
-            self?.showCompletionNotification(notification)
-        }
+        state.showProcessingSignal = { [weak self] in self?.edgeGlowController.showProcessing() }
+        state.flashReadySignal = { [weak self] in self?.edgeGlowController.flashReady() }
+        state.hideProcessingSignal = { [weak self] in self?.edgeGlowController.hide() }
 
-        configureNotifications()
         setupStatusItem()
         hotKeyCenter.handler = { [weak self] in
             self?.state.toggleRecording()
@@ -37,45 +36,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUser
 
     func applicationWillTerminate(_ notification: Notification) {
         hotKeyCenter.unregister()
-    }
-
-    private func configureNotifications() {
-        let center = UNUserNotificationCenter.current()
-        center.delegate = self
-        center.requestAuthorization(options: [.alert, .sound]) { granted, error in
-            if let error {
-                NSLog("Notification authorization failed: \(error.localizedDescription)")
-            } else {
-                NSLog("Notification authorization \(granted ? "granted" : "denied").")
-            }
-        }
-    }
-
-    private func showCompletionNotification(_ notification: CompletionNotification) {
-        let content = UNMutableNotificationContent()
-        content.title = notification.title
-        content.body = notification.body
-        content.sound = .default
-
-        let request = UNNotificationRequest(
-            identifier: "auto-improve-recorder.completion.\(UUID().uuidString)",
-            content: content,
-            trigger: nil
-        )
-
-        UNUserNotificationCenter.current().add(request) { error in
-            if let error {
-                NSLog("Completion notification failed: \(error.localizedDescription)")
-            }
-        }
-    }
-
-    nonisolated func userNotificationCenter(
-        _ center: UNUserNotificationCenter,
-        willPresent notification: UNNotification,
-        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
-    ) {
-        completionHandler([.banner, .sound])
     }
 
     private func setupStatusItem() {
