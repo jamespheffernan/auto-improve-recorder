@@ -12,6 +12,9 @@ final class AppState: ObservableObject {
     @Published var session: TranscriptSession = .empty
     @Published var showRawTranscript = false
     @Published var statusMessage: String?
+    @Published var lastOpenAIRealtimeDiagnostics: OpenAIRealtimeDiagnostics? {
+        didSet { saveOpenAIRealtimeDiagnostics() }
+    }
 
     @Published var apiKey: String = "" {
         didSet { KeychainStore.saveOpenAIAPIKey(apiKey) }
@@ -52,6 +55,7 @@ final class AppState: ObservableObject {
     var menuNeedsUpdate: (() -> Void)?
     var registerCancelHotKey: (() -> Void)?
     var unregisterCancelHotKey: (() -> Void)?
+    var notifyCompletion: ((CompletionNotification) -> Void)?
 
     private let defaults = UserDefaults.standard
     private let audioRecorder = AudioRecorder()
@@ -67,6 +71,8 @@ final class AppState: ObservableObject {
         static let parakeetScriptPath = "parakeetScriptPath"
         static let parakeetCachePath = "parakeetCachePath"
         static let preferredMicrophoneID = "preferredMicrophoneID"
+        static let lastOpenAIRealtimeErrorSummary = "lastOpenAIRealtimeErrorSummary"
+        static let lastOpenAIRealtimeErrorDetails = "lastOpenAIRealtimeErrorDetails"
     }
 
     private init() {
@@ -79,6 +85,10 @@ final class AppState: ObservableObject {
         modificationStrength = savedStrength > 0 ? min(max(savedStrength, 1), 5) : 2
         outputMode = OutputMode(rawValue: defaults.string(forKey: Keys.outputMode) ?? "") ?? .lightCleanup
         preferredMicrophoneID = defaults.string(forKey: Keys.preferredMicrophoneID) ?? ""
+        let savedOpenAISummary = defaults.string(forKey: Keys.lastOpenAIRealtimeErrorSummary) ?? ""
+        let savedOpenAIDetails = defaults.string(forKey: Keys.lastOpenAIRealtimeErrorDetails) ?? ""
+        let savedOpenAIDiagnostics = OpenAIRealtimeDiagnostics(summary: savedOpenAISummary, details: savedOpenAIDetails)
+        lastOpenAIRealtimeDiagnostics = savedOpenAIDiagnostics.isEmpty ? nil : savedOpenAIDiagnostics
 
         let detected = ParakeetRuntimeDiscovery.detect()
         parakeetRuntimePath = defaults.string(forKey: Keys.parakeetRuntimePath) ?? detected.pythonPath
@@ -201,6 +211,12 @@ final class AppState: ObservableObject {
         showSettings?()
     }
 
+    func copyOpenAIRealtimeDiagnostics() {
+        guard let diagnostics = lastOpenAIRealtimeDiagnostics else { return }
+        copyToPasteboard(diagnostics.details.isEmpty ? diagnostics.summary : diagnostics.details)
+        statusMessage = "Copied OpenAI diagnostics."
+    }
+
     private func startRecordingFlow() async {
         do {
             try await AudioRecorder.requestMicrophonePermission()
@@ -279,7 +295,9 @@ final class AppState: ObservableObject {
         guard transcriptionMode == .fastest else { return nil }
 
         if apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            statusMessage = "Fastest mode needs an OpenAI API key. Falling back to Parakeet."
+            let reason = "Fastest mode needs an OpenAI API key. Falling back to Parakeet."
+            recordOpenAIRealtimeDiagnostics(OpenAIRealtimeDiagnostics(summary: reason, details: reason))
+            statusMessage = reason
             return nil
         }
 
@@ -288,8 +306,11 @@ final class AppState: ObservableObject {
             try await transcriber.start()
             return transcriber
         } catch {
+            let summary = "OpenAI streaming unavailable; falling back to Parakeet. \(error.localizedDescription)"
+            let diagnostics = await transcriber.diagnostics(summary: summary)
+            recordOpenAIRealtimeDiagnostics(diagnostics)
             statusMessage = "OpenAI streaming unavailable; falling back to Parakeet."
-            NSLog("OpenAI realtime transcription start failed: \(error.localizedDescription)")
+            NSLog("OpenAI realtime transcription start failed: \(diagnostics.details)")
             await transcriber.cancel()
             return nil
         }
@@ -298,15 +319,30 @@ final class AppState: ObservableObject {
     private func transcribe(audioURL: URL, streamingTranscriber: OpenAIRealtimeTranscriber?) async throws -> TranscriptionResult {
         let startedAt = Date()
 
+        if transcriptionMode == .openAIAPI {
+            return try await transcribeWithOpenAIAPI(audioURL: audioURL, startedAt: startedAt)
+        }
+
         if transcriptionMode == .fastest, let streamingTranscriber {
             do {
                 let result = try await streamingTranscriber.finish()
                 let elapsed = Date().timeIntervalSince(startedAt)
+                if shouldVerifyRealtimeTranscript(result.text) {
+                    let reason = "OpenAI realtime returned a suspiciously short transcript (‘\(result.text)’); using OpenAI API transcription instead."
+                    recordOpenAIRealtimeDiagnostics(await streamingTranscriber.diagnostics(summary: reason))
+                    NSLog(reason)
+                    statusMessage = "Realtime transcript looked wrong; using OpenAI API."
+                    return try await transcribeWithOpenAIAPI(audioURL: audioURL, startedAt: Date())
+                }
                 statusMessage = String(format: "OpenAI transcript ready in %.1fs.", elapsed)
                 return result
             } catch {
-                NSLog("OpenAI realtime transcription finalize failed; falling back to Parakeet: \(error.localizedDescription)")
-                statusMessage = "OpenAI streaming failed; falling back to Parakeet."
+                let summary = "OpenAI streaming failed; falling back to OpenAI API. \(error.localizedDescription)"
+                let diagnostics = await streamingTranscriber.diagnostics(summary: summary)
+                recordOpenAIRealtimeDiagnostics(diagnostics)
+                NSLog("OpenAI realtime transcription finalize failed; falling back to OpenAI API: \(diagnostics.details)")
+                statusMessage = "OpenAI streaming failed; using OpenAI API."
+                return try await transcribeWithOpenAIAPI(audioURL: audioURL, startedAt: Date())
             }
         } else if transcriptionMode == .fastest {
             statusMessage = "Fastest unavailable; falling back to Parakeet."
@@ -323,6 +359,23 @@ final class AppState: ObservableObject {
         NSLog("Parakeet transcription finished in %.2fs via fallback/local mode.", elapsed)
         statusMessage = String(format: "Parakeet transcript ready in %.1fs.", elapsed)
         return result
+    }
+
+    private func transcribeWithOpenAIAPI(audioURL: URL, startedAt: Date) async throws -> TranscriptionResult {
+        statusMessage = "Transcribing with OpenAI API."
+        let transcriber = OpenAIAudioTranscriber(apiKey: apiKey)
+        let result = try await transcriber.transcribe(audioURL: audioURL)
+        let elapsed = Date().timeIntervalSince(startedAt)
+        NSLog("OpenAI API transcription finished in %.2fs.", elapsed)
+        statusMessage = String(format: "OpenAI API transcript ready in %.1fs.", elapsed)
+        return result
+    }
+
+    private func shouldVerifyRealtimeTranscript(_ text: String) -> Bool {
+        let words = text
+            .split { !$0.isLetter && !$0.isNumber }
+            .filter { !$0.isEmpty }
+        return words.count <= 2
     }
 
     private func improveCurrentTranscript(force: Bool) async {
@@ -368,8 +421,35 @@ final class AppState: ObservableObject {
         if !text.isEmpty {
             copyToPasteboard(text)
             statusMessage = "Copied to clipboard."
+            notifyCompletion?(CompletionNotification(
+                title: "Ready to paste",
+                body: completionNotificationBody()
+            ))
         }
         hidePill?()
+    }
+
+    private func completionNotificationBody() -> String {
+        let raw = session.rawTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+        let improved = session.improvedText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let wasImproved = !session.improveFailed && !raw.isEmpty && !improved.isEmpty && improved != raw
+
+        if session.improveFailed {
+            return "Improve failed, so the raw transcript is copied to the clipboard."
+        }
+
+        if wasImproved {
+            return "Improved text is copied to the clipboard. Paste when ready."
+        }
+
+        switch autoImproveMode {
+        case .off:
+            return "Raw transcript is copied to the clipboard. Paste when ready."
+        case .manual:
+            return "Transcript is copied to the clipboard. Paste or open Preview to improve it."
+        case .automatic:
+            return "Transcript is copied to the clipboard. Paste when ready."
+        }
     }
 
     private func failWithMessage(_ message: String) {
@@ -379,6 +459,19 @@ final class AppState: ObservableObject {
         statusMessage = message
         hidePill?()
         showPreview?()
+    }
+
+    private func recordOpenAIRealtimeDiagnostics(_ diagnostics: OpenAIRealtimeDiagnostics) {
+        guard !diagnostics.isEmpty else { return }
+        lastOpenAIRealtimeDiagnostics = diagnostics
+        NSLog("Last OpenAI realtime diagnostics: \(diagnostics.details)")
+    }
+
+    private func saveOpenAIRealtimeDiagnostics() {
+        let diagnostics = lastOpenAIRealtimeDiagnostics
+        defaults.set(diagnostics?.summary ?? "", forKey: Keys.lastOpenAIRealtimeErrorSummary)
+        defaults.set(diagnostics?.details ?? "", forKey: Keys.lastOpenAIRealtimeErrorDetails)
+        menuNeedsUpdate?()
     }
 
     private func copyToPasteboard(_ text: String) {

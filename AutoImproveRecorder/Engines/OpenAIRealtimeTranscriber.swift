@@ -6,6 +6,7 @@ enum OpenAIRealtimeTranscriptionError: LocalizedError {
     case invalidWebSocketURL
     case conversionFailed(String)
     case invalidServerEvent
+    case sessionUpdateTimedOut(String)
     case serverError(String)
     case webSocketFailed(String)
     case emptyTranscript
@@ -20,6 +21,8 @@ enum OpenAIRealtimeTranscriptionError: LocalizedError {
             return "OpenAI realtime audio conversion failed: \(message)"
         case .invalidServerEvent:
             return "OpenAI realtime returned an invalid event."
+        case .sessionUpdateTimedOut(let message):
+            return "OpenAI realtime session configuration was not acknowledged: \(message)"
         case .serverError(let message):
             return "OpenAI realtime transcription failed: \(message)"
         case .webSocketFailed(let message):
@@ -77,6 +80,10 @@ final class OpenAIRealtimeTranscriber {
     func cancel() async {
         stopAcceptingAudio()
         await connection.cancel()
+    }
+
+    func diagnostics(summary: String? = nil) async -> OpenAIRealtimeDiagnostics {
+        await connection.diagnostics(summary: summary)
     }
 
     private func stopAcceptingAudio() {
@@ -147,16 +154,20 @@ private final class PCM16MonoAudioConverter {
 private actor OpenAIRealtimeTranscriptionConnection {
     private let apiKey: String
     private let transcriptionModel = "gpt-4o-transcribe"
-    private let webSocketURL = URL(string: "wss://api.openai.com/v1/realtime?intent=transcription")
+    private let webSocketURLString = "wss://api.openai.com/v1/realtime?intent=transcription"
+    private let sessionPayloadShape = "GA session.update transcription session: session.type=transcription, audio.input.format=audio/pcm rate=24000, noise_reduction=null, transcription.model=gpt-4o-transcribe, turn_detection=null/manual commit"
 
     private var urlSession: URLSession?
     private var webSocketTask: URLSessionWebSocketTask?
+    private var webSocketDelegate: OpenAIRealtimeWebSocketDelegate?
     private var receiveTask: Task<Void, Never>?
     private var sendChain: Task<Void, Error> = Task {}
 
     private var isClosed = false
     private var isFinishing = false
     private var failure: Error?
+    private var sawSessionCreated = false
+    private var sawSessionUpdated = false
 
     private var partialTranscripts: [String: String] = [:]
     private var completedTranscripts: [String: String] = [:]
@@ -167,6 +178,16 @@ private actor OpenAIRealtimeTranscriptionConnection {
     private var appendedBytes = 0
     private var appendedEvents = 0
     private var startedAt: Date?
+    private var openedAt: Date?
+    private var closedAt: Date?
+    private var closeDescription: String?
+    private var lastReceiveError: String?
+    private var lastSendError: String?
+    private var sessionCreatedJSON: String?
+    private var sessionUpdatedJSON: String?
+    private var lastErrorEventJSON: String?
+    private var lastFailedTranscriptionJSON: String?
+    private var recentServerEvents: [String] = []
 
     init(apiKey: String) {
         self.apiKey = apiKey
@@ -177,20 +198,22 @@ private actor OpenAIRealtimeTranscriptionConnection {
         guard !trimmedKey.isEmpty else {
             throw OpenAIRealtimeTranscriptionError.missingAPIKey
         }
-        guard let webSocketURL else {
+        guard let webSocketURL = URL(string: webSocketURLString) else {
             throw OpenAIRealtimeTranscriptionError.invalidWebSocketURL
         }
 
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 15
         configuration.timeoutIntervalForResource = 600
-        let session = URLSession(configuration: configuration)
+        let delegate = OpenAIRealtimeWebSocketDelegate(connection: self)
+        let session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
 
         var request = URLRequest(url: webSocketURL)
         request.setValue("Bearer \(trimmedKey)", forHTTPHeaderField: "Authorization")
 
         let task = session.webSocketTask(with: request)
         urlSession = session
+        webSocketDelegate = delegate
         webSocketTask = task
         startedAt = Date()
 
@@ -199,7 +222,7 @@ private actor OpenAIRealtimeTranscriptionConnection {
             await self?.receiveMessages()
         }
 
-        try await sendEvent([
+        let sessionUpdate: [String: Any] = [
             "type": "session.update",
             "session": [
                 "type": "transcription",
@@ -209,26 +232,21 @@ private actor OpenAIRealtimeTranscriptionConnection {
                             "type": "audio/pcm",
                             "rate": 24_000
                         ],
-                        "noise_reduction": [
-                            "type": "near_field"
-                        ],
+                        "noise_reduction": NSNull(),
                         "transcription": [
                             "model": transcriptionModel,
                             "prompt": "",
                             "language": "en"
                         ],
-                        "turn_detection": [
-                            "type": "server_vad",
-                            "threshold": 0.5,
-                            "prefix_padding_ms": 300,
-                            "silence_duration_ms": 500
-                        ]
+                        "turn_detection": NSNull()
                     ]
                 ]
             ]
-        ])
+        ]
+        try await sendEvent(sessionUpdate, logPayload: true)
+        try await waitForSessionUpdated(timeout: 8)
 
-        NSLog("OpenAI realtime transcription started with transcription session / \(transcriptionModel).")
+        NSLog("OpenAI realtime transcription started with endpoint \(webSocketURLString), model \(transcriptionModel), payload \(sessionPayloadShape).")
     }
 
     func enqueueAudio(_ data: Data) {
@@ -310,17 +328,32 @@ private actor OpenAIRealtimeTranscriptionConnection {
         sendChain = Task {
             try await previous.value
             try Task.checkCancellation()
-            try await webSocketTask.send(.string(json))
+            do {
+                try await webSocketTask.send(.string(json))
+            } catch {
+                self.recordSendError(error)
+                throw error
+            }
         }
     }
 
-    private func sendEvent(_ event: [String: Any]) async throws {
+    private func sendEvent(_ event: [String: Any], logPayload: Bool = false) async throws {
         guard let webSocketTask else {
             throw OpenAIRealtimeTranscriptionError.webSocketFailed("WebSocket is unavailable.")
         }
 
         let json = try makeJSONString(event)
-        try await webSocketTask.send(.string(json))
+        if logPayload {
+            NSLog("OpenAI realtime client event: \(json)")
+        } else if let type = event["type"] as? String {
+            NSLog("OpenAI realtime client event: \(type)")
+        }
+        do {
+            try await webSocketTask.send(.string(json))
+        } catch {
+            recordSendError(error)
+            throw error
+        }
     }
 
     private func receiveMessages() async {
@@ -339,6 +372,7 @@ private actor OpenAIRealtimeTranscriptionConnection {
                 }
             } catch {
                 guard !isClosed else { return }
+                lastReceiveError = error.localizedDescription
                 recordFailure(OpenAIRealtimeTranscriptionError.webSocketFailed(error.localizedDescription))
                 return
             }
@@ -354,7 +388,16 @@ private actor OpenAIRealtimeTranscriptionConnection {
             return
         }
 
+        let rawJSON = prettyJSONString(from: json) ?? String(data: data, encoding: .utf8) ?? "<non-utf8 server event>"
+        recordServerEvent(type: type, rawJSON: rawJSON)
+
         switch type {
+        case "session.created", "transcription_session.created":
+            sawSessionCreated = true
+            sessionCreatedJSON = rawJSON
+        case "session.updated", "transcription_session.updated":
+            sawSessionUpdated = true
+            sessionUpdatedJSON = rawJSON
         case "error":
             handleErrorEvent(json)
         case "input_audio_buffer.committed":
@@ -364,6 +407,7 @@ private actor OpenAIRealtimeTranscriptionConnection {
         case "conversation.item.input_audio_transcription.completed":
             handleCompletedEvent(json)
         case "conversation.item.input_audio_transcription.failed":
+            lastFailedTranscriptionJSON = rawJSON
             let message = nestedString(json["error"], key: "message") ?? "Input audio transcription failed."
             recordFailure(OpenAIRealtimeTranscriptionError.serverError(message))
         default:
@@ -372,6 +416,7 @@ private actor OpenAIRealtimeTranscriptionConnection {
     }
 
     private func handleErrorEvent(_ json: [String: Any]) {
+        lastErrorEventJSON = prettyJSONString(from: json)
         let errorObject = json["error"] as? [String: Any]
         let code = errorObject?["code"] as? String
         let message = errorObject?["message"] as? String ?? "Unknown realtime API error."
@@ -381,6 +426,61 @@ private actor OpenAIRealtimeTranscriptionConnection {
         }
 
         recordFailure(OpenAIRealtimeTranscriptionError.serverError(message))
+    }
+
+    func webSocketDidOpen() {
+        openedAt = Date()
+        NSLog("OpenAI realtime WebSocket opened: \(webSocketURLString)")
+    }
+
+    func webSocketDidClose(code: URLSessionWebSocketTask.CloseCode, reason: Data?) {
+        closedAt = Date()
+        let reasonText = reason.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+        closeDescription = "code=\(code.rawValue) reason=\(reasonText)"
+        NSLog("OpenAI realtime WebSocket closed: \(closeDescription ?? "unknown")")
+        guard !isClosed, failure == nil, code != .normalClosure else { return }
+        recordFailure(OpenAIRealtimeTranscriptionError.webSocketFailed(closeDescription ?? "WebSocket closed unexpectedly."))
+    }
+
+    func diagnostics(summary: String? = nil) -> OpenAIRealtimeDiagnostics {
+        let resolvedSummary = summary ?? failure?.localizedDescription ?? "No OpenAI realtime error recorded."
+        return OpenAIRealtimeDiagnostics(summary: resolvedSummary, details: diagnosticDetails(summary: resolvedSummary))
+    }
+
+    private func waitForSessionUpdated(timeout: TimeInterval) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            try throwIfFailed()
+            if sawSessionUpdated {
+                return
+            }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+
+        let message = "Timed out after \(String(format: "%.1f", timeout))s waiting for session.updated. sawSessionCreated=\(sawSessionCreated), endpoint=\(webSocketURLString)"
+        let error = OpenAIRealtimeTranscriptionError.sessionUpdateTimedOut(message)
+        recordFailure(error)
+        throw error
+    }
+
+    private func recordSendError(_ error: Error) {
+        lastSendError = error.localizedDescription
+        recordFailure(OpenAIRealtimeTranscriptionError.webSocketFailed("Send failed: \(error.localizedDescription)"))
+    }
+
+    private func recordServerEvent(type: String, rawJSON: String) {
+        let entry = "\(type): \(capped(rawJSON, maxLength: 1_500))"
+        recentServerEvents.append(entry)
+        if recentServerEvents.count > 12 {
+            recentServerEvents.removeFirst(recentServerEvents.count - 12)
+        }
+
+        switch type {
+        case "session.created", "session.updated", "transcription_session.created", "transcription_session.updated", "error", "conversation.item.input_audio_transcription.failed":
+            NSLog("OpenAI realtime server event \(type): \(rawJSON)")
+        default:
+            break
+        }
     }
 
     private func handleCommittedEvent(_ json: [String: Any]) {
@@ -467,6 +567,7 @@ private actor OpenAIRealtimeTranscriptionConnection {
         urlSession?.invalidateAndCancel()
         webSocketTask = nil
         urlSession = nil
+        webSocketDelegate = nil
         return true
     }
 
@@ -482,6 +583,54 @@ private actor OpenAIRealtimeTranscriptionConnection {
         )
     }
 
+    private func diagnosticDetails(summary: String) -> String {
+        var lines: [String] = []
+        lines.append("Summary: \(summary)")
+        lines.append("Endpoint: \(webSocketURLString)")
+        lines.append("Model: \(transcriptionModel)")
+        lines.append("Payload: \(sessionPayloadShape)")
+        lines.append("Audio format: 24kHz mono little-endian pcm16 appended as base64 input_audio_buffer.append")
+        lines.append("Chunks sent: \(appendedEvents)")
+        lines.append("Bytes sent: \(appendedBytes)")
+        lines.append("Saw session.created: \(sawSessionCreated)")
+        lines.append("Saw session.updated: \(sawSessionUpdated)")
+        if let startedAt {
+            lines.append("Started: \(startedAt)")
+        }
+        if let openedAt {
+            lines.append("WebSocket opened: \(openedAt)")
+        }
+        if let closedAt {
+            lines.append("WebSocket closed: \(closedAt)")
+        }
+        if let closeDescription {
+            lines.append("Close: \(closeDescription)")
+        }
+        if let lastSendError {
+            lines.append("Last send error: \(lastSendError)")
+        }
+        if let lastReceiveError {
+            lines.append("Last receive error: \(lastReceiveError)")
+        }
+        if let sessionCreatedJSON {
+            lines.append("session.created: \(sessionCreatedJSON)")
+        }
+        if let sessionUpdatedJSON {
+            lines.append("session.updated: \(sessionUpdatedJSON)")
+        }
+        if let lastErrorEventJSON {
+            lines.append("Last server error event: \(lastErrorEventJSON)")
+        }
+        if let lastFailedTranscriptionJSON {
+            lines.append("Last failed transcription event: \(lastFailedTranscriptionJSON)")
+        }
+        if !recentServerEvents.isEmpty {
+            lines.append("Recent server events:")
+            lines.append(contentsOf: recentServerEvents.map { "- \($0)" })
+        }
+        return lines.joined(separator: "\n")
+    }
+
     private func makeJSONString(_ object: [String: Any]) throws -> String {
         let data = try JSONSerialization.data(withJSONObject: object, options: [])
         guard let json = String(data: data, encoding: .utf8) else {
@@ -495,11 +644,55 @@ private actor OpenAIRealtimeTranscriptionConnection {
         return dictionary[key] as? String
     }
 
+    private func prettyJSONString(from object: Any) -> String? {
+        guard JSONSerialization.isValidJSONObject(object),
+              let data = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
+        else {
+            return nil
+        }
+        return String(data: data, encoding: .utf8)
+    }
+
+    private func capped(_ string: String, maxLength: Int) -> String {
+        guard string.count > maxLength else { return string }
+        let index = string.index(string.startIndex, offsetBy: maxLength)
+        return String(string[..<index]) + "...<truncated>"
+    }
+
     private func isEmptyCommitError(code: String?, message: String) -> Bool {
         if let code, code.localizedCaseInsensitiveContains("empty") {
             return true
         }
         let lowercased = message.lowercased()
         return lowercased.contains("empty") || lowercased.contains("buffer too small")
+    }
+}
+
+private final class OpenAIRealtimeWebSocketDelegate: NSObject, URLSessionWebSocketDelegate {
+    private weak var connection: OpenAIRealtimeTranscriptionConnection?
+
+    init(connection: OpenAIRealtimeTranscriptionConnection) {
+        self.connection = connection
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        webSocketTask: URLSessionWebSocketTask,
+        didOpenWithProtocol protocol: String?
+    ) {
+        Task {
+            await connection?.webSocketDidOpen()
+        }
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        webSocketTask: URLSessionWebSocketTask,
+        didCloseWith closeCode: URLSessionWebSocketTask.CloseCode,
+        reason: Data?
+    ) {
+        Task {
+            await connection?.webSocketDidClose(code: closeCode, reason: reason)
+        }
     }
 }

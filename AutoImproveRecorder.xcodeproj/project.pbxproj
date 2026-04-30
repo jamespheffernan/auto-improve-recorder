@@ -25,6 +25,7 @@
 		AIR000000000000000000001F /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR0000000000000000000020 /* SettingsView.swift */; };
 		AIR0000000000000000000021 /* WindowControllers.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR0000000000000000000022 /* WindowControllers.swift */; };
 		AIR0000000000000000000026 /* OpenAIRealtimeTranscriber.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR0000000000000000000025 /* OpenAIRealtimeTranscriber.swift */; };
+		AIR0000000000000000000028 /* OpenAIAudioTranscriber.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR0000000000000000000027 /* OpenAIAudioTranscriber.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -48,6 +49,7 @@
 		AIR0000000000000000000023 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		AIR0000000000000000000024 /* AutoImproveRecorder.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AutoImproveRecorder.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AIR0000000000000000000025 /* OpenAIRealtimeTranscriber.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAIRealtimeTranscriber.swift; sourceTree = "<group>"; };
+		AIR0000000000000000000027 /* OpenAIAudioTranscriber.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAIAudioTranscriber.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -109,6 +111,7 @@
 				AIR0000000000000000000008 /* ImproveEngine.swift */,
 				AIR0000000000000000000009 /* OpenAIImproveEngine.swift */,
 				AIR0000000000000000000025 /* OpenAIRealtimeTranscriber.swift */,
+				AIR0000000000000000000027 /* OpenAIAudioTranscriber.swift */,
 			);
 			path = Engines;
 			sourceTree = "<group>";
@@ -213,6 +216,7 @@
 				AIR0000000000000000000017 /* ImproveEngine.swift in Sources */,
 				AIR0000000000000000000018 /* OpenAIImproveEngine.swift in Sources */,
 				AIR0000000000000000000026 /* OpenAIRealtimeTranscriber.swift in Sources */,
+				AIR0000000000000000000028 /* OpenAIAudioTranscriber.swift in Sources */,
 				AIR0000000000000000000019 /* KeychainStore.swift in Sources */,
 				AIR000000000000000000001A /* AccessibilityPasteController.swift in Sources */,
 				AIR000000000000000000001B /* HotKeyCenter.swift in Sources */,

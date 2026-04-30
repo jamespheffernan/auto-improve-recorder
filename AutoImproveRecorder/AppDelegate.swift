@@ -1,7 +1,8 @@
 import AppKit
+import UserNotifications
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUserNotificationCenterDelegate {
     private let state = AppState.shared
     private let hotKeyCenter = HotKeyCenter()
     private let pillController = FloatingPillWindowController()
@@ -19,7 +20,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         state.menuNeedsUpdate = { [weak self] in self?.rebuildMenu() }
         state.registerCancelHotKey = { [weak self] in self?.hotKeyCenter.registerCancelHotKey() }
         state.unregisterCancelHotKey = { [weak self] in self?.hotKeyCenter.unregisterCancelHotKey() }
+        state.notifyCompletion = { [weak self] notification in
+            self?.showCompletionNotification(notification)
+        }
 
+        configureNotifications()
         setupStatusItem()
         hotKeyCenter.handler = { [weak self] in
             self?.state.toggleRecording()
@@ -32,6 +37,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         hotKeyCenter.unregister()
+    }
+
+    private func configureNotifications() {
+        let center = UNUserNotificationCenter.current()
+        center.delegate = self
+        center.requestAuthorization(options: [.alert, .sound]) { granted, error in
+            if let error {
+                NSLog("Notification authorization failed: \(error.localizedDescription)")
+            } else {
+                NSLog("Notification authorization \(granted ? "granted" : "denied").")
+            }
+        }
+    }
+
+    private func showCompletionNotification(_ notification: CompletionNotification) {
+        let content = UNMutableNotificationContent()
+        content.title = notification.title
+        content.body = notification.body
+        content.sound = .default
+
+        let request = UNNotificationRequest(
+            identifier: "auto-improve-recorder.completion.\(UUID().uuidString)",
+            content: content,
+            trigger: nil
+        )
+
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error {
+                NSLog("Completion notification failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        completionHandler([.banner, .sound])
     }
 
     private func setupStatusItem() {
@@ -66,6 +110,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         settingsItem.target = self
         menu.addItem(settingsItem)
 
+        if let diagnostics = state.lastOpenAIRealtimeDiagnostics, !diagnostics.summary.isEmpty {
+            let errorItem = NSMenuItem(title: "Last OpenAI error: \(shortMenuText(diagnostics.summary))", action: #selector(showSettings), keyEquivalent: "")
+            errorItem.target = self
+            menu.addItem(errorItem)
+        }
+
         menu.addItem(.separator())
 
         let quitItem = NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q")
@@ -93,5 +143,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func quit() {
         NSApp.terminate(nil)
+    }
+
+    private func shortMenuText(_ text: String) -> String {
+        let cleaned = text.replacingOccurrences(of: "\n", with: " ")
+        guard cleaned.count > 80 else { return cleaned }
+        let index = cleaned.index(cleaned.startIndex, offsetBy: 80)
+        return String(cleaned[..<index]) + "..."
     }
 }

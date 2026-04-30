@@ -27,6 +27,20 @@ struct SettingsView: View {
                 Stepper("Strength: \(state.modificationStrength)", value: $state.modificationStrength, in: 1...5)
             }
 
+            if let diagnostics = state.lastOpenAIRealtimeDiagnostics {
+                Section("OpenAI diagnostics") {
+                    Text("Last realtime error: \(diagnostics.summary)")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button {
+                        state.copyOpenAIRealtimeDiagnostics()
+                    } label: {
+                        Label("Copy details", systemImage: "doc.on.doc")
+                    }
+                }
+            }
+
             Section("Recording") {
                 Picker("Microphone", selection: $state.preferredMicrophoneID) {
                     ForEach(state.availableMicrophones) { device in

@@ -56,6 +56,7 @@ enum AutoImproveMode: String, CaseIterable, Identifiable {
 
 enum TranscriptionMode: String, CaseIterable, Identifiable {
     case localParakeet
+    case openAIAPI
     case fastest
 
     var id: String { rawValue }
@@ -64,6 +65,8 @@ enum TranscriptionMode: String, CaseIterable, Identifiable {
         switch self {
         case .localParakeet:
             return "Local Parakeet"
+        case .openAIAPI:
+            return "OpenAI API"
         case .fastest:
             return "Fastest"
         }
@@ -125,5 +128,22 @@ struct TranscriptSession: Equatable {
             return improvedText
         }
         return rawTranscript
+    }
+}
+
+struct CompletionNotification: Equatable {
+    var title: String
+    var body: String
+}
+
+struct OpenAIRealtimeDiagnostics: Equatable {
+    var summary: String
+    var details: String
+
+    static let empty = OpenAIRealtimeDiagnostics(summary: "", details: "")
+
+    var isEmpty: Bool {
+        summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+            details.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 }
