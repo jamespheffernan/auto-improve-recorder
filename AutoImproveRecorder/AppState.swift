@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import Combine
 import Foundation
 
@@ -19,13 +20,36 @@ final class AppState: ObservableObject {
     @Published var apiKey: String = "" {
         didSet { KeychainStore.saveOpenAIAPIKey(apiKey) }
     }
+    @Published var geminiAPIKey: String = "" {
+        didSet { KeychainStore.saveGeminiAPIKey(geminiAPIKey) }
+    }
+    @Published var anthropicAPIKey: String = "" {
+        didSet { KeychainStore.saveAnthropicAPIKey(anthropicAPIKey) }
+    }
     @Published var autoImproveMode: AutoImproveMode = .automatic {
         didSet { defaults.set(autoImproveMode.rawValue, forKey: Keys.autoImproveMode) }
     }
-    @Published var transcriptionMode: TranscriptionMode = .localParakeet {
+    @Published var recordingTriggerMode: RecordingTriggerMode = .walkieTalkie {
+        didSet {
+            defaults.set(recordingTriggerMode.rawValue, forKey: Keys.recordingTriggerMode)
+            if recordingTriggerMode != .walkieTalkie {
+                unregisterWalkieTalkieLatchHotKey?()
+            }
+        }
+    }
+    @Published var recordingHotKey: RecordingHotKey = .r {
+        didSet {
+            defaults.set(recordingHotKey.rawValue, forKey: Keys.recordingHotKey)
+            applyRecordingHotKey(previous: oldValue)
+        }
+    }
+    @Published var transcriptionMode: TranscriptionMode = .localWhisper {
         didSet { defaults.set(transcriptionMode.rawValue, forKey: Keys.transcriptionMode) }
     }
-    @Published var thresholdWords: Int = 75 {
+    @Published var improvementMode: ImprovementMode = .ollamaLocal {
+        didSet { defaults.set(improvementMode.rawValue, forKey: Keys.improvementMode) }
+    }
+    @Published var thresholdWords: Int = 35 {
         didSet { defaults.set(thresholdWords, forKey: Keys.thresholdWords) }
     }
     @Published var modificationStrength: Int = 2 {
@@ -43,8 +67,20 @@ final class AppState: ObservableObject {
     @Published var parakeetCachePath: String = "" {
         didSet { defaults.set(parakeetCachePath, forKey: Keys.parakeetCachePath) }
     }
+    @Published var ollamaBaseURL: String = "http://127.0.0.1:11434" {
+        didSet { defaults.set(ollamaBaseURL, forKey: Keys.ollamaBaseURL) }
+    }
+    @Published var ollamaModel: String = "qwen3.5:0.8b-mlx" {
+        didSet { defaults.set(ollamaModel, forKey: Keys.ollamaModel) }
+    }
     @Published var preferredMicrophoneID: String = "" {
         didSet { defaults.set(preferredMicrophoneID, forKey: Keys.preferredMicrophoneID) }
+    }
+    @Published var copyFinishedTextToClipboard: Bool = true {
+        didSet { defaults.set(copyFinishedTextToClipboard, forKey: Keys.copyFinishedTextToClipboard) }
+    }
+    @Published var autoSubmitDetectedTextFields: Bool = false {
+        didSet { defaults.set(autoSubmitDetectedTextFields, forKey: Keys.autoSubmitDetectedTextFields) }
     }
     @Published var availableMicrophones: [AudioInputDevice] = AudioInputDeviceDiscovery.inputDevices()
 
@@ -53,40 +89,70 @@ final class AppState: ObservableObject {
     var showPreview: (() -> Void)?
     var showSettings: (() -> Void)?
     var menuNeedsUpdate: (() -> Void)?
+    var registerRecordingHotKey: ((RecordingHotKey) -> Bool)?
     var registerCancelHotKey: (() -> Void)?
     var unregisterCancelHotKey: (() -> Void)?
+    var registerWalkieTalkieLatchHotKey: (() -> Void)?
+    var unregisterWalkieTalkieLatchHotKey: (() -> Void)?
     var showProcessingSignal: (() -> Void)?
     var flashReadySignal: (() -> Void)?
     var hideProcessingSignal: (() -> Void)?
 
     private let defaults = UserDefaults.standard
     private let audioRecorder = AudioRecorder()
+    private let realtimeAudioSink = OpenAIRealtimeAudioSink()
     private var activeStreamingTranscriber: OpenAIRealtimeTranscriber?
+    private var activeRealtimeStartupTask: Task<Void, Never>?
+    private var activeRecordingID: UUID?
+    private var activeArchiveDraft: TranscriptArchiveDraft?
+    private var isStartingRecording = false
+    private var activeWalkieTalkieRecording = false
+    private var walkieTalkieRecordingLatched = false
+    private var walkieTalkieKeyIsDown = false
+    private var isRevertingRecordingHotKey = false
 
     private enum Keys {
         static let autoImproveMode = "autoImproveMode"
+        static let recordingTriggerMode = "recordingTriggerMode"
+        static let recordingHotKey = "recordingHotKey"
         static let transcriptionMode = "transcriptionMode"
+        static let improvementMode = "improvementMode"
         static let thresholdWords = "thresholdWords"
         static let modificationStrength = "modificationStrength"
         static let outputMode = "outputMode"
         static let parakeetRuntimePath = "parakeetRuntimePath"
         static let parakeetScriptPath = "parakeetScriptPath"
         static let parakeetCachePath = "parakeetCachePath"
+        static let ollamaBaseURL = "ollamaBaseURL"
+        static let ollamaModel = "ollamaModel"
         static let preferredMicrophoneID = "preferredMicrophoneID"
+        static let copyFinishedTextToClipboard = "copyFinishedTextToClipboard"
+        static let autoSubmitDetectedTextFields = "autoSubmitDetectedTextFields"
         static let lastOpenAIRealtimeErrorSummary = "lastOpenAIRealtimeErrorSummary"
         static let lastOpenAIRealtimeErrorDetails = "lastOpenAIRealtimeErrorDetails"
     }
 
     private init() {
         apiKey = KeychainStore.loadOpenAIAPIKey() ?? ""
+        geminiAPIKey = KeychainStore.loadGeminiAPIKey() ?? ""
+        anthropicAPIKey = KeychainStore.loadAnthropicAPIKey() ?? ""
         autoImproveMode = AutoImproveMode(rawValue: defaults.string(forKey: Keys.autoImproveMode) ?? "") ?? .automatic
-        transcriptionMode = TranscriptionMode(rawValue: defaults.string(forKey: Keys.transcriptionMode) ?? "") ?? .localParakeet
+        recordingTriggerMode = RecordingTriggerMode(rawValue: defaults.string(forKey: Keys.recordingTriggerMode) ?? "") ?? .walkieTalkie
+        recordingHotKey = RecordingHotKey(rawValue: defaults.string(forKey: Keys.recordingHotKey) ?? "") ?? .r
+        transcriptionMode = TranscriptionMode(rawValue: defaults.string(forKey: Keys.transcriptionMode) ?? "") ?? .localWhisper
+        improvementMode = ImprovementMode(rawValue: defaults.string(forKey: Keys.improvementMode) ?? "") ?? .ollamaLocal
         let savedThreshold = defaults.integer(forKey: Keys.thresholdWords)
-        thresholdWords = savedThreshold > 0 ? savedThreshold : 75
+        thresholdWords = savedThreshold > 0 ? savedThreshold : 35
         let savedStrength = defaults.integer(forKey: Keys.modificationStrength)
         modificationStrength = savedStrength > 0 ? min(max(savedStrength, 1), 5) : 2
         outputMode = OutputMode(rawValue: defaults.string(forKey: Keys.outputMode) ?? "") ?? .lightCleanup
         preferredMicrophoneID = defaults.string(forKey: Keys.preferredMicrophoneID) ?? ""
+        if defaults.object(forKey: Keys.copyFinishedTextToClipboard) == nil {
+            copyFinishedTextToClipboard = true
+        } else {
+            copyFinishedTextToClipboard = defaults.bool(forKey: Keys.copyFinishedTextToClipboard)
+        }
+        autoSubmitDetectedTextFields = defaults.bool(forKey: Keys.autoSubmitDetectedTextFields)
         let savedOpenAISummary = defaults.string(forKey: Keys.lastOpenAIRealtimeErrorSummary) ?? ""
         let savedOpenAIDetails = defaults.string(forKey: Keys.lastOpenAIRealtimeErrorDetails) ?? ""
         let savedOpenAIDiagnostics = OpenAIRealtimeDiagnostics(summary: savedOpenAISummary, details: savedOpenAIDetails)
@@ -96,6 +162,8 @@ final class AppState: ObservableObject {
         parakeetRuntimePath = defaults.string(forKey: Keys.parakeetRuntimePath) ?? detected.pythonPath
         parakeetScriptPath = defaults.string(forKey: Keys.parakeetScriptPath) ?? detected.scriptPath
         parakeetCachePath = defaults.string(forKey: Keys.parakeetCachePath) ?? detected.cachePath
+        ollamaBaseURL = defaults.string(forKey: Keys.ollamaBaseURL) ?? "http://127.0.0.1:11434"
+        ollamaModel = defaults.string(forKey: Keys.ollamaModel) ?? "qwen3.5:0.8b-mlx"
     }
 
     var isRecording: Bool {
@@ -135,36 +203,122 @@ final class AppState: ObservableObject {
             : "Parakeet runtime was not fully detected. Check the paths below."
     }
 
-    func toggleRecording() {
-        if isRecording {
-            stopRecording()
-        } else {
-            startRecording()
+    func refreshRecordingHotKeyRegistration() {
+        applyRecordingHotKey(previous: nil)
+    }
+
+    func prewarmLocalModels() {
+        let selectedTranscriptionMode = transcriptionMode
+        let selectedImprovementMode = improvementMode
+        let selectedOllamaBaseURL = ollamaBaseURL
+        let selectedOllamaModel = ollamaModel
+
+        Task.detached(priority: .utility) {
+            if selectedTranscriptionMode == .localWhisper {
+                await WhisperCppTranscriber().warmUp()
+            }
+            if selectedImprovementMode == .ollamaLocal {
+                await OllamaImproveEngine(
+                    baseURL: selectedOllamaBaseURL,
+                    model: selectedOllamaModel
+                ).warmUp()
+            }
         }
     }
 
-    func startRecording() {
-        guard !phase.isBusy else { return }
-        Task { await startRecordingFlow() }
+    func toggleRecording(requestedAt: Date = Date()) {
+        if isRecording {
+            stopRecording()
+        } else {
+            startRecording(requestedAt: requestedAt)
+        }
+    }
+
+    private func applyRecordingHotKey(previous: RecordingHotKey?) {
+        guard !isRevertingRecordingHotKey, let registerRecordingHotKey else { return }
+        guard registerRecordingHotKey(recordingHotKey) else {
+            statusMessage = "Could not register \(recordingHotKey.label)."
+            if let previous, previous != recordingHotKey {
+                isRevertingRecordingHotKey = true
+                recordingHotKey = previous
+                isRevertingRecordingHotKey = false
+                _ = registerRecordingHotKey(previous)
+            }
+            return
+        }
+        if previous != nil {
+            statusMessage = "Recording hotkey set to \(recordingHotKey.label)."
+        }
+    }
+
+    func recordingHotKeyPressed(requestedAt: Date = Date()) {
+        guard recordingTriggerMode == .walkieTalkie else {
+            toggleRecording(requestedAt: requestedAt)
+            return
+        }
+
+        guard !walkieTalkieKeyIsDown else { return }
+        walkieTalkieKeyIsDown = true
+
+        if isRecording {
+            if activeWalkieTalkieRecording && walkieTalkieRecordingLatched {
+                stopRecording()
+            }
+            return
+        }
+
+        guard !phase.isBusy, !isStartingRecording else { return }
+        activeWalkieTalkieRecording = true
+        walkieTalkieRecordingLatched = false
+        startRecording(requestedAt: requestedAt)
+    }
+
+    func recordingHotKeyReleased() {
+        walkieTalkieKeyIsDown = false
+        guard recordingTriggerMode == .walkieTalkie else { return }
+        stopUnlatchedWalkieTalkieRecordingIfNeeded()
+    }
+
+    func latchCurrentWalkieTalkieRecording() {
+        guard recordingTriggerMode == .walkieTalkie,
+              activeWalkieTalkieRecording,
+              isRecording,
+              !walkieTalkieRecordingLatched
+        else { return }
+
+        walkieTalkieRecordingLatched = true
+        unregisterWalkieTalkieLatchHotKey?()
+        statusMessage = "Recording latched."
+    }
+
+    func startRecording(requestedAt: Date = Date()) {
+        guard !phase.isBusy, !isStartingRecording else { return }
+        isStartingRecording = true
+        logRecordingStartup("start requested", requestedAt: requestedAt)
+        Task { await startRecordingFlow(requestedAt: requestedAt) }
     }
 
     func stopRecording() {
         guard case .recording = phase else { return }
         unregisterCancelHotKey?()
+        resetWalkieTalkieRecordingState()
+        activeRealtimeStartupTask?.cancel()
+        activeRealtimeStartupTask = nil
+        activeRecordingID = nil
         let streamingTranscriber = activeStreamingTranscriber
         activeStreamingTranscriber = nil
         guard let audioURL = audioRecorder.stop() else {
+            realtimeAudioSink.clear()
             if let streamingTranscriber {
                 Task { await streamingTranscriber.cancel() }
             }
             failWithMessage("Recording stopped before an audio file was created.")
             return
         }
+        realtimeAudioSink.clear()
 
         phase = .transcribing
-        statusMessage = streamingTranscriber == nil
-            ? "Transcribing with local Parakeet."
-            : "Finalizing OpenAI streaming transcript."
+        statusMessage = transcriptionStatusMessage(streamingTranscriber: streamingTranscriber)
         showProcessingSignal?()
         showPill?()
         Task { await processRecording(audioURL: audioURL, streamingTranscriber: streamingTranscriber) }
@@ -173,15 +327,22 @@ final class AppState: ObservableObject {
     func cancelRecording() {
         guard case .recording = phase else { return }
         unregisterCancelHotKey?()
+        resetWalkieTalkieRecordingState()
+        activeRealtimeStartupTask?.cancel()
+        activeRealtimeStartupTask = nil
+        activeRecordingID = nil
         let streamingTranscriber = activeStreamingTranscriber
         activeStreamingTranscriber = nil
         let audioURL = audioRecorder.stop()
+        realtimeAudioSink.clear()
         if let streamingTranscriber {
             Task { await streamingTranscriber.cancel() }
         }
         if let audioURL {
             try? FileManager.default.removeItem(at: audioURL)
         }
+        TranscriptArchiveStore.deleteDraft(activeArchiveDraft)
+        activeArchiveDraft = nil
         session = .empty
         showRawTranscript = false
         phase = .idle
@@ -211,6 +372,15 @@ final class AppState: ObservableObject {
         Task { await improveCurrentTranscript(force: true) }
     }
 
+    func updateDisplayText(_ text: String) {
+        if showRawTranscript {
+            session.rawTranscript = text
+        } else {
+            session.improvedText = text
+        }
+        persistTranscriptArchive(transcriptionEngineName: nil)
+    }
+
     func openSettings() {
         showSettings?()
     }
@@ -221,62 +391,158 @@ final class AppState: ObservableObject {
         statusMessage = "Copied OpenAI diagnostics."
     }
 
-    private func startRecordingFlow() async {
+    private func startRecordingFlow(requestedAt: Date) async {
+        defer { isStartingRecording = false }
+        activeArchiveDraft = nil
+
         do {
             try await AudioRecorder.requestMicrophonePermission()
+            logRecordingStartup("microphone permission ready", requestedAt: requestedAt)
 
-            let streamingTranscriber = await prepareStreamingTranscriberIfNeeded()
+            let recordingID = UUID()
+            let archiveDraft = try TranscriptArchiveStore.prepareRecording(createdAt: requestedAt)
+            activeArchiveDraft = archiveDraft
+            let shouldPrepareRealtime = transcriptionMode == .fastest
+            let shouldBufferRealtimeAudio = shouldPrepareRealtime &&
+                !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            realtimeAudioSink.reset(bufferPendingAudio: shouldBufferRealtimeAudio)
             let audioURL: URL
+            let audioSink = realtimeAudioSink
             do {
-                audioURL = try audioRecorder.start { buffer in
-                    streamingTranscriber?.appendAudioBuffer(buffer)
-                }
+                audioURL = try audioRecorder.start(
+                    at: archiveDraft.audioURL,
+                    bufferSize: 1024,
+                    streamHandler: { buffer in
+                        audioSink.appendAudioBuffer(buffer)
+                    },
+                    onFirstBuffer: {
+                        NSLog(
+                            "Recording startup: first audio buffer after %.3fs.",
+                            Date().timeIntervalSince(requestedAt)
+                        )
+                    }
+                )
             } catch {
-                if let streamingTranscriber {
-                    await streamingTranscriber.cancel()
-                }
+                realtimeAudioSink.clear()
                 throw error
             }
-            activeStreamingTranscriber = streamingTranscriber
+            activeRecordingID = recordingID
             session = TranscriptSession(audioURL: audioURL, rawTranscript: "", improvedText: "", message: nil, improveFailed: false)
             showRawTranscript = false
-            if streamingTranscriber != nil {
-                statusMessage = "Recording with OpenAI realtime transcription."
-            } else if transcriptionMode == .fastest {
-                statusMessage = "Recording for Parakeet fallback."
+            if shouldPrepareRealtime {
+                statusMessage = shouldBufferRealtimeAudio
+                    ? "Recording. Preparing OpenAI realtime transcription."
+                    : "Recording for Parakeet fallback."
             } else {
                 statusMessage = nil
             }
             phase = .recording(audioURL)
             registerCancelHotKey?()
+            finishWalkieTalkieStartIfNeeded()
+            guard case .recording = phase else { return }
             showPill?()
+            logRecordingStartup("audio engine started and recording UI shown", requestedAt: requestedAt)
+
+            if shouldPrepareRealtime {
+                activeRealtimeStartupTask = Task { [weak self] in
+                    await self?.prepareRealtimeTranscriberForActiveRecording(
+                        recordingID: recordingID,
+                        requestedAt: requestedAt
+                    )
+                }
+            }
         } catch {
+            TranscriptArchiveStore.deleteDraft(activeArchiveDraft)
+            activeRecordingID = nil
+            activeRealtimeStartupTask = nil
+            activeArchiveDraft = nil
+            realtimeAudioSink.clear()
+            resetWalkieTalkieRecordingState()
             failWithMessage(error.localizedDescription)
         }
+    }
+
+    private func finishWalkieTalkieStartIfNeeded() {
+        guard recordingTriggerMode == .walkieTalkie, activeWalkieTalkieRecording else { return }
+        registerWalkieTalkieLatchHotKey?()
+        if !walkieTalkieKeyIsDown && !walkieTalkieRecordingLatched {
+            stopRecording()
+        }
+    }
+
+    private func stopUnlatchedWalkieTalkieRecordingIfNeeded() {
+        guard activeWalkieTalkieRecording, !walkieTalkieRecordingLatched else { return }
+        if isRecording {
+            stopRecording()
+        }
+    }
+
+    private func resetWalkieTalkieRecordingState() {
+        activeWalkieTalkieRecording = false
+        walkieTalkieRecordingLatched = false
+        unregisterWalkieTalkieLatchHotKey?()
+    }
+
+    private func prepareRealtimeTranscriberForActiveRecording(recordingID: UUID, requestedAt: Date) async {
+        let streamingTranscriber = await prepareStreamingTranscriberIfNeeded()
+
+        guard !Task.isCancelled,
+              activeRecordingID == recordingID,
+              case .recording = phase else {
+            if let streamingTranscriber {
+                await streamingTranscriber.cancel()
+            }
+            return
+        }
+
+        activeRealtimeStartupTask = nil
+        guard let streamingTranscriber else {
+            realtimeAudioSink.discardPendingAudio()
+            return
+        }
+
+        activeStreamingTranscriber = streamingTranscriber
+        let replayedBufferCount = realtimeAudioSink.setTranscriber(streamingTranscriber)
+        statusMessage = "Recording with OpenAI realtime transcription."
+        NSLog(
+            "Recording startup: OpenAI realtime ready after %.3fs; replayed %d buffered audio buffers.",
+            Date().timeIntervalSince(requestedAt),
+            replayedBufferCount
+        )
     }
 
     private func processRecording(audioURL: URL, streamingTranscriber: OpenAIRealtimeTranscriber?) async {
         do {
             let result = try await transcribe(audioURL: audioURL, streamingTranscriber: streamingTranscriber)
             session.rawTranscript = result.text
-            session.improvedText = result.text
+            session.improvedText = ""
             session.message = nil
             session.improveFailed = false
+            persistTranscriptArchive(transcriptionEngineName: result.engineName)
 
             switch autoImproveMode {
             case .off:
                 phase = .ready
+                showRawTranscript = true
                 statusMessage = "Showing raw transcript."
                 finishProcessing()
             case .manual:
                 phase = .ready
+                showRawTranscript = true
                 statusMessage = "Transcript ready."
                 finishProcessing()
             case .automatic:
                 if wordCount(result.text) >= thresholdWords {
+                    // Pipeline scheduling win: signal "transcript captured" the
+                    // instant raw text is in hand so the user sees the first
+                    // useful result immediately, while the improve roundtrip
+                    // is still in flight. The improve completion path still
+                    // owns the final paste/clipboard delivery.
+                    flashReadySignal?()
                     await improveCurrentTranscript(force: false)
                 } else {
                     phase = .ready
+                    showRawTranscript = true
                     statusMessage = "Transcript ready."
                     finishProcessing()
                 }
@@ -289,6 +555,7 @@ final class AppState: ObservableObject {
                 message: error.localizedDescription,
                 improveFailed: false
             )
+            persistTranscriptArchive(transcriptionEngineName: nil)
             phase = .failed
             statusMessage = error.localizedDescription
             finishProcessing()
@@ -325,6 +592,14 @@ final class AppState: ObservableObject {
 
         if transcriptionMode == .openAIAPI {
             return try await transcribeWithOpenAIAPI(audioURL: audioURL, startedAt: startedAt)
+        }
+
+        if transcriptionMode == .localWhisper {
+            return try await transcribeWithLocalWhisper(audioURL: audioURL, startedAt: startedAt)
+        }
+
+        if transcriptionMode == .appleLocal {
+            return try await transcribeWithAppleLocal(audioURL: audioURL, startedAt: startedAt)
         }
 
         if transcriptionMode == .fastest, let streamingTranscriber {
@@ -375,6 +650,24 @@ final class AppState: ObservableObject {
         return result
     }
 
+    private func transcribeWithAppleLocal(audioURL: URL, startedAt: Date) async throws -> TranscriptionResult {
+        statusMessage = "Transcribing with Apple Speech."
+        let result = try await AppleLocalAudioTranscriber().transcribe(audioURL: audioURL)
+        let elapsed = Date().timeIntervalSince(startedAt)
+        NSLog("Apple Speech transcription finished in %.2fs.", elapsed)
+        statusMessage = String(format: "Apple Speech transcript ready in %.1fs.", elapsed)
+        return result
+    }
+
+    private func transcribeWithLocalWhisper(audioURL: URL, startedAt: Date) async throws -> TranscriptionResult {
+        statusMessage = "Transcribing with local Whisper."
+        let result = try await WhisperCppTranscriber().transcribe(audioURL: audioURL)
+        let elapsed = Date().timeIntervalSince(startedAt)
+        NSLog("whisper.cpp transcription finished in %.2fs.", elapsed)
+        statusMessage = String(format: "Local Whisper transcript ready in %.1fs.", elapsed)
+        return result
+    }
+
     private func shouldVerifyRealtimeTranscript(_ text: String) -> Bool {
         let words = text
             .split { !$0.isLetter && !$0.isNumber }
@@ -391,16 +684,43 @@ final class AppState: ObservableObject {
         }
 
         phase = .improving
-        statusMessage = "Improving with gpt-5.4-mini."
+        statusMessage = "Improving with \(improvementMode.detailLabel)."
         showProcessingSignal?()
         showPill?()
 
         do {
-            let engine = OpenAIImproveEngine(apiKey: apiKey)
-            let improved = try await engine.improve(
+            let engine = makeImproveEngine()
+            // Progressive update path: invoke streaming improve. The engine
+            // calls back with the cumulative improved text; we hop to main
+            // and update session.improvedText so the preview pill / UI can
+            // paint the partial result immediately. The first delta also
+            // fires flashReadySignal? (see flashFirstImprovedDelta) which is
+            // the user-visible "first improved character" moment.
+            //
+            // Paste / clipboard side-effects ONLY happen in finishProcessing()
+            // after this call returns -- that guarantees no double-paste even
+            // though we update session.improvedText many times during stream.
+            var sawFirstDelta = false
+            let improved = try await engine.improveStreaming(
                 rawTranscript: raw,
                 outputMode: outputMode,
-                modificationStrength: modificationStrength
+                modificationStrength: cleanupStrength,
+                onDelta: { [weak self] partial in
+                    let firstThisDelta = !sawFirstDelta
+                    sawFirstDelta = true
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        // Show the partial improved text in the preview surface.
+                        // Suppressing showRawTranscript flips the menu/pill onto
+                        // the (still-incomplete) improved buffer.
+                        self.session.improvedText = partial
+                        self.showRawTranscript = false
+                        if firstThisDelta {
+                            // First-visible moment for streamed improvements.
+                            self.flashFirstImprovedDelta()
+                        }
+                    }
+                }
             )
             session.improvedText = improved
             session.message = nil
@@ -408,24 +728,114 @@ final class AppState: ObservableObject {
             showRawTranscript = false
             phase = .ready
             statusMessage = "Improved text ready."
+            persistTranscriptArchive(transcriptionEngineName: nil)
         } catch {
-            session.improvedText = raw
+            session.improvedText = ""
             session.message = "Improve failed; showing raw transcript. \(error.localizedDescription)"
             session.improveFailed = true
-            showRawTranscript = false
+            showRawTranscript = true
             phase = .ready
             statusMessage = session.message
+            persistTranscriptArchive(transcriptionEngineName: nil)
         }
 
         finishProcessing()
+    }
+
+    /// First improved character is visible in the preview. Flash the same
+    /// "ready signal" the user gets on the raw transcript path so they know
+    /// improvement is underway and partial text is already onscreen. We do
+    /// NOT paste here -- paste/clipboard happens once at finishProcessing()
+    /// to preserve the no-double-paste guardrail.
+    private func flashFirstImprovedDelta() {
+        flashReadySignal?()
+    }
+
+    private func makeImproveEngine() -> any ImproveEngine {
+        switch improvementMode {
+        case .openAI:
+            return OpenAIImproveEngine(apiKey: apiKey)
+        case .geminiFlash:
+            return GeminiImproveEngine(apiKey: geminiAPIKey)
+        case .claudeHaiku:
+            return AnthropicImproveEngine(apiKey: anthropicAPIKey)
+        case .appleLocal:
+            return AppleLocalImproveEngine()
+        case .ollamaLocal:
+            return OllamaImproveEngine(baseURL: ollamaBaseURL, model: ollamaModel)
+        }
+    }
+
+    private var cleanupStrength: Int {
+        switch outputMode {
+        case .verbatim:
+            return 1
+        case .lightCleanup:
+            return 2
+        case .promptCleanup:
+            return 3
+        case .structuredTask:
+            return 4
+        }
+    }
+
+    private func persistTranscriptArchive(transcriptionEngineName: String?) {
+        guard let archiveDraft = activeArchiveDraft ?? archiveDraftFromSession() else { return }
+        let record = TranscriptArchiveRecord(
+            id: archiveDraft.id,
+            createdAt: archiveDraft.createdAt,
+            updatedAt: Date(),
+            audioPath: archiveDraft.audioURL.path,
+            rawTranscript: session.rawTranscript,
+            cleanedTranscript: session.improvedText,
+            finalTranscript: session.preferredText,
+            improveFailed: session.improveFailed,
+            message: session.message ?? statusMessage,
+            transcriptionMode: transcriptionMode.rawValue,
+            transcriptionEngine: transcriptionEngineName,
+            improvementMode: improvementMode.rawValue,
+            cleanupMode: outputMode.rawValue,
+            autoImproveMode: autoImproveMode.rawValue,
+            thresholdWords: thresholdWords
+        )
+        TranscriptArchiveStore.save(record)
+    }
+
+    private func archiveDraftFromSession() -> TranscriptArchiveDraft? {
+        guard let audioURL = session.audioURL else { return nil }
+        let directoryURL = audioURL.deletingLastPathComponent()
+        let id = directoryURL.lastPathComponent
+        guard !id.isEmpty else { return nil }
+        return TranscriptArchiveDraft(
+            id: id,
+            createdAt: Date(),
+            directoryURL: directoryURL,
+            audioURL: audioURL
+        )
+    }
+
+    private func transcriptionStatusMessage(streamingTranscriber: OpenAIRealtimeTranscriber?) -> String {
+        if streamingTranscriber != nil {
+            return "Finalizing OpenAI streaming transcript."
+        }
+
+        switch transcriptionMode {
+        case .localWhisper:
+            return "Transcribing with local Whisper."
+        case .localParakeet, .fastest:
+            return "Transcribing with local Parakeet."
+        case .appleLocal:
+            return "Transcribing with Apple Speech."
+        case .openAIAPI:
+            return "Transcribing with OpenAI API."
+        }
     }
 
     private func finishProcessing() {
         unregisterCancelHotKey?()
         let text = displayText.trimmingCharacters(in: .whitespacesAndNewlines)
         if !text.isEmpty {
-            copyToPasteboard(text)
-            statusMessage = "Copied to clipboard."
+            completeWithText(text)
             flashReadySignal?()
         } else {
             hideProcessingSignal?()
@@ -433,26 +843,72 @@ final class AppState: ObservableObject {
         hidePill?()
     }
 
+    private func completeWithText(_ text: String) {
+        if AccessibilityPasteController.focusedElementAcceptsText(promptForPermission: true) {
+            do {
+                try AccessibilityPasteController.paste(
+                    text: text,
+                    leaveClipboardChanged: copyFinishedTextToClipboard,
+                    submitAfterPaste: autoSubmitDetectedTextFields
+                )
+                if autoSubmitDetectedTextFields {
+                    statusMessage = copyFinishedTextToClipboard
+                        ? "Pasted, submitted, and copied to clipboard."
+                        : "Pasted and submitted."
+                } else {
+                    statusMessage = copyFinishedTextToClipboard
+                        ? "Pasted and copied to clipboard."
+                        : "Pasted."
+                }
+                return
+            } catch {
+                if copyFinishedTextToClipboard {
+                    copyToPasteboard(text)
+                    statusMessage = "Copied. Enable Accessibility for AutoImproveRecorder in System Settings " +
+                        "to paste automatically."
+                } else {
+                    statusMessage = "Text ready. Enable Accessibility for AutoImproveRecorder in System Settings " +
+                        "to paste automatically."
+                }
+                return
+            }
+        }
+
+        if copyFinishedTextToClipboard {
+            copyToPasteboard(text)
+            statusMessage = "Copied to clipboard."
+        } else {
+            statusMessage = "Text ready."
+        }
+    }
+
     private func completionNotificationBody() -> String {
         let raw = session.rawTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
         let improved = session.improvedText.trimmingCharacters(in: .whitespacesAndNewlines)
         let wasImproved = !session.improveFailed && !raw.isEmpty && !improved.isEmpty && improved != raw
 
+        let textFieldDestination = autoSubmitDetectedTextFields
+            ? "pasted into and submitted from a focused text field"
+            : "pasted into a focused text field"
+        let destination = copyFinishedTextToClipboard
+            ? "\(textFieldDestination) or copied to the clipboard"
+            : "\(textFieldDestination) when available"
+
         if session.improveFailed {
-            return "Improve failed, so the raw transcript is copied to the clipboard."
+            return "Improve failed, so the raw transcript is \(destination)."
         }
 
         if wasImproved {
-            return "Improved text is copied to the clipboard. Paste when ready."
+            return "Improved text is \(destination)."
         }
 
         switch autoImproveMode {
         case .off:
-            return "Raw transcript is copied to the clipboard. Paste when ready."
+            return "Raw transcript is \(destination)."
         case .manual:
-            return "Transcript is copied to the clipboard. Paste or open Preview to improve it."
+            return "Transcript is \(destination). Open Preview to improve it."
         case .automatic:
-            return "Transcript is copied to the clipboard. Paste when ready."
+            return "Transcript is \(destination)."
         }
     }
 
@@ -472,10 +928,23 @@ final class AppState: ObservableObject {
         NSLog("Last OpenAI realtime diagnostics: \(diagnostics.details)")
     }
 
+    private func logRecordingStartup(_ message: String, requestedAt: Date) {
+        NSLog("Recording startup: \(message) after %.3fs.", Date().timeIntervalSince(requestedAt))
+    }
+
     private func saveOpenAIRealtimeDiagnostics() {
-        let diagnostics = lastOpenAIRealtimeDiagnostics
-        defaults.set(diagnostics?.summary ?? "", forKey: Keys.lastOpenAIRealtimeErrorSummary)
-        defaults.set(diagnostics?.details ?? "", forKey: Keys.lastOpenAIRealtimeErrorDetails)
+        // Pipeline scheduling: when this runs while transcribe / improve are
+        // active, the synchronous UserDefaults writes show up on the critical
+        // path. Defer the persistence to a background queue so the main
+        // actor returns immediately. The menu refresh stays on the main actor
+        // because it touches UI.
+        let summary = lastOpenAIRealtimeDiagnostics?.summary ?? ""
+        let details = lastOpenAIRealtimeDiagnostics?.details ?? ""
+        DispatchQueue.global(qos: .utility).async {
+            let defaults = UserDefaults.standard
+            defaults.set(summary, forKey: Keys.lastOpenAIRealtimeErrorSummary)
+            defaults.set(details, forKey: Keys.lastOpenAIRealtimeErrorDetails)
+        }
         menuNeedsUpdate?()
     }
 
@@ -487,5 +956,130 @@ final class AppState: ObservableObject {
 
     private func wordCount(_ text: String) -> Int {
         text.split { $0.isWhitespace || $0.isNewline }.count
+    }
+}
+
+private final class OpenAIRealtimeAudioSink {
+    private let lock = NSLock()
+    private let maxPendingSeconds = 15.0
+    private var transcriber: OpenAIRealtimeTranscriber?
+    private var shouldBufferPendingAudio = false
+    private var isReplayingPendingAudio = false
+    private var pendingBuffers: [AVAudioPCMBuffer] = []
+    private var pendingFrameCount: AVAudioFramePosition = 0
+
+    func reset(bufferPendingAudio: Bool) {
+        lock.lock()
+        transcriber = nil
+        shouldBufferPendingAudio = bufferPendingAudio
+        isReplayingPendingAudio = false
+        pendingBuffers.removeAll()
+        pendingFrameCount = 0
+        lock.unlock()
+    }
+
+    @discardableResult
+    func setTranscriber(_ transcriber: OpenAIRealtimeTranscriber) -> Int {
+        lock.lock()
+        self.transcriber = transcriber
+        shouldBufferPendingAudio = false
+        isReplayingPendingAudio = true
+        var buffersToReplay = pendingBuffers
+        pendingBuffers.removeAll()
+        pendingFrameCount = 0
+        lock.unlock()
+
+        var replayedBufferCount = 0
+        while true {
+            for buffer in buffersToReplay {
+                transcriber.appendAudioBuffer(buffer)
+            }
+            replayedBufferCount += buffersToReplay.count
+
+            lock.lock()
+            if pendingBuffers.isEmpty {
+                isReplayingPendingAudio = false
+                lock.unlock()
+                break
+            }
+            buffersToReplay = pendingBuffers
+            pendingBuffers.removeAll()
+            pendingFrameCount = 0
+            lock.unlock()
+        }
+
+        return replayedBufferCount
+    }
+
+    func appendAudioBuffer(_ buffer: AVAudioPCMBuffer) {
+        lock.lock()
+        if let transcriber, !isReplayingPendingAudio {
+            lock.unlock()
+            transcriber.appendAudioBuffer(buffer)
+            return
+        }
+
+        guard (shouldBufferPendingAudio || isReplayingPendingAudio),
+              let copiedBuffer = Self.copyBuffer(buffer) else {
+            lock.unlock()
+            return
+        }
+
+        pendingBuffers.append(copiedBuffer)
+        pendingFrameCount += AVAudioFramePosition(copiedBuffer.frameLength)
+        trimPendingBuffersIfNeeded(sampleRate: copiedBuffer.format.sampleRate)
+        lock.unlock()
+    }
+
+    func discardPendingAudio() {
+        lock.lock()
+        pendingBuffers.removeAll()
+        pendingFrameCount = 0
+        shouldBufferPendingAudio = false
+        isReplayingPendingAudio = false
+        lock.unlock()
+    }
+
+    func clear() {
+        lock.lock()
+        transcriber = nil
+        shouldBufferPendingAudio = false
+        isReplayingPendingAudio = false
+        pendingBuffers.removeAll()
+        pendingFrameCount = 0
+        lock.unlock()
+    }
+
+    private func trimPendingBuffersIfNeeded(sampleRate: Double) {
+        guard sampleRate > 0 else { return }
+        let maxPendingFrames = AVAudioFramePosition(sampleRate * maxPendingSeconds)
+        while pendingFrameCount > maxPendingFrames, !pendingBuffers.isEmpty {
+            let removed = pendingBuffers.removeFirst()
+            pendingFrameCount -= AVAudioFramePosition(removed.frameLength)
+        }
+    }
+
+    private static func copyBuffer(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
+        guard let copiedBuffer = AVAudioPCMBuffer(pcmFormat: buffer.format, frameCapacity: buffer.frameLength) else {
+            return nil
+        }
+        copiedBuffer.frameLength = buffer.frameLength
+
+        let sourceBuffers = UnsafeMutableAudioBufferListPointer(
+            UnsafeMutablePointer(mutating: buffer.audioBufferList)
+        )
+        let destinationBuffers = UnsafeMutableAudioBufferListPointer(copiedBuffer.mutableAudioBufferList)
+
+        for index in 0..<min(sourceBuffers.count, destinationBuffers.count) {
+            guard let sourceData = sourceBuffers[index].mData,
+                  let destinationData = destinationBuffers[index].mData else {
+                continue
+            }
+            let byteCount = Int(sourceBuffers[index].mDataByteSize)
+            memcpy(destinationData, sourceData, byteCount)
+            destinationBuffers[index].mDataByteSize = sourceBuffers[index].mDataByteSize
+        }
+
+        return copiedBuffer
     }
 }

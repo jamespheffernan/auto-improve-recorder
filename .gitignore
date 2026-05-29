@@ -1,3 +1,15 @@
 .DS_Store
 *.zip
+
+# Build output / derived data
+build/
 DerivedData/
+.build/
+
+# Xcode user-specific state
+xcuserdata/
+*.xcuserstate
+
+# Tooling
+node_modules/
+.autoresearch/

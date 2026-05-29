@@ -1,0 +1,11 @@
+<svg width="44" height="44" viewBox="0 0 44 44" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <title>Auto Improve Recorder menu bar template icon</title>
+  <path d="M22 4C17.58 4 14 7.58 14 12V21C14 25.42 17.58 29 22 29C26.42 29 30 25.42 30 21V12C30 7.58 26.42 4 22 4Z" fill="black"/>
+  <path d="M9 19C9 26.18 14.82 32 22 32C29.18 32 35 26.18 35 19" stroke="black" stroke-width="4" stroke-linecap="round"/>
+  <path d="M22 32V39" stroke="black" stroke-width="4" stroke-linecap="round"/>
+  <path d="M16 40H28" stroke="black" stroke-width="4" stroke-linecap="round"/>
+  <path d="M7 18H10.5L13.2 11L17.2 25L21 9L24.6 25L28.2 15.5" stroke="white" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M31 14H38" stroke="white" stroke-width="2.8" stroke-linecap="round"/>
+  <path d="M31 19H36" stroke="white" stroke-width="2.8" stroke-linecap="round"/>
+  <path d="M31 24H39" stroke="white" stroke-width="2.8" stroke-linecap="round"/>
+</svg>

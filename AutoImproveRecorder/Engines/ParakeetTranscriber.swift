@@ -1,5 +1,213 @@
 import Foundation
 
+struct WhisperCppTranscriber: TranscriptionEngine {
+    private let executablePath = "/Applications/Field Theory.app/Contents/Resources/whisper-cli"
+    private let serverPath = "/Applications/Field Theory.app/Contents/Resources/whisper-server"
+    private let modelPath: String = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Application Support/fieldtheory-mac/models/ggml-small.en.bin")
+        .path
+
+    func transcribe(audioURL: URL) async throws -> TranscriptionResult {
+        let text = try await WhisperCppServer.shared.transcribe(
+            audioURL: audioURL,
+            executablePath: executablePath,
+            serverPath: serverPath,
+            modelPath: modelPath
+        )
+        guard !text.isEmpty else {
+            throw TranscriptionEngineError.emptyLocalTranscript(provider: "whisper.cpp")
+        }
+        return TranscriptionResult(text: text, engineName: "whisper.cpp small.en server")
+    }
+
+    func warmUp() async {
+        try? await WhisperCppServer.shared.warmUp(
+            executablePath: executablePath,
+            serverPath: serverPath,
+            modelPath: modelPath
+        )
+    }
+}
+
+actor WhisperCppServer {
+    static let shared = WhisperCppServer()
+
+    private let provider = "whisper.cpp"
+    private let host = "127.0.0.1"
+    private let port = 8173
+    private let inferencePath = "/inference"
+    private let startupTimeout: TimeInterval = 30
+    private let transcriptionTimeout: TimeInterval = 30
+    private var process: Process?
+    private var activeServerPath: String?
+    private var activeModelPath: String?
+    private var stderrPipe: Pipe?
+
+    func transcribe(audioURL: URL, executablePath: String, serverPath: String, modelPath: String) async throws -> String {
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: audioURL.path) else {
+            throw TranscriptionEngineError.audioMissing(audioURL.path)
+        }
+        try await ensureUsableRuntime(executablePath: executablePath, serverPath: serverPath, modelPath: modelPath)
+        try await ensureServer(serverPath: serverPath, modelPath: modelPath)
+        return try await requestTranscription(audioURL: audioURL)
+    }
+
+    func warmUp(executablePath: String, serverPath: String, modelPath: String) async throws {
+        try await ensureUsableRuntime(executablePath: executablePath, serverPath: serverPath, modelPath: modelPath)
+        try await ensureServer(serverPath: serverPath, modelPath: modelPath)
+    }
+
+    private func ensureUsableRuntime(executablePath: String, serverPath: String, modelPath: String) async throws {
+        let fileManager = FileManager.default
+        guard fileManager.isExecutableFile(atPath: serverPath) else {
+            if fileManager.isExecutableFile(atPath: executablePath) {
+                throw TranscriptionEngineError.executableMissing(provider: provider, path: serverPath)
+            }
+            throw TranscriptionEngineError.executableMissing(provider: provider, path: executablePath)
+        }
+        guard fileManager.fileExists(atPath: modelPath) else {
+            throw TranscriptionEngineError.modelMissing(provider: provider, path: modelPath)
+        }
+    }
+
+    private func ensureServer(serverPath: String, modelPath: String) async throws {
+        if let process, process.isRunning, activeServerPath == serverPath, activeModelPath == modelPath {
+            return
+        }
+
+        if process == nil, await probeServer() {
+            activeServerPath = serverPath
+            activeModelPath = modelPath
+            return
+        }
+
+        stopServer()
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: serverPath)
+        process.arguments = [
+            "-m", modelPath,
+            "-l", "en",
+            "-nt",
+            "-bs", "1",
+            "-bo", "1",
+            "-t", "8",
+            "--host", host,
+            "--port", String(port),
+            "--inference-path", inferencePath
+        ]
+
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        process.standardOutput = stdoutPipe
+        process.standardError = stderrPipe
+        stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            if !data.isEmpty, let text = String(data: data, encoding: .utf8), !text.isEmpty {
+                NSLog("whisper.cpp server: \(text.trimmingCharacters(in: .whitespacesAndNewlines))")
+            }
+        }
+        stderrPipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            if !data.isEmpty, let text = String(data: data, encoding: .utf8), !text.isEmpty {
+                NSLog("whisper.cpp server: \(text.trimmingCharacters(in: .whitespacesAndNewlines))")
+            }
+        }
+
+        try process.run()
+        self.process = process
+        self.activeServerPath = serverPath
+        self.activeModelPath = modelPath
+        self.stderrPipe = stderrPipe
+
+        let deadline = Date().addingTimeInterval(startupTimeout)
+        while Date() < deadline {
+            if !process.isRunning {
+                stopServer()
+                throw TranscriptionEngineError.localProcessFailed(provider: provider, status: process.terminationStatus, stderr: "")
+            }
+            if await probeServer() {
+                return
+            }
+            try await Task.sleep(nanoseconds: 200_000_000)
+        }
+
+        stopServer()
+        throw TranscriptionEngineError.localTimedOut(provider: provider)
+    }
+
+    private func requestTranscription(audioURL: URL) async throws -> String {
+        let boundary = "AutoImproveRecorder-\(UUID().uuidString)"
+        var request = URLRequest(url: URL(string: "http://\(host):\(port)\(inferencePath)")!)
+        request.httpMethod = "POST"
+        request.timeoutInterval = transcriptionTimeout
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try multipartBody(audioURL: audioURL, boundary: boundary)
+
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await URLSession.shared.data(for: request)
+        } catch {
+            throw TranscriptionEngineError.localProcessFailed(provider: provider, status: -1, stderr: error.localizedDescription)
+        }
+
+        guard let httpResponse = response as? HTTPURLResponse, (200..<300).contains(httpResponse.statusCode) else {
+            let message = String(decoding: data, as: UTF8.self)
+            throw TranscriptionEngineError.localProcessFailed(provider: provider, status: -1, stderr: message)
+        }
+
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let text = json["text"] as? String else {
+            throw TranscriptionEngineError.localProcessFailed(
+                provider: provider,
+                status: -1,
+                stderr: String(decoding: data, as: UTF8.self)
+            )
+        }
+
+        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func multipartBody(audioURL: URL, boundary: String) throws -> Data {
+        var body = Data()
+        func append(_ string: String) {
+            body.append(Data(string.utf8))
+        }
+
+        append("--\(boundary)\r\n")
+        append("Content-Disposition: form-data; name=\"file\"; filename=\"\(audioURL.lastPathComponent)\"\r\n")
+        append("Content-Type: audio/wav\r\n\r\n")
+        body.append(try Data(contentsOf: audioURL))
+        append("\r\n--\(boundary)--\r\n")
+        return body
+    }
+
+    private func probeServer() async -> Bool {
+        guard let url = URL(string: "http://\(host):\(port)/") else { return false }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 0.5
+        do {
+            let (_, response) = try await URLSession.shared.data(for: request)
+            return response is HTTPURLResponse
+        } catch {
+            return false
+        }
+    }
+
+    private func stopServer() {
+        stderrPipe?.fileHandleForReading.readabilityHandler = nil
+        if let process, process.isRunning {
+            process.terminate()
+        }
+        process = nil
+        activeServerPath = nil
+        activeModelPath = nil
+        stderrPipe = nil
+    }
+}
+
 struct ParakeetRuntime: Equatable {
     var pythonPath: String
     var scriptPath: String

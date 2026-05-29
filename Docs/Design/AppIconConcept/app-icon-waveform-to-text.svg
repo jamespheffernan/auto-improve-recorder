@@ -1,0 +1,12 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <title>Auto Improve Recorder minimal app icon concept</title>
+  <rect width="1024" height="1024" fill="#102E34"/>
+  <rect x="368" y="180" width="288" height="456" rx="144" fill="#F4F1E6"/>
+  <rect x="420" y="244" width="184" height="328" rx="92" fill="#102E34"/>
+  <path d="M276 500C276 642 374 740 512 740C650 740 748 642 748 500" stroke="#F4F1E6" stroke-width="56" stroke-linecap="round"/>
+  <path d="M512 740V824" stroke="#F4F1E6" stroke-width="56" stroke-linecap="round"/>
+  <path d="M396 824H628" stroke="#F4F1E6" stroke-width="56" stroke-linecap="round"/>
+  <path d="M236 500H304L344 420L396 584L452 372L512 604L556 472" stroke="#52E0B7" stroke-width="44" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M620 454H790" stroke="#F4F1E6" stroke-width="44" stroke-linecap="round"/>
+  <path d="M620 546H742" stroke="#F4F1E6" stroke-width="44" stroke-linecap="round"/>
+</svg>

@@ -10,6 +10,7 @@ enum OpenAIRealtimeTranscriptionError: LocalizedError {
     case serverError(String)
     case webSocketFailed(String)
     case emptyTranscript
+    case finalizeTimedOut(String)
 
     var errorDescription: String? {
         switch self {
@@ -29,6 +30,8 @@ enum OpenAIRealtimeTranscriptionError: LocalizedError {
             return "OpenAI realtime WebSocket failed: \(message)"
         case .emptyTranscript:
             return "OpenAI realtime returned an empty transcript."
+        case .finalizeTimedOut(let message):
+            return "OpenAI realtime transcription did not finish in time: \(message)"
         }
     }
 }
@@ -38,6 +41,7 @@ final class OpenAIRealtimeTranscriber {
     private let converter = PCM16MonoAudioConverter()
     private let audioLock = NSLock()
     private var acceptingAudio = true
+    private var appendChain: Task<Void, Never> = Task {}
 
     init(apiKey: String) {
         connection = OpenAIRealtimeTranscriptionConnection(apiKey: apiKey)
@@ -62,7 +66,10 @@ final class OpenAIRealtimeTranscriber {
 
         do {
             guard let data = try converter.convert(buffer: buffer), !data.isEmpty else { return }
-            Task {
+            let previousAppend = appendChain
+            let connection = connection
+            appendChain = Task {
+                await previousAppend.value
                 await connection.enqueueAudio(data)
             }
         } catch {
@@ -73,12 +80,13 @@ final class OpenAIRealtimeTranscriber {
     }
 
     func finish() async throws -> TranscriptionResult {
-        stopAcceptingAudio()
+        let pendingAppends = stopAcceptingAudio()
+        await pendingAppends.value
         return try await connection.finish()
     }
 
     func cancel() async {
-        stopAcceptingAudio()
+        _ = stopAcceptingAudio()
         await connection.cancel()
     }
 
@@ -86,10 +94,12 @@ final class OpenAIRealtimeTranscriber {
         await connection.diagnostics(summary: summary)
     }
 
-    private func stopAcceptingAudio() {
+    private func stopAcceptingAudio() -> Task<Void, Never> {
         audioLock.lock()
         acceptingAudio = false
+        let pendingAppends = appendChain
         audioLock.unlock()
+        return pendingAppends
     }
 }
 
@@ -269,7 +279,6 @@ private actor OpenAIRealtimeTranscriptionConnection {
         isFinishing = true
         defer { _ = close() }
 
-        let finishStartedAt = Date()
         let completedCountAtFinish = completedTranscripts.count
 
         do {
@@ -286,10 +295,9 @@ private actor OpenAIRealtimeTranscriptionConnection {
 
             let text = assembledTranscript().trimmingCharacters(in: .whitespacesAndNewlines)
             let quietFor = Date().timeIntervalSince(lastTranscriptUpdate)
-            let waitedForFinalize = Date().timeIntervalSince(finishStartedAt)
             let sawCompletionAfterFinish = completedTranscripts.count > completedCountAtFinish
 
-            if !text.isEmpty, quietFor >= 0.7, sawCompletionAfterFinish || waitedForFinalize >= 1.5 {
+            if !text.isEmpty, quietFor >= 0.7, sawCompletionAfterFinish {
                 logFinish(text: text, usedTimeout: false)
                 return TranscriptionResult(text: text, engineName: "OpenAI Realtime \(transcriptionModel)")
             }
@@ -302,7 +310,9 @@ private actor OpenAIRealtimeTranscriptionConnection {
             throw OpenAIRealtimeTranscriptionError.emptyTranscript
         }
         logFinish(text: text, usedTimeout: true)
-        return TranscriptionResult(text: text, engineName: "OpenAI Realtime \(transcriptionModel)")
+        throw OpenAIRealtimeTranscriptionError.finalizeTimedOut(
+            "No completed transcript event arrived after manual commit; falling back to saved-audio transcription."
+        )
     }
 
     func cancel() {

@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="360" height="360" viewBox="0 0 360 360">
+  <!-- Monochrome template for the macOS status bar. System tints this (black/white). -->
+  <g fill="none" stroke="#000000" stroke-width="32" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M 70 310 L 180 50 L 290 310"/>
+  </g>
+  <g fill="none" stroke="#000000" stroke-width="20" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M 100 220 L 130 200 L 150 235 L 180 185 L 210 235 L 230 200 L 260 220"/>
+  </g>
+</svg>

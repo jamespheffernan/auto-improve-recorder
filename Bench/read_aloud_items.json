@@ -1,0 +1,116 @@
+{
+  "items": [
+    {
+      "category": "short cleanup",
+      "id": "short-filler-command",
+      "reference_improved": "Clean this up and make it sound like a normal Slack update for the design team. Say that I finished the prototype pass, found two confusing states in the toolbar, and will send screenshots after lunch.",
+      "read_transcript": "Um hey can you clean this up and make it sound like a normal Slack update for the design team. I finished the prototype pass, I found two confusing states in the toolbar, and I'll send screenshots after lunch.",
+      "title": "Short filler cleanup"
+    },
+    {
+      "category": "bug report",
+      "id": "recorder-bug-report",
+      "reference_improved": "I hit a recorder bug: when I press Hyper R, the pill opens, but after I stop recording the preview sometimes stays blank. The raw audio file exists, so the failure is probably in transcription or state handoff.",
+      "read_transcript": "I just hit a weird bug in the recorder. When I press Hyper R, the pill opens, but after I stop recording the preview sometimes stays blank. The raw audio file exists, so I think the failure is probably in transcription or state handoff.",
+      "title": "Recorder bug report"
+    },
+    {
+      "category": "technical prompt",
+      "id": "swift-inspection-prompt",
+      "reference_improved": "Inspect AppState dot swift, ImproveEngine dot swift, and OllamaImproveEngine dot swift. I want to know whether the cleanup prompt used by the benchmark exactly matches the prompt used by the app.",
+      "read_transcript": "I need Codex to inspect AppState dot swift, ImproveEngine dot swift, and OllamaImproveEngine dot swift. What I want to know is whether the cleanup prompt used by the benchmark exactly matches the prompt used by the app.",
+      "title": "Swift inspection prompt"
+    },
+    {
+      "category": "meeting followup",
+      "id": "meeting-followup",
+      "reference_improved": "After the call, the main decision was to keep local transcription as the default and treat hosted transcription as a speed baseline. The open question is whether local cleanup is good enough for automatic paste.",
+      "read_transcript": "Okay quick note after the call. The main decision was to keep local transcription as the default, and treat hosted transcription as a speed baseline. The open question is whether local cleanup is good enough for automatic paste.",
+      "title": "Meeting followup"
+    },
+    {
+      "category": "email",
+      "id": "sarah-email",
+      "reference_improved": "Write Sarah an email thanking her for the notes. Tell her I agree with the direction, but I want one more pass on the onboarding copy before we lock the launch page.",
+      "read_transcript": "Can you write Sarah an email thanking her for the notes. Tell her I agree with the direction, but I want one more pass on the onboarding copy before we lock the launch page.",
+      "title": "Email draft"
+    },
+    {
+      "category": "model comparison",
+      "id": "model-comparison",
+      "reference_improved": "Compare local Parakeet, MLX Whisper, Apple Speech, and OpenAI transcription on the same read-aloud clips. Track word error rate, character error rate, real-time factor, latency, and whether the output is usable without cleanup.",
+      "read_transcript": "Compare local Parakeet, MLX Whisper, Apple Speech, and OpenAI transcription on the same read aloud clips. Track word error rate, character error rate, real time factor, latency, and whether the output is usable without cleanup.",
+      "title": "Model comparison request"
+    },
+    {
+      "category": "structured task",
+      "id": "structured-task",
+      "reference_improved": "Objective: build a reliable local model evaluation set. Context: the app already archives audio and transcripts. Constraints: keep the raw audio private, use exact read transcripts as ground truth, and summarize results as JSONL plus CSV.",
+      "read_transcript": "Make this into a task. The objective is to build a reliable local model evaluation set. The context is that the app already archives audio and transcripts. The constraints are keep the raw audio private, use exact read transcripts as ground truth, and summarize results as JSONL plus CSV.",
+      "title": "Structured task"
+    },
+    {
+      "category": "proper nouns",
+      "id": "proper-nouns",
+      "reference_improved": "The names are Mira Patel, Nikhil Rao, and Ana Gomez. The project names are Auto Improve Recorder, Field Theory, and Transcript Truth. Do not normalize those names unless the transcript is clearly wrong.",
+      "read_transcript": "The names are Mira Patel, Nikhil Rao, and Ana Gomez. The project names are Auto Improve Recorder, Field Theory, and Transcript Truth. Do not normalize those names unless the transcript is clearly wrong.",
+      "title": "Proper nouns"
+    },
+    {
+      "category": "numbers and date",
+      "id": "numbers-and-date",
+      "reference_improved": "Schedule the benchmark review for Friday, May twenty ninth, twenty twenty six at two thirty in the afternoon. The minimum sample size should be twenty clips, and the automatic cleanup threshold should stay at seventy five words.",
+      "read_transcript": "Schedule the benchmark review for Friday May twenty ninth twenty twenty six at two thirty in the afternoon. The minimum sample size should be twenty clips, and the automatic cleanup threshold should stay at seventy five words.",
+      "title": "Numbers and date"
+    },
+    {
+      "category": "code review",
+      "id": "code-review-note",
+      "reference_improved": "For the code review, check whether the transcript archive writes audio dot wav before record dot json. If the JSON write fails, the audio should still remain available for evaluation.",
+      "read_transcript": "For the code review, check whether the transcript archive writes audio dot wav before record dot json. If the JSON write fails, the audio should still remain available for evaluation.",
+      "title": "Code review note"
+    },
+    {
+      "category": "uncertainty",
+      "id": "uncertain-decision",
+      "reference_improved": "I think the right move is to keep Parakeet as the local default for now, but I am not completely sure. If MLX Whisper is materially faster on this machine, we should test it before deciding.",
+      "read_transcript": "I think the right move is maybe to keep Parakeet as the local default for now, but I am not completely sure. If MLX Whisper is materially faster on this machine, we should test it before deciding.",
+      "title": "Uncertain decision"
+    },
+    {
+      "category": "long dictation",
+      "id": "long-context",
+      "reference_improved": "The real question is not whether a local model can produce a nice demo transcript. The question is whether it can handle daily dictation with interruptions, corrections, product names, and half-finished thoughts. I want a benchmark that makes those failures visible instead of averaging them away.",
+      "read_transcript": "The real question is not whether a local model can produce a nice demo transcript. The question is whether it can handle daily dictation with interruptions, corrections, product names, and half finished thoughts. I want a benchmark that makes those failures visible instead of averaging them away.",
+      "title": "Long context"
+    },
+    {
+      "category": "minimal cleanup",
+      "id": "minimal-cleanup",
+      "reference_improved": "The app should preserve raw transcripts, keep the audio file, and show a clear error if improvement fails.",
+      "read_transcript": "The app should preserve raw transcripts, keep the audio file, and show a clear error if improvement fails.",
+      "title": "Minimal cleanup"
+    },
+    {
+      "category": "sequence",
+      "id": "sequence-instructions",
+      "reference_improved": "First record the audio, then transcribe it, then run cleanup, then paste the final text. If any step fails, keep the previous artifact and show the failure in the preview.",
+      "read_transcript": "First record the audio, then transcribe it, then run cleanup, then paste the final text. If any step fails, keep the previous artifact and show the failure in the preview.",
+      "title": "Sequence instructions"
+    },
+    {
+      "category": "privacy constraints",
+      "id": "privacy-constraints",
+      "reference_improved": "Do not send audio to the cloud for the local benchmark. It is fine to use a hosted judge later, but only after the local transcript and improvement outputs are saved as separate artifacts.",
+      "read_transcript": "Do not send audio to the cloud for the local benchmark. It is fine to use a hosted judge later, but only after the local transcript and improvement outputs are saved as separate artifacts.",
+      "title": "Privacy constraints"
+    },
+    {
+      "category": "correction",
+      "id": "spoken-correction",
+      "reference_improved": "Use the BOYA mini microphone for the first pass, not the AirPods Max. If the noise floor is bad, rerun the same script with the Anker webcam microphone and compare the difference.",
+      "read_transcript": "Use the BOYA mini microphone for the first pass, not the AirPods Max. Wait, actually, if the noise floor is bad, rerun the same script with the Anker webcam microphone and compare the difference.",
+      "title": "Spoken correction"
+    }
+  ]
+}

@@ -18,20 +18,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         state.showPreview = { [weak self] in self?.previewController.show() }
         state.showSettings = { [weak self] in self?.settingsController.show() }
         state.menuNeedsUpdate = { [weak self] in self?.rebuildMenu() }
+        state.registerRecordingHotKey = { [weak self] hotKey in
+            self?.hotKeyCenter.registerRecordingHotKey(hotKey) ?? false
+        }
         state.registerCancelHotKey = { [weak self] in self?.hotKeyCenter.registerCancelHotKey() }
         state.unregisterCancelHotKey = { [weak self] in self?.hotKeyCenter.unregisterCancelHotKey() }
-        state.showProcessingSignal = { [weak self] in self?.edgeGlowController.showProcessing() }
+        state.registerWalkieTalkieLatchHotKey = { [weak self] in self?.hotKeyCenter.registerWalkieTalkieLatchHotKey() }
+        state.unregisterWalkieTalkieLatchHotKey = { [weak self] in self?.hotKeyCenter.unregisterWalkieTalkieLatchHotKey() }
+        state.showProcessingSignal = { [weak self, weak state] in
+            self?.edgeGlowController.showProcessing {
+                guard state?.autoSubmitDetectedTextFields == true else { return nil }
+                return AccessibilityPasteController.focusedTextTargetFrame(promptForPermission: false)
+            }
+        }
         state.flashReadySignal = { [weak self] in self?.edgeGlowController.flashReady() }
         state.hideProcessingSignal = { [weak self] in self?.edgeGlowController.hide() }
 
         setupStatusItem()
-        hotKeyCenter.handler = { [weak self] in
-            self?.state.toggleRecording()
+        hotKeyCenter.handler = { [weak self] receivedAt in
+            self?.state.recordingHotKeyPressed(requestedAt: receivedAt)
+        }
+        hotKeyCenter.releaseHandler = { [weak self] in
+            self?.state.recordingHotKeyReleased()
         }
         hotKeyCenter.cancelHandler = { [weak self] in
             self?.state.cancelRecording()
         }
-        hotKeyCenter.registerDefaultHotKey()
+        hotKeyCenter.walkieTalkieLatchHandler = { [weak self] in
+            self?.state.latchCurrentWalkieTalkieRecording()
+        }
+        state.refreshRecordingHotKeyRegistration()
+        state.prewarmLocalModels()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -41,8 +58,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func setupStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = item.button {
-            button.image = NSImage(systemSymbolName: "mic.circle.fill", accessibilityDescription: "Auto Improve Recorder")
-            button.image?.isTemplate = true
+            button.image = makeMenuBarWaveformIcon()
             button.imagePosition = .imageOnly
             button.toolTip = "Auto Improve Recorder"
         }
@@ -110,5 +126,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard cleaned.count > 80 else { return cleaned }
         let index = cleaned.index(cleaned.startIndex, offsetBy: 80)
         return String(cleaned[..<index]) + "..."
+    }
+
+    private func makeMenuBarWaveformIcon() -> NSImage {
+        // Brand mark: the "AIR" A-wave monogram, rendered as a template so the
+        // system tints it for light/dark menu bars. Falls back to SF Symbols if
+        // the asset is somehow unavailable.
+        let image = NSImage(named: "MenuBarIcon") ?? NSImage(
+            systemSymbolName: "waveform",
+            accessibilityDescription: "Auto Improve Recorder"
+        ) ?? NSImage(
+            systemSymbolName: "waveform.path.ecg",
+            accessibilityDescription: "Auto Improve Recorder"
+        ) ?? NSImage(
+            systemSymbolName: "mic",
+            accessibilityDescription: "Auto Improve Recorder"
+        ) ?? NSImage(size: NSSize(width: 18, height: 18))
+
+        image.size = NSSize(width: 18, height: 18)
+        image.isTemplate = true
+        image.accessibilityDescription = "Auto Improve Recorder"
+        return image
     }
 }

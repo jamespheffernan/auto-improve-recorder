@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- macOS: rounded-rect tile inset with transparent margins (native squircle look) -->
+  <rect x="100" y="100" width="824" height="824" rx="184" ry="184" fill="#1B1714"/>
+  <g fill="none" stroke="#F2ECDD" stroke-width="84" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M 360 742 L 512 296 L 664 742"/>
+  </g>
+  <g fill="none" stroke="#FF7A33" stroke-width="48" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M 398 578 L 442 548 L 470 602 L 512 520 L 554 602 L 582 548 L 626 578"/>
+  </g>
+</svg>

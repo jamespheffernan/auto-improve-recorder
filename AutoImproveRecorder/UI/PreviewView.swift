@@ -5,15 +5,21 @@ struct PreviewView: View {
 
     private var previewBinding: Binding<String> {
         Binding(
-            get: { state.showRawTranscript ? state.session.rawTranscript : state.session.improvedText },
+            get: { state.showRawTranscript ? state.session.rawTranscript : cleanedText },
             set: { newValue in
-                if state.showRawTranscript {
-                    state.session.rawTranscript = newValue
-                } else {
-                    state.session.improvedText = newValue
-                }
+                state.updateDisplayText(newValue)
             }
         )
+    }
+
+    private var cleanedText: String {
+        state.session.improvedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? ""
+            : state.session.improvedText
+    }
+
+    private var cleanedTitle: String {
+        cleanedText.isEmpty ? "Cleaned text" : "Cleaned"
     }
 
     var body: some View {
@@ -22,8 +28,12 @@ struct PreviewView: View {
                 Text("Preview")
                     .font(.system(size: 18, weight: .semibold))
                 Spacer()
-                Toggle("Raw", isOn: $state.showRawTranscript)
-                    .toggleStyle(.switch)
+                Picker("", selection: $state.showRawTranscript) {
+                    Text(cleanedTitle).tag(false)
+                    Text("Raw transcript").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 250)
                     .disabled(state.session.rawTranscript.isEmpty)
             }
 
@@ -32,6 +42,13 @@ struct PreviewView: View {
                     .font(.system(size: 12))
                     .foregroundStyle(state.phase == .failed ? .red : .secondary)
                     .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if !state.showRawTranscript && cleanedText.isEmpty && !state.session.rawTranscript.isEmpty {
+                Text("No cleaned version yet. Switch to Raw transcript to inspect the unedited capture, or run cleanup.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
 

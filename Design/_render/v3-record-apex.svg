@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <rect x="100" y="100" width="824" height="824" rx="184" ry="184" fill="#1B1714"/>
+  <!-- A legs rising to a record light, with crossbar (bone) -->
+  <g fill="none" stroke="#F2ECDD" stroke-width="74" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M 350 742 L 492 372"/>
+    <path d="M 674 742 L 532 372"/>
+    <path d="M 408 588 L 616 588"/>
+  </g>
+  <!-- record light = apex (tangerine) -->
+  <circle cx="512" cy="328" r="52" fill="#FF7A33"/>
+</svg>

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <rect x="100" y="100" width="824" height="824" rx="184" ry="184" fill="#1B1714"/>
+  <!-- A peak (bone) -->
+  <g fill="none" stroke="#F2ECDD" stroke-width="84" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M 360 742 L 512 296 L 664 742"/>
+  </g>
+  <!-- crossbar = tangerine soundwave -->
+  <g fill="none" stroke="#FF7A33" stroke-width="56" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M 404 576 L 462 534 L 512 612 L 562 534 L 620 576"/>
+  </g>
+</svg>

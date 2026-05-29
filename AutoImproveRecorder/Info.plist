@@ -6,6 +6,8 @@
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
 	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>CFBundleInfoDictionaryVersion</key>
@@ -26,6 +28,8 @@
 	<string>Auto Improve Recorder needs automation permission only if a future paste method targets another app directly.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Auto Improve Recorder needs microphone access to record audio for local transcription.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Auto Improve Recorder uses speech recognition to transcribe recordings locally on this Mac when Apple Speech is selected.</string>
 	<key>NSSupportsAutomaticGraphicsSwitching</key>
 	<true/>
 </dict>

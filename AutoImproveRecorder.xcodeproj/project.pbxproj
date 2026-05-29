@@ -20,12 +20,35 @@
 		AIR000000000000000000001A /* AccessibilityPasteController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR000000000000000000000B /* AccessibilityPasteController.swift */; };
 		AIR000000000000000000001B /* HotKeyCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR000000000000000000000C /* HotKeyCenter.swift */; };
 		AIR000000000000000000001C /* AudioInputDeviceDiscovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR000000000000000000000D /* AudioInputDeviceDiscovery.swift */; };
+		AIRAR0000000000000000001 /* TranscriptArchiveStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRAR0000000000000000000 /* TranscriptArchiveStore.swift */; };
 		AIR000000000000000000001D /* RecorderPillView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR000000000000000000000E /* RecorderPillView.swift */; };
 		AIR000000000000000000001E /* PreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR000000000000000000000F /* PreviewView.swift */; };
 		AIR000000000000000000001F /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR0000000000000000000020 /* SettingsView.swift */; };
 		AIR0000000000000000000021 /* WindowControllers.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR0000000000000000000022 /* WindowControllers.swift */; };
 		AIR0000000000000000000026 /* OpenAIRealtimeTranscriber.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR0000000000000000000025 /* OpenAIRealtimeTranscriber.swift */; };
 		AIR0000000000000000000028 /* OpenAIAudioTranscriber.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR0000000000000000000027 /* OpenAIAudioTranscriber.swift */; };
+		AIR0000000000000000000029 /* AppleLocalEngines.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR00000000000000000000A5 /* AppleLocalEngines.swift */; };
+		AIR000000000000000000002A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AIR00000000000000000000A6 /* Assets.xcassets */; };
+		AIR000000000000000000002B /* AppIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = AIR00000000000000000000A8 /* AppIcon.icns */; };
+		AIR00000000000000000000A9 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AIR00000000000000000000A7 /* Assets.xcassets */; };
+		AIR000000000000000000002C /* AlternativeImproveEngines.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR000000000000000000002D /* AlternativeImproveEngines.swift */; };
+		AIR0000000000000000000090 /* AutoImproveRecorderIOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR00000000000000000000A0 /* AutoImproveRecorderIOSApp.swift */; };
+		AIRBA00000000000000000002 /* AIRBenchmarkRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRBA00000000000000000001 /* AIRBenchmarkRunner.swift */; };
+		AIRCS00000000000000000002 /* AIRColdStartInstrumentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRCS00000000000000000001 /* AIRColdStartInstrumentation.swift */; };
+		AIR0000000000000000000091 /* IOSAppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR00000000000000000000A1 /* IOSAppState.swift */; };
+		AIR0000000000000000000092 /* IOSRecorderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR00000000000000000000A2 /* IOSRecorderView.swift */; };
+		AIR0000000000000000000093 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR0000000000000000000004 /* Models.swift */; };
+		AIR0000000000000000000094 /* AudioRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR0000000000000000000005 /* AudioRecorder.swift */; };
+		AIR0000000000000000000095 /* TranscriptionEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR0000000000000000000006 /* TranscriptionEngine.swift */; };
+		AIR0000000000000000000096 /* ImproveEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR0000000000000000000008 /* ImproveEngine.swift */; };
+		AIR0000000000000000000097 /* OpenAIImproveEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR0000000000000000000009 /* OpenAIImproveEngine.swift */; };
+		AIR0000000000000000000098 /* OpenAIAudioTranscriber.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR0000000000000000000027 /* OpenAIAudioTranscriber.swift */; };
+		AIR0000000000000000000099 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR000000000000000000000A /* KeychainStore.swift */; };
+		AIR000000000000000000009A /* AppleLocalEngines.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR00000000000000000000A5 /* AppleLocalEngines.swift */; };
+		AIR000000000000000000009B /* AlternativeImproveEngines.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR000000000000000000002D /* AlternativeImproveEngines.swift */; };
+		AIR00000000000000000000B1 /* OllamaImproveEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR00000000000000000000B2 /* OllamaImproveEngine.swift */; };
+		AIRSN0000000000000000001 /* SharedNetworkClient.swift in Sources (mac) */ = {isa = PBXBuildFile; fileRef = AIRSN0000000000000000000 /* SharedNetworkClient.swift */; };
+		AIRSN0000000000000000002 /* SharedNetworkClient.swift in Sources (iOS) */ = {isa = PBXBuildFile; fileRef = AIRSN0000000000000000000 /* SharedNetworkClient.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -42,6 +65,7 @@
 		AIR000000000000000000000B /* AccessibilityPasteController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccessibilityPasteController.swift; sourceTree = "<group>"; };
 		AIR000000000000000000000C /* HotKeyCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotKeyCenter.swift; sourceTree = "<group>"; };
 		AIR000000000000000000000D /* AudioInputDeviceDiscovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioInputDeviceDiscovery.swift; sourceTree = "<group>"; };
+		AIRAR0000000000000000000 /* TranscriptArchiveStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptArchiveStore.swift; sourceTree = "<group>"; };
 		AIR000000000000000000000E /* RecorderPillView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecorderPillView.swift; sourceTree = "<group>"; };
 		AIR000000000000000000000F /* PreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewView.swift; sourceTree = "<group>"; };
 		AIR0000000000000000000020 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
@@ -50,10 +74,31 @@
 		AIR0000000000000000000024 /* AutoImproveRecorder.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AutoImproveRecorder.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AIR0000000000000000000025 /* OpenAIRealtimeTranscriber.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAIRealtimeTranscriber.swift; sourceTree = "<group>"; };
 		AIR0000000000000000000027 /* OpenAIAudioTranscriber.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAIAudioTranscriber.swift; sourceTree = "<group>"; };
+		AIR000000000000000000002D /* AlternativeImproveEngines.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlternativeImproveEngines.swift; sourceTree = "<group>"; };
+		AIR00000000000000000000A0 /* AutoImproveRecorderIOSApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoImproveRecorderIOSApp.swift; sourceTree = "<group>"; };
+		AIRBA00000000000000000001 /* AIRBenchmarkRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRBenchmarkRunner.swift; sourceTree = "<group>"; };
+		AIRCS00000000000000000001 /* AIRColdStartInstrumentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRColdStartInstrumentation.swift; sourceTree = "<group>"; };
+		AIR00000000000000000000A1 /* IOSAppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSAppState.swift; sourceTree = "<group>"; };
+		AIR00000000000000000000A2 /* IOSRecorderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSRecorderView.swift; sourceTree = "<group>"; };
+		AIR00000000000000000000A3 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		AIR00000000000000000000A4 /* AutoImproveRecorderiOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AutoImproveRecorderiOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		AIR00000000000000000000A5 /* AppleLocalEngines.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleLocalEngines.swift; sourceTree = "<group>"; };
+		AIR00000000000000000000A6 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		AIR00000000000000000000A7 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		AIR00000000000000000000A8 /* AppIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = AppIcon.icns; sourceTree = "<group>"; };
+		AIR00000000000000000000B2 /* OllamaImproveEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OllamaImproveEngine.swift; sourceTree = "<group>"; };
+		AIRSN0000000000000000000 /* SharedNetworkClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedNetworkClient.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		AIR0000000000000000000030 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AIR00000000000000000000C0 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -67,6 +112,7 @@
 			isa = PBXGroup;
 			children = (
 				AIR0000000000000000000041 /* AutoImproveRecorder */,
+				AIR00000000000000000000B0 /* AutoImproveRecorderIOS */,
 				AIR0000000000000000000042 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -82,6 +128,8 @@
 				AIR0000000000000000000044 /* Engines */,
 				AIR0000000000000000000045 /* UI */,
 				AIR0000000000000000000046 /* Support */,
+				AIR00000000000000000000A6 /* Assets.xcassets */,
+				AIR00000000000000000000A8 /* AppIcon.icns */,
 				AIR0000000000000000000023 /* Info.plist */,
 			);
 			path = AutoImproveRecorder;
@@ -91,6 +139,7 @@
 			isa = PBXGroup;
 			children = (
 				AIR0000000000000000000024 /* AutoImproveRecorder.app */,
+				AIR00000000000000000000A4 /* AutoImproveRecorderiOS.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -110,8 +159,12 @@
 				AIR0000000000000000000007 /* ParakeetTranscriber.swift */,
 				AIR0000000000000000000008 /* ImproveEngine.swift */,
 				AIR0000000000000000000009 /* OpenAIImproveEngine.swift */,
+				AIR000000000000000000002D /* AlternativeImproveEngines.swift */,
+				AIR00000000000000000000B2 /* OllamaImproveEngine.swift */,
 				AIR0000000000000000000025 /* OpenAIRealtimeTranscriber.swift */,
 				AIR0000000000000000000027 /* OpenAIAudioTranscriber.swift */,
+				AIR00000000000000000000A5 /* AppleLocalEngines.swift */,
+				AIRSN0000000000000000000 /* SharedNetworkClient.swift */,
 			);
 			path = Engines;
 			sourceTree = "<group>";
@@ -134,8 +187,23 @@
 				AIR000000000000000000000B /* AccessibilityPasteController.swift */,
 				AIR000000000000000000000C /* HotKeyCenter.swift */,
 				AIR000000000000000000000D /* AudioInputDeviceDiscovery.swift */,
+				AIRAR0000000000000000000 /* TranscriptArchiveStore.swift */,
 			);
 			path = Support;
+			sourceTree = "<group>";
+		};
+		AIR00000000000000000000B0 /* AutoImproveRecorderIOS */ = {
+			isa = PBXGroup;
+			children = (
+				AIR00000000000000000000A0 /* AutoImproveRecorderIOSApp.swift */,
+				AIRBA00000000000000000001 /* AIRBenchmarkRunner.swift */,
+				AIRCS00000000000000000001 /* AIRColdStartInstrumentation.swift */,
+				AIR00000000000000000000A1 /* IOSAppState.swift */,
+				AIR00000000000000000000A2 /* IOSRecorderView.swift */,
+				AIR00000000000000000000A7 /* Assets.xcassets */,
+				AIR00000000000000000000A3 /* Info.plist */,
+			);
+			path = AutoImproveRecorderIOS;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -158,6 +226,23 @@
 			productReference = AIR0000000000000000000024 /* AutoImproveRecorder.app */;
 			productType = "com.apple.product-type.application";
 		};
+		AIR00000000000000000000E0 /* AutoImproveRecorderiOS */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AIR00000000000000000000F0 /* Build configuration list for PBXNativeTarget "AutoImproveRecorderiOS" */;
+			buildPhases = (
+				AIR00000000000000000000D0 /* Sources */,
+				AIR00000000000000000000C0 /* Frameworks */,
+				AIR00000000000000000000D1 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = AutoImproveRecorderiOS;
+			productName = AutoImproveRecorderiOS;
+			productReference = AIR00000000000000000000A4 /* AutoImproveRecorderiOS.app */;
+			productType = "com.apple.product-type.application";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -169,6 +254,9 @@
 				LastUpgradeCheck = 2640;
 				TargetAttributes = {
 					AIR0000000000000000000050 = {
+						CreatedOnToolsVersion = 26.4.1;
+					};
+					AIR00000000000000000000E0 = {
 						CreatedOnToolsVersion = 26.4.1;
 					};
 				};
@@ -187,6 +275,7 @@
 			projectRoot = "";
 			targets = (
 				AIR0000000000000000000050 /* AutoImproveRecorder */,
+				AIR00000000000000000000E0 /* AutoImproveRecorderiOS */,
 			);
 		};
 /* End PBXProject section */
@@ -196,6 +285,16 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				AIR000000000000000000002A /* Assets.xcassets in Resources */,
+				AIR000000000000000000002B /* AppIcon.icns in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AIR00000000000000000000D1 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AIR00000000000000000000A9 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -215,16 +314,43 @@
 				AIR0000000000000000000016 /* ParakeetTranscriber.swift in Sources */,
 				AIR0000000000000000000017 /* ImproveEngine.swift in Sources */,
 				AIR0000000000000000000018 /* OpenAIImproveEngine.swift in Sources */,
+				AIR000000000000000000002C /* AlternativeImproveEngines.swift in Sources */,
+				AIR00000000000000000000B1 /* OllamaImproveEngine.swift in Sources */,
 				AIR0000000000000000000026 /* OpenAIRealtimeTranscriber.swift in Sources */,
 				AIR0000000000000000000028 /* OpenAIAudioTranscriber.swift in Sources */,
+				AIR0000000000000000000029 /* AppleLocalEngines.swift in Sources */,
+				AIRSN0000000000000000001 /* SharedNetworkClient.swift in Sources (mac) */,
 				AIR0000000000000000000019 /* KeychainStore.swift in Sources */,
 				AIR000000000000000000001A /* AccessibilityPasteController.swift in Sources */,
 				AIR000000000000000000001B /* HotKeyCenter.swift in Sources */,
 				AIR000000000000000000001C /* AudioInputDeviceDiscovery.swift in Sources */,
+				AIRAR0000000000000000001 /* TranscriptArchiveStore.swift in Sources */,
 				AIR000000000000000000001D /* RecorderPillView.swift in Sources */,
 				AIR000000000000000000001E /* PreviewView.swift in Sources */,
 				AIR000000000000000000001F /* SettingsView.swift in Sources */,
 				AIR0000000000000000000021 /* WindowControllers.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AIR00000000000000000000D0 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AIR0000000000000000000090 /* AutoImproveRecorderIOSApp.swift in Sources */,
+				AIRBA00000000000000000002 /* AIRBenchmarkRunner.swift in Sources */,
+				AIRCS00000000000000000002 /* AIRColdStartInstrumentation.swift in Sources */,
+				AIR0000000000000000000091 /* IOSAppState.swift in Sources */,
+				AIR0000000000000000000092 /* IOSRecorderView.swift in Sources */,
+				AIR000000000000000000009A /* AppleLocalEngines.swift in Sources */,
+				AIR0000000000000000000093 /* Models.swift in Sources */,
+				AIR0000000000000000000094 /* AudioRecorder.swift in Sources */,
+				AIR0000000000000000000095 /* TranscriptionEngine.swift in Sources */,
+				AIR0000000000000000000096 /* ImproveEngine.swift in Sources */,
+				AIR0000000000000000000097 /* OpenAIImproveEngine.swift in Sources */,
+				AIR000000000000000000009B /* AlternativeImproveEngines.swift in Sources */,
+				AIR0000000000000000000098 /* OpenAIAudioTranscriber.swift in Sources */,
+				AIR0000000000000000000099 /* KeychainStore.swift in Sources */,
+				AIRSN0000000000000000002 /* SharedNetworkClient.swift in Sources (iOS) */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -389,6 +515,52 @@
 			};
 			name = Release;
 		};
+		AIR0000000000000000000100 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = SA42CTY6NM;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = AutoImproveRecorderIOS/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.fieldtheory.autoimproverecorder.ios;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		AIR0000000000000000000101 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = SA42CTY6NM;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = AutoImproveRecorderIOS/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.fieldtheory.autoimproverecorder.ios;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -406,6 +578,15 @@
 			buildConfigurations = (
 				AIR0000000000000000000080 /* Debug */,
 				AIR0000000000000000000081 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		AIR00000000000000000000F0 /* Build configuration list for PBXNativeTarget "AutoImproveRecorderiOS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AIR0000000000000000000100 /* Debug */,
+				AIR0000000000000000000101 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

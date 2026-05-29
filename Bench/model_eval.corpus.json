@@ -1,0 +1,15 @@
+{
+  "items": [
+    {
+      "audio": "Bench/Fixtures/short-5s.wav",
+      "id": "short-5s",
+      "improvement_input": "Um I mean let's take the same audio and compare local and hosted transcription models for speed and accuracy.",
+      "metadata": {
+        "duration_seconds": 5.0,
+        "notes": "Synthetic audio fixture; replace with real dictation audio for accuracy work."
+      },
+      "reference_improved": "Let's use the same audio to compare local and hosted transcription models for speed and accuracy.",
+      "reference_transcript": null
+    }
+  ]
+}

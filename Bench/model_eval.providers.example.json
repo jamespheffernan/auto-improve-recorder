@@ -1,0 +1,200 @@
+{
+  "improvement_providers": [
+    {
+      "enabled": false,
+      "model": "gpt-5-mini",
+      "name": "openai-gpt-5-mini",
+      "type": "openai_responses"
+    },
+    {
+      "enabled": false,
+      "base_url": "http://127.0.0.1:11434",
+      "modification_strength": 2,
+      "model": "qwen3:8b",
+      "name": "ollama-qwen3-8b",
+      "output_mode": "lightCleanup",
+      "max_tokens": 320,
+      "keep_alive": "30m",
+      "temperature": 0.2,
+      "type": "ollama_chat"
+    },
+    {
+      "base_url": "http://127.0.0.1:11434",
+      "enabled": false,
+      "modification_strength": 2,
+      "model": "qwen3:1.7b",
+      "name": "ollama-qwen3-1.7b",
+      "output_mode": "lightCleanup",
+      "max_tokens": 320,
+      "keep_alive": "30m",
+      "temperature": 0.2,
+      "type": "ollama_chat"
+    },
+    {
+      "base_url": "http://127.0.0.1:11434",
+      "modification_strength": 2,
+      "model": "qwen3:4b-instruct",
+      "name": "ollama-qwen3-4b-instruct",
+      "output_mode": "lightCleanup",
+      "max_tokens": 320,
+      "keep_alive": "30m",
+      "temperature": 0.2,
+      "type": "ollama_chat"
+    },
+    {
+      "base_url": "http://127.0.0.1:11434",
+      "enabled": false,
+      "modification_strength": 2,
+      "model": "qwen3.5:0.8b-mlx",
+      "name": "ollama-qwen3.5-0.8b-mlx",
+      "output_mode": "lightCleanup",
+      "max_tokens": 320,
+      "keep_alive": "30m",
+      "temperature": 0.2,
+      "type": "ollama_chat"
+    },
+    {
+      "base_url": "http://127.0.0.1:11434",
+      "enabled": false,
+      "modification_strength": 2,
+      "model": "qwen3.5:2b",
+      "name": "ollama-qwen3.5-2b",
+      "output_mode": "lightCleanup",
+      "max_tokens": 320,
+      "keep_alive": "30m",
+      "temperature": 0.2,
+      "type": "ollama_chat"
+    },
+    {
+      "base_url": "http://127.0.0.1:11434",
+      "enabled": false,
+      "modification_strength": 2,
+      "model": "qwen3.5:2b-mlx",
+      "name": "ollama-qwen3.5-2b-mlx",
+      "output_mode": "lightCleanup",
+      "max_tokens": 320,
+      "keep_alive": "30m",
+      "temperature": 0.2,
+      "type": "ollama_chat"
+    },
+    {
+      "base_url": "http://127.0.0.1:11434",
+      "enabled": false,
+      "modification_strength": 2,
+      "model": "qwen3.5:0.8b",
+      "name": "ollama-qwen3.5-0.8b",
+      "output_mode": "lightCleanup",
+      "max_tokens": 320,
+      "keep_alive": "30m",
+      "temperature": 0.2,
+      "type": "ollama_chat"
+    },
+    {
+      "base_url": "http://127.0.0.1:11434",
+      "enabled": false,
+      "modification_strength": 2,
+      "model": "qwen3.5:4b",
+      "name": "ollama-qwen3.5-4b",
+      "output_mode": "lightCleanup",
+      "max_tokens": 320,
+      "keep_alive": "30m",
+      "temperature": 0.2,
+      "type": "ollama_chat"
+    },
+    {
+      "base_url": "http://127.0.0.1:11434",
+      "enabled": false,
+      "modification_strength": 2,
+      "model": "qwen3.5:4b-mlx",
+      "name": "ollama-qwen3.5-4b-mlx",
+      "output_mode": "lightCleanup",
+      "max_tokens": 320,
+      "keep_alive": "30m",
+      "temperature": 0.2,
+      "type": "ollama_chat"
+    },
+    {
+      "base_url": "http://127.0.0.1:11434",
+      "enabled": false,
+      "modification_strength": 2,
+      "model": "llama3.2:1b",
+      "name": "ollama-llama3.2-1b",
+      "output_mode": "lightCleanup",
+      "max_tokens": 320,
+      "keep_alive": "30m",
+      "temperature": 0.2,
+      "type": "ollama_chat"
+    },
+    {
+      "base_url": "http://127.0.0.1:11434",
+      "enabled": false,
+      "modification_strength": 2,
+      "model": "gemma3:1b",
+      "name": "ollama-gemma3-1b",
+      "output_mode": "lightCleanup",
+      "max_tokens": 320,
+      "keep_alive": "30m",
+      "temperature": 0.2,
+      "type": "ollama_chat"
+    },
+    {
+      "command": "cat {transcript_file} | my-local-improver",
+      "enabled": false,
+      "name": "local-command-improver",
+      "timeout": 120,
+      "type": "command_improvement"
+    }
+  ],
+  "transcription_providers": [
+    {
+      "enabled": false,
+      "model": "gpt-4o-transcribe",
+      "name": "openai-gpt-4o-transcribe",
+      "type": "openai_transcription"
+    },
+    {
+      "enabled": false,
+      "model": "gpt-4o-mini-transcribe",
+      "name": "openai-gpt-4o-mini-transcribe",
+      "type": "openai_transcription"
+    },
+    {
+      "command": "FIELD_THEORY_PARAKEET_CACHE_DIR=\"$HOME/Library/Application Support/fieldtheory-mac/build-parakeet/cache\" \"$HOME/Library/Application Support/fieldtheory-mac/build-parakeet/venv/bin/python\" \"/Applications/Field Theory.app/Contents/Resources/scripts/parakeet-transcribe.py\" --audio {audio} --model nemo-parakeet-tdt-0.6b-v2",
+      "model": "nemo-parakeet-tdt-0.6b-v2",
+      "name": "parakeet-field-theory",
+      "timeout": 180,
+      "type": "command_transcription"
+    },
+    {
+      "command": "FIELD_THEORY_PARAKEET_CACHE_DIR=\"$HOME/Library/Application Support/fieldtheory-mac/build-parakeet/cache\" \"$HOME/Library/Application Support/fieldtheory-mac/build-parakeet/venv/bin/python\" \"/Applications/Field Theory.app/Contents/Resources/scripts/parakeet-transcribe.py\" --audio {audio} --model nemo-parakeet-tdt-0.6b-v3",
+      "enabled": false,
+      "model": "nemo-parakeet-tdt-0.6b-v3",
+      "name": "parakeet-field-theory-v3",
+      "timeout": 240,
+      "type": "command_transcription"
+    },
+    {
+      "command": "\"$HOME/Library/Application Support/fieldtheory-mac/build-mlx-whisper/venv/bin/python\" \"/Applications/Field Theory.app/Contents/Resources/scripts/mlx-whisper-transcribe.py\" --audio {audio}",
+      "enabled": false,
+      "model": "mlx-community/whisper-large-v3-turbo",
+      "name": "mlx-whisper-field-theory",
+      "timeout": 180,
+      "type": "command_transcription"
+    },
+    {
+      "command": "\"/Applications/Field Theory.app/Contents/Resources/whisper-cli\" -m \"$HOME/Library/Application Support/fieldtheory-mac/models/ggml-small.en.bin\" -f {audio} -l en -nt -np -bs 1 -bo 1 -t 8",
+      "enabled": false,
+      "model": "ggml-small.en.bin",
+      "name": "whispercpp-small-en-fast",
+      "timeout": 180,
+      "type": "command_transcription"
+    },
+    {
+      "command": "whisper-cli -m /path/to/model.bin -f {audio} --output-txt --output-file -",
+      "enabled": false,
+      "name": "whisper-command",
+      "timeout": 180,
+      "type": "command_transcription"
+    }
+  ]
+}

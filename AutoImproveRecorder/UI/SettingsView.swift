@@ -5,11 +5,14 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
-            Section("OpenAI") {
-                SecureField("API key", text: $state.apiKey)
-                    .textFieldStyle(.roundedBorder)
+            Section("Processing") {
                 Picker("Transcription", selection: $state.transcriptionMode) {
                     ForEach(TranscriptionMode.allCases) { mode in
+                        Text(mode.label).tag(mode)
+                    }
+                }
+                Picker("Improvement", selection: $state.improvementMode) {
+                    ForEach(ImprovementMode.allCases) { mode in
                         Text(mode.label).tag(mode)
                     }
                 }
@@ -18,13 +21,42 @@ struct SettingsView: View {
                         Text(mode.label).tag(mode)
                     }
                 }
-                Picker("Output", selection: $state.outputMode) {
+                Picker("Cleanup", selection: $state.outputMode) {
                     ForEach(OutputMode.allCases) { mode in
                         Text(mode.label).tag(mode)
                     }
                 }
                 Stepper("Threshold: \(state.thresholdWords) words", value: $state.thresholdWords, in: 1...500)
-                Stepper("Strength: \(state.modificationStrength)", value: $state.modificationStrength, in: 1...5)
+                Text(processingNote)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Section("OpenAI") {
+                SecureField("API key", text: $state.apiKey)
+                    .textFieldStyle(.roundedBorder)
+            }
+
+            Section("Gemini") {
+                SecureField("API key", text: $state.geminiAPIKey)
+                    .textFieldStyle(.roundedBorder)
+            }
+
+            Section("Anthropic") {
+                SecureField("API key", text: $state.anthropicAPIKey)
+                    .textFieldStyle(.roundedBorder)
+            }
+
+            Section("Ollama") {
+                TextField("Base URL", text: $state.ollamaBaseURL)
+                    .textFieldStyle(.roundedBorder)
+                TextField("Model", text: $state.ollamaModel)
+                    .textFieldStyle(.roundedBorder)
+                Text("Start Ollama locally and run `ollama pull qwen3.5:0.8b-mlx` before using Ollama local improvement.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             if let diagnostics = state.lastOpenAIRealtimeDiagnostics {
@@ -42,6 +74,16 @@ struct SettingsView: View {
             }
 
             Section("Recording") {
+                Picker("Trigger", selection: $state.recordingTriggerMode) {
+                    ForEach(RecordingTriggerMode.allCases) { mode in
+                        Text(mode.label).tag(mode)
+                    }
+                }
+                Picker("Hotkey", selection: $state.recordingHotKey) {
+                    ForEach(RecordingHotKey.allCases) { hotKey in
+                        Text(hotKey.label).tag(hotKey)
+                    }
+                }
                 Picker("Microphone", selection: $state.preferredMicrophoneID) {
                     ForEach(state.availableMicrophones) { device in
                         Text(device.name).tag(device.id)
@@ -52,6 +94,13 @@ struct SettingsView: View {
                 } label: {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
+            }
+
+            Section("Completion") {
+                Toggle("Copy finished text to clipboard", isOn: $state.copyFinishedTextToClipboard)
+                    .toggleStyle(.checkbox)
+                Toggle("Auto-submit in detected text fields", isOn: $state.autoSubmitDetectedTextFields)
+                    .toggleStyle(.checkbox)
             }
 
             Section("Parakeet") {
@@ -79,5 +128,41 @@ struct SettingsView: View {
         }
         .padding(20)
         .frame(width: 560)
+    }
+
+    private var processingNote: String {
+        if state.transcriptionMode == .localWhisper && state.improvementMode == .ollamaLocal {
+            return "LAIR local mode uses whisper.cpp for transcription and Ollama qwen3.5:0.8b-mlx for cleanup."
+        }
+
+        if state.transcriptionMode == .localParakeet && state.improvementMode == .ollamaLocal {
+            return "All-local mode uses Parakeet for transcription and Ollama qwen3.5:0.8b-mlx for cleanup."
+        }
+
+        if state.transcriptionMode == .appleLocal && state.improvementMode == .appleLocal {
+            return "All-local mode uses Apple Speech for transcription and Apple Intelligence for cleanup when available on this Mac."
+        }
+
+        if state.improvementMode == .appleLocal {
+            return "Apple local improvement uses the on-device Apple Intelligence model when available on this Mac."
+        }
+
+        if state.improvementMode == .geminiFlash {
+            return "Gemini Flash cleanup sends transcript text to Google. Local transcription can still stay on this Mac."
+        }
+
+        if state.improvementMode == .claudeHaiku {
+            return "Claude Haiku cleanup sends transcript text to Anthropic. Local transcription can still stay on this Mac."
+        }
+
+        if state.improvementMode == .ollamaLocal {
+            return "Ollama local cleanup sends transcript text to the local Ollama server. Paired with Local Whisper or Local Parakeet, the full flow stays on this Mac."
+        }
+
+        if state.transcriptionMode == .appleLocal {
+            return "Apple Speech keeps transcription local, then sends text to OpenAI for cleanup when auto-improve runs."
+        }
+
+        return "OpenAI cleanup uses the API key below. Local Whisper, Parakeet, and Apple Speech transcription stay on this Mac."
     }
 }
