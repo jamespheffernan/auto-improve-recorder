@@ -16,16 +16,33 @@
 
 ## Recording
 
-- Press `Hyper-R` (`Control-Option-Command-Shift-R`).
+- Set Recording Trigger to `Hold to talk`.
+- Press and hold `Hyper-R` (`Control-Option-Command-Shift-R`).
 - Grant microphone permission if prompted.
 - Confirm the floating pill appears and shows `Recording`.
+- Speak a short sentence, release the hotkey, and confirm the pill changes to transcription/improve state.
+- Quick-tap `Hyper-R` without speaking and confirm the recording is discarded: no paste, no clipboard change, and no transcription runs.
+- Press `Hyper-R`, release quickly, then press `Hyper-R` again within the latch window. Confirm recording stays active after release and the HUD says the recording is locked.
+- Press `Hyper-R` again while latched and confirm the recording sends.
 - Press `Escape` while recording.
 - Confirm the pill disappears, no transcription runs, and clipboard is not changed.
-- Press `Hyper-R` again.
-- Speak a short sentence.
-- Press `Hyper-R` (`Control-Option-Command-Shift-R`) again or click the stop button.
-- Confirm the pill changes to transcription/improve state.
+- Press `Escape` while the mic is still opening and confirm AIR does not leave the microphone open.
+- Switch Recording Trigger to `Toggle`.
+- Press `Hyper-R`, release it, and confirm recording continues.
+- Press `Hyper-R` again and confirm the recording sends.
+- While AIR is transcribing, improving, or delivering, press `Hyper-R` and confirm no second recording starts.
 - With a TextEdit document focused, record again and confirm the finished text is pasted automatically.
+
+## Microphone selection
+
+- Open Settings and confirm the Microphone picker lists `System default` plus the current CoreAudio input devices.
+- Select `System default`, set the macOS input device to the built-in microphone, record a short sentence, and confirm `record.json` includes `microphonePreferenceID: ""`, `microphoneResolvedName`, and `microphoneUsedFallback: false`.
+- Set the macOS default input to the built-in microphone, select `BOYA mini 2` or another external microphone in AIR, record while speaking only into the selected external mic, and confirm the recording/transcript comes from that mic rather than the system default.
+- Unplug or disable the selected preferred mic, reopen Settings, and confirm AIR shows an unavailable preferred mic plus a fallback summary.
+- With the preferred mic unavailable, record and confirm AIR falls back to another input, shows a fallback status, and archives `microphoneUsedFallback: true` with a `microphoneFallbackReason`.
+- With `BOYA mini 2` selected but its transmitter/lav inactive, start recording and confirm AIR recovers from exact digital silence by briefly quarantining BOYA and using the fallback mic.
+- Switch macOS default input while Settings is open and confirm the picker/summary refresh without AIR showing microphone use while idle.
+- In `Fastest`, select the external mic, record a short sentence, and confirm OpenAI realtime still receives audio buffers and completes or falls back to Parakeet from the saved WAV.
 
 ## Transcription
 
@@ -36,7 +53,7 @@
 - With no text field focused and `Copy finished text to clipboard` checked, confirm the result is copied after transcription/improve.
 - Open Preview from the menu bar and verify Cleaned and Raw transcript are separate views.
 - Confirm `~/Library/Application Support/AutoImproveRecorder/TranscriptTruth/` contains a recording folder with `audio.wav` and `record.json`.
-- Confirm `record.json` includes `rawTranscript`, `cleanedTranscript`, `finalTranscript`, transcription settings, cleanup settings, and the audio path.
+- Confirm `record.json` includes `rawTranscript`, `cleanedTranscript`, `finalTranscript`, transcription settings, cleanup settings, microphone metadata, and the audio path.
 - If Parakeet fails, confirm the preview shows the failure instead of silently dropping the recording.
 
 ## Improve

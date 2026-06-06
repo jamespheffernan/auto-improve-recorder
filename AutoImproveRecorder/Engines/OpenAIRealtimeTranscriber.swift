@@ -38,13 +38,18 @@ enum OpenAIRealtimeTranscriptionError: LocalizedError {
 
 final class OpenAIRealtimeTranscriber {
     private let connection: OpenAIRealtimeTranscriptionConnection
-    private let converter = PCM16MonoAudioConverter()
+    private let chunker = RealtimePCMChunker()
     private let audioLock = NSLock()
     private var acceptingAudio = true
     private var appendChain: Task<Void, Never> = Task {}
+    private var nextCapturedAudioSequence: UInt64 = 0
+    private var captureDiagnosticLines: [String] = []
 
-    init(apiKey: String) {
-        connection = OpenAIRealtimeTranscriptionConnection(apiKey: apiKey)
+    init(apiKey: String, dictionarySnapshot: String = "") {
+        connection = OpenAIRealtimeTranscriptionConnection(
+            apiKey: apiKey,
+            dictionarySnapshot: dictionarySnapshot
+        )
     }
 
     deinit {
@@ -65,18 +70,30 @@ final class OpenAIRealtimeTranscriber {
         guard acceptingAudio else { return }
 
         do {
-            guard let data = try converter.convert(buffer: buffer), !data.isEmpty else { return }
-            let previousAppend = appendChain
-            let connection = connection
-            appendChain = Task {
-                await previousAppend.value
-                await connection.enqueueAudio(data)
-            }
+            let sequence = nextCapturedAudioSequence
+            nextCapturedAudioSequence += 1
+            let captured = CapturedAudioBuffer(sequence: sequence, buffer: buffer)
+            enqueueChunksLocked(try chunker.append(captured))
         } catch {
             Task {
                 await connection.recordFailure(error)
             }
         }
+    }
+
+    func appendRealtimeAudioChunk(_ chunk: RealtimeAudioChunk) {
+        audioLock.lock()
+        defer { audioLock.unlock() }
+
+        guard acceptingAudio else { return }
+        enqueueChunksLocked([chunk])
+    }
+
+    func recordCaptureDiagnostics(_ lines: [String]) {
+        guard !lines.isEmpty else { return }
+        audioLock.lock()
+        captureDiagnosticLines.append(contentsOf: lines)
+        audioLock.unlock()
     }
 
     func finish() async throws -> TranscriptionResult {
@@ -91,81 +108,59 @@ final class OpenAIRealtimeTranscriber {
     }
 
     func diagnostics(summary: String? = nil) async -> OpenAIRealtimeDiagnostics {
-        await connection.diagnostics(summary: summary)
+        let connectionDiagnostics = await connection.diagnostics(summary: summary)
+        let audioDetails = realtimeAudioDiagnosticDetails()
+        let details = audioDetails.isEmpty
+            ? connectionDiagnostics.details
+            : connectionDiagnostics.details + "\n" + audioDetails
+        return OpenAIRealtimeDiagnostics(summary: connectionDiagnostics.summary, details: details)
     }
 
     private func stopAcceptingAudio() -> Task<Void, Never> {
         audioLock.lock()
         acceptingAudio = false
+        enqueueChunksLocked(chunker.finish())
         let pendingAppends = appendChain
         audioLock.unlock()
         return pendingAppends
     }
-}
 
-private final class PCM16MonoAudioConverter {
-    private let outputSampleRate = 24_000.0
-    private let outputFormat: AVAudioFormat
-    private var converter: AVAudioConverter?
-    private var converterInputFormat: AVAudioFormat?
-
-    init() {
-        outputFormat = AVAudioFormat(
-            commonFormat: .pcmFormatInt16,
-            sampleRate: outputSampleRate,
-            channels: 1,
-            interleaved: true
-        )!
+    private func enqueueChunksLocked(_ chunks: [RealtimeAudioChunk]) {
+        guard !chunks.isEmpty else { return }
+        let previousAppend = appendChain
+        let connection = connection
+        appendChain = Task {
+            await previousAppend.value
+            for chunk in chunks {
+                await connection.enqueueAudio(chunk)
+            }
+        }
     }
 
-    func convert(buffer: AVAudioPCMBuffer) throws -> Data? {
-        guard buffer.frameLength > 0 else { return nil }
+    private func realtimeAudioDiagnosticDetails() -> String {
+        audioLock.lock()
+        let diagnostics = chunker.diagnostics
+        let captureDiagnosticLines = captureDiagnosticLines
+        audioLock.unlock()
 
-        if converter == nil || converterInputFormat != buffer.format {
-            converter = AVAudioConverter(from: buffer.format, to: outputFormat)
-            converterInputFormat = buffer.format
+        var lines: [String] = []
+        lines.append("Realtime audio chunk size: \(diagnostics.chunkByteCount) bytes")
+        lines.append("Realtime audio chunks produced: \(diagnostics.realtimeChunksProduced)")
+        lines.append("Realtime converter recreates: \(diagnostics.converterRecreateCount)")
+        lines.append("Realtime pending bytes max: \(diagnostics.realtimePendingBytesMax)")
+        if let conversionFailure = diagnostics.conversionFailure {
+            lines.append("Realtime conversion failure: \(conversionFailure)")
         }
-
-        guard let converter else {
-            throw OpenAIRealtimeTranscriptionError.conversionFailed("Could not create AVAudioConverter.")
-        }
-
-        let ratio = outputSampleRate / buffer.format.sampleRate
-        let outputCapacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 512
-        guard let outputBuffer = AVAudioPCMBuffer(pcmFormat: outputFormat, frameCapacity: outputCapacity) else {
-            throw OpenAIRealtimeTranscriptionError.conversionFailed("Could not allocate output buffer.")
-        }
-
-        var didProvideInput = false
-        var conversionError: NSError?
-        converter.convert(to: outputBuffer, error: &conversionError) { _, status in
-            if didProvideInput {
-                status.pointee = .noDataNow
-                return nil
-            }
-            didProvideInput = true
-            status.pointee = .haveData
-            return buffer
-        }
-
-        if let conversionError {
-            throw OpenAIRealtimeTranscriptionError.conversionFailed(conversionError.localizedDescription)
-        }
-
-        let audioBuffer = outputBuffer.audioBufferList.pointee.mBuffers
-        guard let bytes = audioBuffer.mData else { return nil }
-
-        let byteCount = Int(outputBuffer.frameLength) * Int(outputFormat.streamDescription.pointee.mBytesPerFrame)
-        guard byteCount > 0 else { return nil }
-        return Data(bytes: bytes, count: byteCount)
+        lines.append(contentsOf: captureDiagnosticLines)
+        return lines.joined(separator: "\n")
     }
 }
 
 private actor OpenAIRealtimeTranscriptionConnection {
     private let apiKey: String
+    private let dictionarySnapshot: String
     private let transcriptionModel = "gpt-4o-transcribe"
     private let webSocketURLString = "wss://api.openai.com/v1/realtime?intent=transcription"
-    private let sessionPayloadShape = "GA session.update transcription session: session.type=transcription, audio.input.format=audio/pcm rate=24000, noise_reduction=null, transcription.model=gpt-4o-transcribe, turn_detection=null/manual commit"
 
     private var urlSession: URLSession?
     private var webSocketTask: URLSessionWebSocketTask?
@@ -199,8 +194,9 @@ private actor OpenAIRealtimeTranscriptionConnection {
     private var lastFailedTranscriptionJSON: String?
     private var recentServerEvents: [String] = []
 
-    init(apiKey: String) {
+    init(apiKey: String, dictionarySnapshot: String) {
         self.apiKey = apiKey
+        self.dictionarySnapshot = dictionarySnapshot.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     func start() async throws {
@@ -245,7 +241,7 @@ private actor OpenAIRealtimeTranscriptionConnection {
                         "noise_reduction": NSNull(),
                         "transcription": [
                             "model": transcriptionModel,
-                            "prompt": "",
+                            "prompt": transcriptionPrompt,
                             "language": "en"
                         ],
                         "turn_detection": NSNull()
@@ -253,13 +249,17 @@ private actor OpenAIRealtimeTranscriptionConnection {
                 ]
             ]
         ]
-        try await sendEvent(sessionUpdate, logPayload: true)
+        try await sendEvent(sessionUpdate)
         try await waitForSessionUpdated(timeout: 8)
 
         NSLog("OpenAI realtime transcription started with endpoint \(webSocketURLString), model \(transcriptionModel), payload \(sessionPayloadShape).")
     }
 
-    func enqueueAudio(_ data: Data) {
+    func enqueueAudio(_ chunk: RealtimeAudioChunk) {
+        enqueueAudio(chunk.data)
+    }
+
+    private func enqueueAudio(_ data: Data) {
         guard !data.isEmpty, !isClosed, failure == nil else { return }
         appendedBytes += data.count
         appendedEvents += 1
@@ -399,17 +399,18 @@ private actor OpenAIRealtimeTranscriptionConnection {
         }
 
         let rawJSON = prettyJSONString(from: json) ?? String(data: data, encoding: .utf8) ?? "<non-utf8 server event>"
-        recordServerEvent(type: type, rawJSON: rawJSON)
+        let redactedDiagnosticJSON = RealtimeDiagnosticsRedactor.redactedJSON(json, fallback: rawJSON)
+        recordServerEvent(type: type, rawJSON: redactedDiagnosticJSON)
 
         switch type {
         case "session.created", "transcription_session.created":
             sawSessionCreated = true
-            sessionCreatedJSON = rawJSON
+            sessionCreatedJSON = redactedDiagnosticJSON
         case "session.updated", "transcription_session.updated":
             sawSessionUpdated = true
-            sessionUpdatedJSON = rawJSON
+            sessionUpdatedJSON = redactedDiagnosticJSON
         case "error":
-            handleErrorEvent(json)
+            handleErrorEvent(json, diagnosticJSON: redactedDiagnosticJSON)
         case "input_audio_buffer.committed":
             handleCommittedEvent(json)
         case "conversation.item.input_audio_transcription.delta":
@@ -417,25 +418,34 @@ private actor OpenAIRealtimeTranscriptionConnection {
         case "conversation.item.input_audio_transcription.completed":
             handleCompletedEvent(json)
         case "conversation.item.input_audio_transcription.failed":
-            lastFailedTranscriptionJSON = rawJSON
-            let message = nestedString(json["error"], key: "message") ?? "Input audio transcription failed."
+            lastFailedTranscriptionJSON = redactedDiagnosticJSON
+            let rawMessage = nestedString(json["error"], key: "message") ?? "Input audio transcription failed."
+            let message = RealtimeDiagnosticsRedactor.sanitizedProviderErrorMessage(
+                rawMessage,
+                dictionarySnapshot: dictionarySnapshot
+            )
             recordFailure(OpenAIRealtimeTranscriptionError.serverError(message))
         default:
             break
         }
     }
 
-    private func handleErrorEvent(_ json: [String: Any]) {
-        lastErrorEventJSON = prettyJSONString(from: json)
+    private func handleErrorEvent(_ json: [String: Any], diagnosticJSON: String) {
+        lastErrorEventJSON = diagnosticJSON
         let errorObject = json["error"] as? [String: Any]
         let code = errorObject?["code"] as? String
-        let message = errorObject?["message"] as? String ?? "Unknown realtime API error."
+        let rawMessage = errorObject?["message"] as? String ?? "Unknown realtime API error."
 
-        if isFinishing, isEmptyCommitError(code: code, message: message) {
+        if isFinishing, isEmptyCommitError(code: code, message: rawMessage) {
             return
         }
 
-        recordFailure(OpenAIRealtimeTranscriptionError.serverError(message))
+        recordFailure(OpenAIRealtimeTranscriptionError.serverError(
+            RealtimeDiagnosticsRedactor.sanitizedProviderErrorMessage(
+                rawMessage,
+                dictionarySnapshot: dictionarySnapshot
+            )
+        ))
     }
 
     func webSocketDidOpen() {
@@ -599,6 +609,7 @@ private actor OpenAIRealtimeTranscriptionConnection {
         lines.append("Endpoint: \(webSocketURLString)")
         lines.append("Model: \(transcriptionModel)")
         lines.append("Payload: \(sessionPayloadShape)")
+        lines.append("Dictionary prompt: \(dictionarySnapshot.isEmpty ? "empty" : "present")")
         lines.append("Audio format: 24kHz mono little-endian pcm16 appended as base64 input_audio_buffer.append")
         lines.append("Chunks sent: \(appendedEvents)")
         lines.append("Bytes sent: \(appendedBytes)")
@@ -675,6 +686,15 @@ private actor OpenAIRealtimeTranscriptionConnection {
         }
         let lowercased = message.lowercased()
         return lowercased.contains("empty") || lowercased.contains("buffer too small")
+    }
+
+    private var transcriptionPrompt: String {
+        guard !dictionarySnapshot.isEmpty else { return "" }
+        return "Prefer these user dictionary terms exactly when they are spoken: \(dictionarySnapshot)"
+    }
+
+    private var sessionPayloadShape: String {
+        "GA session.update transcription session: session.type=transcription, audio.input.format=audio/pcm rate=24000, noise_reduction=null, transcription.model=gpt-4o-transcribe, prompt=\(dictionarySnapshot.isEmpty ? "empty" : "dictionary"), turn_detection=null/manual commit"
     }
 }
 

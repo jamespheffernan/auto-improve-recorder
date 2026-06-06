@@ -9,7 +9,12 @@ struct GeminiImproveEngine: ImproveEngine {
         self.apiKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    func improve(rawTranscript: String, outputMode: OutputMode, modificationStrength: Int) async throws -> String {
+    func improve(
+        rawTranscript: String,
+        outputMode: OutputMode,
+        modificationStrength: Int,
+        dictionarySnapshot: String
+    ) async throws -> String {
         guard !apiKey.isEmpty else {
             throw ImproveEngineError.missingProviderAPIKey(provider)
         }
@@ -30,7 +35,8 @@ struct GeminiImproveEngine: ImproveEngine {
         let prompt = ImprovePrompt.make(
             rawTranscript: rawTranscript,
             outputMode: outputMode,
-            modificationStrength: modificationStrength
+            modificationStrength: modificationStrength,
+            dictionarySnapshot: dictionarySnapshot
         )
         let body: [String: Any] = [
             "systemInstruction": [
@@ -113,7 +119,12 @@ struct AnthropicImproveEngine: ImproveEngine {
         self.apiKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    func improve(rawTranscript: String, outputMode: OutputMode, modificationStrength: Int) async throws -> String {
+    func improve(
+        rawTranscript: String,
+        outputMode: OutputMode,
+        modificationStrength: Int,
+        dictionarySnapshot: String
+    ) async throws -> String {
         guard !apiKey.isEmpty else {
             throw ImproveEngineError.missingProviderAPIKey(provider)
         }
@@ -128,7 +139,8 @@ struct AnthropicImproveEngine: ImproveEngine {
         let prompt = ImprovePrompt.make(
             rawTranscript: rawTranscript,
             outputMode: outputMode,
-            modificationStrength: modificationStrength
+            modificationStrength: modificationStrength,
+            dictionarySnapshot: dictionarySnapshot
         )
         let body: [String: Any] = [
             "model": model,

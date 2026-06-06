@@ -1,28 +1,44 @@
 import Carbon
 import Foundation
+import OSLog
+
+private let recordingHotKeyLogger = Logger(
+    subsystem: "com.fieldtheory.autoimproverecorder",
+    category: "HotKeyCapture"
+)
 
 final class HotKeyCenter {
+    enum Event {
+        case recordingPressed(receivedAt: Date, eventID: UInt64, isRepeat: Bool)
+        case recordingReleased(receivedAt: Date, eventID: UInt64)
+        case cancelPressed(receivedAt: Date)
+        case latchPressed(receivedAt: Date)
+    }
+
     private var hotKeyRef: EventHotKeyRef?
     private var cancelHotKeyRef: EventHotKeyRef?
     private var walkieTalkieLatchHotKeyRef: EventHotKeyRef?
     private var walkieTalkieModifiedLatchHotKeyRef: EventHotKeyRef?
     private var eventHandlerRef: EventHandlerRef?
+    private var nextEventID: UInt64 = 1
     private let hotKeyID = EventHotKeyID(signature: HotKeyCenter.fourCharCode("AIRH"), id: 1)
     private let cancelHotKeyID = EventHotKeyID(signature: HotKeyCenter.fourCharCode("AIRC"), id: 2)
     private let walkieTalkieLatchHotKeyID = EventHotKeyID(signature: HotKeyCenter.fourCharCode("AIRL"), id: 3)
     private let walkieTalkieModifiedLatchHotKeyID = EventHotKeyID(signature: HotKeyCenter.fourCharCode("AIRM"), id: 4)
+    var eventHandler: ((Event) -> Void)?
     var handler: ((Date) -> Void)?
     var releaseHandler: (() -> Void)?
     var cancelHandler: (() -> Void)?
     var walkieTalkieLatchHandler: (() -> Void)?
 
     func registerRecordingHotKey(_ hotKey: RecordingHotKey) -> Bool {
+        guard hotKey.isValidForGlobalRegistration else { return false }
         installEventHandlerIfNeeded()
         unregisterRecordingHotKey()
 
         return RegisterEventHotKey(
             hotKey.keyCode,
-            Self.hyperModifiers,
+            hotKey.modifiers,
             hotKeyID,
             GetApplicationEventTarget(),
             0,
@@ -65,7 +81,7 @@ final class HotKeyCenter {
         if walkieTalkieModifiedLatchHotKeyRef == nil {
             RegisterEventHotKey(
                 UInt32(kVK_Space),
-                Self.hyperModifiers,
+                RecordingHotKey.hyperModifiers,
                 walkieTalkieModifiedLatchHotKeyID,
                 GetApplicationEventTarget(),
                 0,
@@ -109,24 +125,33 @@ final class HotKeyCenter {
             if status == noErr && receivedID.signature == center.hotKeyID.signature && receivedID.id == center.hotKeyID.id {
                 if eventKind == UInt32(kEventHotKeyPressed) {
                     let receivedAt = Date()
-                    NSLog("Recording startup: global hotkey delivered.")
+                    let eventID = center.takeNextEventID()
+                    recordingHotKeyLogger.info("recording hotkey pressed.")
                     DispatchQueue.main.async {
+                        center.eventHandler?(.recordingPressed(receivedAt: receivedAt, eventID: eventID, isRepeat: false))
                         center.handler?(receivedAt)
                     }
                 } else if eventKind == UInt32(kEventHotKeyReleased) {
+                    let receivedAt = Date()
+                    let eventID = center.takeNextEventID()
                     DispatchQueue.main.async {
+                        center.eventHandler?(.recordingReleased(receivedAt: receivedAt, eventID: eventID))
                         center.releaseHandler?()
                     }
                 }
             } else if status == noErr && receivedID.signature == center.cancelHotKeyID.signature && receivedID.id == center.cancelHotKeyID.id {
                 if eventKind == UInt32(kEventHotKeyPressed) {
+                    let receivedAt = Date()
                     DispatchQueue.main.async {
+                        center.eventHandler?(.cancelPressed(receivedAt: receivedAt))
                         center.cancelHandler?()
                     }
                 }
             } else if status == noErr && center.isWalkieTalkieLatchHotKey(receivedID) {
                 if eventKind == UInt32(kEventHotKeyPressed) {
+                    let receivedAt = Date()
                     DispatchQueue.main.async {
+                        center.eventHandler?(.latchPressed(receivedAt: receivedAt))
                         center.walkieTalkieLatchHandler?()
                     }
                 }
@@ -167,7 +192,7 @@ final class HotKeyCenter {
         }
     }
 
-    private func unregisterRecordingHotKey() {
+    func unregisterRecordingHotKey() {
         if let hotKeyRef {
             UnregisterEventHotKey(hotKeyRef)
             self.hotKeyRef = nil
@@ -186,12 +211,14 @@ final class HotKeyCenter {
         return result
     }
 
-    private static var hyperModifiers: UInt32 {
-        UInt32(cmdKey | optionKey | controlKey | shiftKey)
-    }
-
     private func isWalkieTalkieLatchHotKey(_ id: EventHotKeyID) -> Bool {
         (id.signature == walkieTalkieLatchHotKeyID.signature && id.id == walkieTalkieLatchHotKeyID.id) ||
             (id.signature == walkieTalkieModifiedLatchHotKeyID.signature && id.id == walkieTalkieModifiedLatchHotKeyID.id)
+    }
+
+    private func takeNextEventID() -> UInt64 {
+        let eventID = nextEventID
+        nextEventID &+= 1
+        return eventID
     }
 }

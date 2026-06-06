@@ -5,8 +5,43 @@ struct TranscriptionResult: Equatable {
     var engineName: String
 }
 
+struct TranscriptionContext: Equatable {
+    var dictionarySnapshot: String
+
+    static let empty = TranscriptionContext(dictionarySnapshot: "")
+
+    var terms: [String] {
+        dictionarySnapshot
+            .split(separator: ",")
+            .map { Self.normalizedText(String($0)) }
+            .filter { !$0.isEmpty }
+    }
+
+    var hasDictionary: Bool {
+        !dictionarySnapshot.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var transcriptionPrompt: String? {
+        guard hasDictionary else { return nil }
+        return "Prefer these user dictionary terms exactly when they are spoken: \(dictionarySnapshot)"
+    }
+
+    private static func normalizedText(_ text: String) -> String {
+        text
+            .split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
 protocol TranscriptionEngine {
     func transcribe(audioURL: URL) async throws -> TranscriptionResult
+}
+
+extension TranscriptionEngine {
+    func transcribe(audioURL: URL, context: TranscriptionContext) async throws -> TranscriptionResult {
+        try await transcribe(audioURL: audioURL)
+    }
 }
 
 enum TranscriptionEngineError: LocalizedError {

@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>LAIR Waiting UX Prototype</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <main id="app" class="prototype-shell" data-state="idle" data-variant="A">
+      <section class="desktop" aria-label="Mock macOS desktop">
+        <div class="menu-bar">
+          <div class="traffic">
+            <span></span>
+            <span></span>
+            <span></span>
+          </div>
+          <strong>Notes</strong>
+          <span>File</span>
+          <span>Edit</span>
+          <span>Format</span>
+          <span>Window</span>
+          <div class="menu-status" id="menuStatus">LAIR ready</div>
+        </div>
+
+        <div class="workspace">
+          <aside class="sidebar">
+            <div class="sidebar-title">Today</div>
+            <button class="sidebar-row active">Inbox</button>
+            <button class="sidebar-row">Meetings</button>
+            <button class="sidebar-row">Drafts</button>
+          </aside>
+
+          <section class="document">
+            <div class="document-header">
+              <div>
+                <p class="eyebrow">Focused text field</p>
+                <h1>Reply draft</h1>
+              </div>
+              <div class="mode-chip" id="modeChip">Walkie talkie</div>
+            </div>
+            <textarea id="targetField" spellcheck="false">Hey James, I can take a look this afternoon. The main thing I want to understand is where the handoff feels slow versus where it feels uncertain.</textarea>
+          </section>
+        </div>
+
+        <div class="edge edge-top"></div>
+        <div class="edge edge-right"></div>
+        <div class="edge edge-bottom"></div>
+        <div class="edge edge-left"></div>
+
+        <div id="variantRoot"></div>
+      </section>
+
+      <section class="control-panel" aria-label="Prototype controls">
+        <div>
+          <p class="panel-label">Simulation</p>
+          <h2 id="stateLabel">Ready</h2>
+        </div>
+        <button id="recordButton" class="record-button" type="button">Hold to record</button>
+        <button id="latchButton" class="secondary-button" type="button">Space: latch</button>
+        <button id="cancelButton" class="secondary-button" type="button">Esc: cancel</button>
+        <div class="state-readout" id="stateReadout">idle</div>
+      </section>
+
+      <nav class="variant-switcher" aria-label="Prototype variant switcher">
+        <button id="prevVariant" type="button" aria-label="Previous variant">‹</button>
+        <div>
+          <span id="variantKey">A</span>
+          <strong id="variantName">Edge instrument</strong>
+        </div>
+        <button id="nextVariant" type="button" aria-label="Next variant">›</button>
+      </nav>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

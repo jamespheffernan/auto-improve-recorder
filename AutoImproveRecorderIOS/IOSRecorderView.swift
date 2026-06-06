@@ -303,9 +303,11 @@ struct IOSRecorderView: View {
     private var headerLabel: String {
         switch state.phase {
         case .idle:         return "Standby"
+        case .starting:     return "Opening"
         case .recording:    return "Live"
         case .transcribing: return "Transcribe"
         case .improving:    return "Polish"
+        case .delivering:   return "Send"
         case .ready:        return state.showRawTranscript ? "Raw" : "Cleaned"
         case .failed:       return "Error"
         }
@@ -314,9 +316,11 @@ struct IOSRecorderView: View {
     private var headerSecond: String {
         switch state.phase {
         case .idle:         return "Mode."
+        case .starting:     return "Mic."
         case .recording:    return "Live."
         case .transcribing: return "Pull."
         case .improving:    return "Polish."
+        case .delivering:   return "Send."
         case .ready:        return "Done."
         case .failed:       return "Halt."
         }
@@ -422,6 +426,9 @@ struct IOSRecorderView: View {
             } else {
                 readyText
             }
+        case .starting:
+            AnimatedDotsLabel(text: "Opening microphone")
+                .foregroundStyle(SwissPalette.ink)
         case .recording:
             SwissWaveform(accent: accentColor)
                 .frame(height: 90)
@@ -440,6 +447,9 @@ struct IOSRecorderView: View {
                     }
                 }
             }
+        case .delivering:
+            AnimatedDotsLabel(text: "Sending")
+                .foregroundStyle(SwissPalette.ink)
         case .ready:
             readyText
         case .failed:
@@ -683,9 +693,11 @@ struct IOSRecorderView: View {
     private var footerStrong: String {
         switch state.phase {
         case .idle:         return "Ready"
+        case .starting:     return "Opening"
         case .recording:    return "Recording"
         case .transcribing: return "Working"
         case .improving:    return "Polishing"
+        case .delivering:   return "Sending"
         case .ready:        return state.showRawTranscript ? "Raw" : "Polished"
         case .failed:       return "Halted"
         }
@@ -704,7 +716,9 @@ struct IOSRecorderView: View {
         case .ready:        return state.showRawTranscript ? "Raw ✕" : "Polished ✓"
         case .failed:       return "Try again"
         case .recording:    return "Live ●"
+        case .starting:     return "Opening…"
         case .transcribing, .improving: return "Working…"
+        case .delivering:   return "Sending…"
         case .idle:         return "Standby"
         }
     }
@@ -713,6 +727,8 @@ struct IOSRecorderView: View {
 
     private func handlePhaseChange(from old: RecorderPhase, to new: RecorderPhase) {
         switch new {
+        case .starting:
+            stopTimerTask()
         case .recording:
             recordingStart = .now
             displayedSeconds = 0
@@ -737,6 +753,8 @@ struct IOSRecorderView: View {
         case .failed:
             stopTimerTask()
             Haptics.warning()
+        case .delivering:
+            stopTimerTask()
         case .idle:
             stopTimerTask()
         }

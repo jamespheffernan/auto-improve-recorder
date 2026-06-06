@@ -11,16 +11,44 @@
 		AIR0000000000000000000011 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR0000000000000000000002 /* AppDelegate.swift */; };
 		AIR0000000000000000000012 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR0000000000000000000003 /* AppState.swift */; };
 		AIR0000000000000000000013 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR0000000000000000000004 /* Models.swift */; };
+		AIRENV0000000000000000001 /* AppEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRENV0000000000000000000 /* AppEnvironment.swift */; };
+		AIRSET0000000000000000001 /* AppSettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRSET0000000000000000000 /* AppSettingsStore.swift */; };
+		AIRPERM00000000000000001 /* PermissionsClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRPERM00000000000000000 /* PermissionsClient.swift */; };
+		AIRTS0000000000000000001 /* TranscriptionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRTS0000000000000000000 /* TranscriptionService.swift */; };
+		AIRIS0000000000000000001 /* ImprovementService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRIS0000000000000000000 /* ImprovementService.swift */; };
 		AIR0000000000000000000014 /* AudioRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR0000000000000000000005 /* AudioRecorder.swift */; };
+		AIRRECCLIENT000000000001 /* RecordingClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRRECCLIENT000000000000 /* RecordingClient.swift */; };
+		AIRAUD000000000000000001 /* AudioPipelineTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRAUD000000000000000000 /* AudioPipelineTypes.swift */; };
+		AIRAUD000000000000000003 /* RealtimePCMChunker.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRAUD000000000000000002 /* RealtimePCMChunker.swift */; };
+		AIRAUD000000000000000005 /* BoundedAudioQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRAUD000000000000000004 /* BoundedAudioQueue.swift */; };
+		AIRAUD000000000000000007 /* ArchiveAudioWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRAUD000000000000000006 /* ArchiveAudioWriter.swift */; };
+		AIRAUD000000000000000009 /* AudioCaptureFanout.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRAUD000000000000000008 /* AudioCaptureFanout.swift */; };
 		AIR0000000000000000000015 /* TranscriptionEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR0000000000000000000006 /* TranscriptionEngine.swift */; };
 		AIR0000000000000000000016 /* ParakeetTranscriber.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR0000000000000000000007 /* ParakeetTranscriber.swift */; };
 		AIR0000000000000000000017 /* ImproveEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR0000000000000000000008 /* ImproveEngine.swift */; };
 		AIR0000000000000000000018 /* OpenAIImproveEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR0000000000000000000009 /* OpenAIImproveEngine.swift */; };
 		AIR0000000000000000000019 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR000000000000000000000A /* KeychainStore.swift */; };
+		AIRSEC000000000000000001 /* SecretsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRSEC000000000000000000 /* SecretsStore.swift */; };
 		AIR000000000000000000001A /* AccessibilityPasteController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR000000000000000000000B /* AccessibilityPasteController.swift */; };
+		AIRDR0000000000000000001 /* AppDeliveryRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRDR0000000000000000000 /* AppDeliveryRules.swift */; };
+		AIRDEL0000000000000000001 /* DeliveryService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRDEL0000000000000000000 /* DeliveryService.swift */; };
+		AIRDIAG0000000000000001 /* DiagnosticsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRDIAG0000000000000000 /* DiagnosticsStore.swift */; };
+		AIRDICT0000000000000001 /* DictionaryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRDICT0000000000000000 /* DictionaryStore.swift */; };
+		AIRFASTFALLBACK000001 /* FastestTranscriptionFallbackSelector.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRFASTFALLBACK000000 /* FastestTranscriptionFallbackSelector.swift */; };
 		AIR000000000000000000001B /* HotKeyCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR000000000000000000000C /* HotKeyCenter.swift */; };
 		AIR000000000000000000001C /* AudioInputDeviceDiscovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR000000000000000000000D /* AudioInputDeviceDiscovery.swift */; };
+		AIRMIC000000000000000001 /* MicrophoneDevice.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRMIC000000000000000000 /* MicrophoneDevice.swift */; };
+		AIRMIC000000000000000002 /* MicrophoneDevice.swift in Sources (iOS) */ = {isa = PBXBuildFile; fileRef = AIRMIC000000000000000000 /* MicrophoneDevice.swift */; };
+		AIRMICHEALTH0000000001 /* MicrophoneHealthMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRMICHEALTH0000000000 /* MicrophoneHealthMonitor.swift */; };
+		AIRMICOBS00000000000001 /* MicrophoneDeviceObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRMICOBS00000000000000 /* MicrophoneDeviceObserver.swift */; };
+		AIRLMINV000000000000001 /* LocalModelInventory.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRLMINV000000000000000 /* LocalModelInventory.swift */; };
+		AIRLMHEALTH000000000001 /* LocalRuntimeHealth.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRLMHEALTH000000000000 /* LocalRuntimeHealth.swift */; };
+		AIRLMPROBE0000000000001 /* LocalRuntimeProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRLMPROBE0000000000000 /* LocalRuntimeProbe.swift */; };
+		AIRTRIG0000000000000001 /* RecordingTriggerModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRTRIG0000000000000000 /* RecordingTriggerModels.swift */; };
+		AIRTRIG0000000000000003 /* RecordingTriggerController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRTRIG0000000000000002 /* RecordingTriggerController.swift */; };
+		AIRRTRED000000000000001 /* RealtimeDiagnosticsRedactor.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRRTRED000000000000000 /* RealtimeDiagnosticsRedactor.swift */; };
 		AIRAR0000000000000000001 /* TranscriptArchiveStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRAR0000000000000000000 /* TranscriptArchiveStore.swift */; };
+		AIRARCHC000000000000001 /* TranscriptArchiveClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRARCHC000000000000000 /* TranscriptArchiveClient.swift */; };
 		AIR000000000000000000001D /* RecorderPillView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR000000000000000000000E /* RecorderPillView.swift */; };
 		AIR000000000000000000001E /* PreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR000000000000000000000F /* PreviewView.swift */; };
 		AIR000000000000000000001F /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR0000000000000000000020 /* SettingsView.swift */; };
@@ -39,6 +67,11 @@
 		AIR0000000000000000000092 /* IOSRecorderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR00000000000000000000A2 /* IOSRecorderView.swift */; };
 		AIR0000000000000000000093 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR0000000000000000000004 /* Models.swift */; };
 		AIR0000000000000000000094 /* AudioRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR0000000000000000000005 /* AudioRecorder.swift */; };
+		AIRAUD00000000000000000A /* AudioPipelineTypes.swift in Sources (iOS) */ = {isa = PBXBuildFile; fileRef = AIRAUD000000000000000000 /* AudioPipelineTypes.swift */; };
+		AIRAUD00000000000000000B /* RealtimePCMChunker.swift in Sources (iOS) */ = {isa = PBXBuildFile; fileRef = AIRAUD000000000000000002 /* RealtimePCMChunker.swift */; };
+		AIRAUD00000000000000000C /* BoundedAudioQueue.swift in Sources (iOS) */ = {isa = PBXBuildFile; fileRef = AIRAUD000000000000000004 /* BoundedAudioQueue.swift */; };
+		AIRAUD00000000000000000D /* ArchiveAudioWriter.swift in Sources (iOS) */ = {isa = PBXBuildFile; fileRef = AIRAUD000000000000000006 /* ArchiveAudioWriter.swift */; };
+		AIRAUD00000000000000000E /* AudioCaptureFanout.swift in Sources (iOS) */ = {isa = PBXBuildFile; fileRef = AIRAUD000000000000000008 /* AudioCaptureFanout.swift */; };
 		AIR0000000000000000000095 /* TranscriptionEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR0000000000000000000006 /* TranscriptionEngine.swift */; };
 		AIR0000000000000000000096 /* ImproveEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR0000000000000000000008 /* ImproveEngine.swift */; };
 		AIR0000000000000000000097 /* OpenAIImproveEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR0000000000000000000009 /* OpenAIImproveEngine.swift */; };
@@ -56,16 +89,43 @@
 		AIR0000000000000000000002 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		AIR0000000000000000000003 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
 		AIR0000000000000000000004 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		AIRENV0000000000000000000 /* AppEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppEnvironment.swift; sourceTree = "<group>"; };
+		AIRSET0000000000000000000 /* AppSettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettingsStore.swift; sourceTree = "<group>"; };
+		AIRPERM00000000000000000 /* PermissionsClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionsClient.swift; sourceTree = "<group>"; };
+		AIRTS0000000000000000000 /* TranscriptionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptionService.swift; sourceTree = "<group>"; };
+		AIRIS0000000000000000000 /* ImprovementService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImprovementService.swift; sourceTree = "<group>"; };
 		AIR0000000000000000000005 /* AudioRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioRecorder.swift; sourceTree = "<group>"; };
+		AIRRECCLIENT000000000000 /* RecordingClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingClient.swift; sourceTree = "<group>"; };
+		AIRAUD000000000000000000 /* AudioPipelineTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioPipelineTypes.swift; sourceTree = "<group>"; };
+		AIRAUD000000000000000002 /* RealtimePCMChunker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimePCMChunker.swift; sourceTree = "<group>"; };
+		AIRAUD000000000000000004 /* BoundedAudioQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoundedAudioQueue.swift; sourceTree = "<group>"; };
+		AIRAUD000000000000000006 /* ArchiveAudioWriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArchiveAudioWriter.swift; sourceTree = "<group>"; };
+		AIRAUD000000000000000008 /* AudioCaptureFanout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioCaptureFanout.swift; sourceTree = "<group>"; };
 		AIR0000000000000000000006 /* TranscriptionEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptionEngine.swift; sourceTree = "<group>"; };
 		AIR0000000000000000000007 /* ParakeetTranscriber.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ParakeetTranscriber.swift; sourceTree = "<group>"; };
 		AIR0000000000000000000008 /* ImproveEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImproveEngine.swift; sourceTree = "<group>"; };
 		AIR0000000000000000000009 /* OpenAIImproveEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAIImproveEngine.swift; sourceTree = "<group>"; };
 		AIR000000000000000000000A /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
+		AIRSEC000000000000000000 /* SecretsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecretsStore.swift; sourceTree = "<group>"; };
 		AIR000000000000000000000B /* AccessibilityPasteController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccessibilityPasteController.swift; sourceTree = "<group>"; };
+		AIRDR0000000000000000000 /* AppDeliveryRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDeliveryRules.swift; sourceTree = "<group>"; };
+		AIRDEL0000000000000000000 /* DeliveryService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeliveryService.swift; sourceTree = "<group>"; };
+		AIRDIAG0000000000000000 /* DiagnosticsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsStore.swift; sourceTree = "<group>"; };
+		AIRDICT0000000000000000 /* DictionaryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DictionaryStore.swift; sourceTree = "<group>"; };
+		AIRFASTFALLBACK000000 /* FastestTranscriptionFallbackSelector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FastestTranscriptionFallbackSelector.swift; sourceTree = "<group>"; };
 		AIR000000000000000000000C /* HotKeyCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotKeyCenter.swift; sourceTree = "<group>"; };
 		AIR000000000000000000000D /* AudioInputDeviceDiscovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioInputDeviceDiscovery.swift; sourceTree = "<group>"; };
+		AIRMIC000000000000000000 /* MicrophoneDevice.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicrophoneDevice.swift; sourceTree = "<group>"; };
+		AIRMICHEALTH0000000000 /* MicrophoneHealthMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicrophoneHealthMonitor.swift; sourceTree = "<group>"; };
+		AIRMICOBS00000000000000 /* MicrophoneDeviceObserver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicrophoneDeviceObserver.swift; sourceTree = "<group>"; };
+		AIRLMINV000000000000000 /* LocalModelInventory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalModelInventory.swift; sourceTree = "<group>"; };
+		AIRLMHEALTH000000000000 /* LocalRuntimeHealth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalRuntimeHealth.swift; sourceTree = "<group>"; };
+		AIRLMPROBE0000000000000 /* LocalRuntimeProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalRuntimeProbe.swift; sourceTree = "<group>"; };
+		AIRTRIG0000000000000000 /* RecordingTriggerModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingTrigger/RecordingTriggerModels.swift; sourceTree = "<group>"; };
+		AIRTRIG0000000000000002 /* RecordingTriggerController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingTrigger/RecordingTriggerController.swift; sourceTree = "<group>"; };
+		AIRRTRED000000000000000 /* RealtimeDiagnosticsRedactor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimeDiagnosticsRedactor.swift; sourceTree = "<group>"; };
 		AIRAR0000000000000000000 /* TranscriptArchiveStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptArchiveStore.swift; sourceTree = "<group>"; };
+		AIRARCHC000000000000000 /* TranscriptArchiveClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptArchiveClient.swift; sourceTree = "<group>"; };
 		AIR000000000000000000000E /* RecorderPillView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecorderPillView.swift; sourceTree = "<group>"; };
 		AIR000000000000000000000F /* PreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewView.swift; sourceTree = "<group>"; };
 		AIR0000000000000000000020 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
@@ -124,6 +184,11 @@
 				AIR0000000000000000000002 /* AppDelegate.swift */,
 				AIR0000000000000000000003 /* AppState.swift */,
 				AIR0000000000000000000004 /* Models.swift */,
+				AIRENV0000000000000000000 /* AppEnvironment.swift */,
+				AIRSET0000000000000000000 /* AppSettingsStore.swift */,
+				AIRPERM00000000000000000 /* PermissionsClient.swift */,
+				AIRTS0000000000000000000 /* TranscriptionService.swift */,
+				AIRIS0000000000000000000 /* ImprovementService.swift */,
 				AIR0000000000000000000043 /* Recording */,
 				AIR0000000000000000000044 /* Engines */,
 				AIR0000000000000000000045 /* UI */,
@@ -148,6 +213,12 @@
 			isa = PBXGroup;
 			children = (
 				AIR0000000000000000000005 /* AudioRecorder.swift */,
+				AIRRECCLIENT000000000000 /* RecordingClient.swift */,
+				AIRAUD000000000000000000 /* AudioPipelineTypes.swift */,
+				AIRAUD000000000000000002 /* RealtimePCMChunker.swift */,
+				AIRAUD000000000000000004 /* BoundedAudioQueue.swift */,
+				AIRAUD000000000000000006 /* ArchiveAudioWriter.swift */,
+				AIRAUD000000000000000008 /* AudioCaptureFanout.swift */,
 			);
 			path = Recording;
 			sourceTree = "<group>";
@@ -182,12 +253,28 @@
 		};
 		AIR0000000000000000000046 /* Support */ = {
 			isa = PBXGroup;
-			children = (
-				AIR000000000000000000000A /* KeychainStore.swift */,
-				AIR000000000000000000000B /* AccessibilityPasteController.swift */,
-				AIR000000000000000000000C /* HotKeyCenter.swift */,
-				AIR000000000000000000000D /* AudioInputDeviceDiscovery.swift */,
+				children = (
+					AIR000000000000000000000A /* KeychainStore.swift */,
+					AIRSEC000000000000000000 /* SecretsStore.swift */,
+					AIR000000000000000000000B /* AccessibilityPasteController.swift */,
+					AIRDR0000000000000000000 /* AppDeliveryRules.swift */,
+					AIRDEL0000000000000000000 /* DeliveryService.swift */,
+					AIRDIAG0000000000000000 /* DiagnosticsStore.swift */,
+					AIRDICT0000000000000000 /* DictionaryStore.swift */,
+					AIRFASTFALLBACK000000 /* FastestTranscriptionFallbackSelector.swift */,
+					AIR000000000000000000000C /* HotKeyCenter.swift */,
+					AIR000000000000000000000D /* AudioInputDeviceDiscovery.swift */,
+					AIRMIC000000000000000000 /* MicrophoneDevice.swift */,
+					AIRMICHEALTH0000000000 /* MicrophoneHealthMonitor.swift */,
+					AIRMICOBS00000000000000 /* MicrophoneDeviceObserver.swift */,
+				AIRLMINV000000000000000 /* LocalModelInventory.swift */,
+				AIRLMHEALTH000000000000 /* LocalRuntimeHealth.swift */,
+				AIRLMPROBE0000000000000 /* LocalRuntimeProbe.swift */,
+				AIRTRIG0000000000000000 /* RecordingTriggerModels.swift */,
+				AIRTRIG0000000000000002 /* RecordingTriggerController.swift */,
+				AIRRTRED000000000000000 /* RealtimeDiagnosticsRedactor.swift */,
 				AIRAR0000000000000000000 /* TranscriptArchiveStore.swift */,
+				AIRARCHC000000000000000 /* TranscriptArchiveClient.swift */,
 			);
 			path = Support;
 			sourceTree = "<group>";
@@ -309,7 +396,18 @@
 				AIR0000000000000000000011 /* AppDelegate.swift in Sources */,
 				AIR0000000000000000000012 /* AppState.swift in Sources */,
 				AIR0000000000000000000013 /* Models.swift in Sources */,
+				AIRENV0000000000000000001 /* AppEnvironment.swift in Sources */,
+				AIRSET0000000000000000001 /* AppSettingsStore.swift in Sources */,
+				AIRPERM00000000000000001 /* PermissionsClient.swift in Sources */,
+				AIRTS0000000000000000001 /* TranscriptionService.swift in Sources */,
+				AIRIS0000000000000000001 /* ImprovementService.swift in Sources */,
 				AIR0000000000000000000014 /* AudioRecorder.swift in Sources */,
+				AIRRECCLIENT000000000001 /* RecordingClient.swift in Sources */,
+				AIRAUD000000000000000001 /* AudioPipelineTypes.swift in Sources */,
+				AIRAUD000000000000000003 /* RealtimePCMChunker.swift in Sources */,
+				AIRAUD000000000000000005 /* BoundedAudioQueue.swift in Sources */,
+				AIRAUD000000000000000007 /* ArchiveAudioWriter.swift in Sources */,
+				AIRAUD000000000000000009 /* AudioCaptureFanout.swift in Sources */,
 				AIR0000000000000000000015 /* TranscriptionEngine.swift in Sources */,
 				AIR0000000000000000000016 /* ParakeetTranscriber.swift in Sources */,
 				AIR0000000000000000000017 /* ImproveEngine.swift in Sources */,
@@ -321,10 +419,26 @@
 				AIR0000000000000000000029 /* AppleLocalEngines.swift in Sources */,
 				AIRSN0000000000000000001 /* SharedNetworkClient.swift in Sources (mac) */,
 				AIR0000000000000000000019 /* KeychainStore.swift in Sources */,
+				AIRSEC000000000000000001 /* SecretsStore.swift in Sources */,
 				AIR000000000000000000001A /* AccessibilityPasteController.swift in Sources */,
-				AIR000000000000000000001B /* HotKeyCenter.swift in Sources */,
-				AIR000000000000000000001C /* AudioInputDeviceDiscovery.swift in Sources */,
+				AIRDR0000000000000000001 /* AppDeliveryRules.swift in Sources */,
+				AIRDEL0000000000000000001 /* DeliveryService.swift in Sources */,
+				AIRDIAG0000000000000001 /* DiagnosticsStore.swift in Sources */,
+				AIRDICT0000000000000001 /* DictionaryStore.swift in Sources */,
+				AIRFASTFALLBACK000001 /* FastestTranscriptionFallbackSelector.swift in Sources */,
+					AIR000000000000000000001B /* HotKeyCenter.swift in Sources */,
+					AIR000000000000000000001C /* AudioInputDeviceDiscovery.swift in Sources */,
+					AIRMIC000000000000000001 /* MicrophoneDevice.swift in Sources */,
+					AIRMICHEALTH0000000001 /* MicrophoneHealthMonitor.swift in Sources */,
+					AIRMICOBS00000000000001 /* MicrophoneDeviceObserver.swift in Sources */,
+				AIRLMINV000000000000001 /* LocalModelInventory.swift in Sources */,
+				AIRLMHEALTH000000000001 /* LocalRuntimeHealth.swift in Sources */,
+				AIRLMPROBE0000000000001 /* LocalRuntimeProbe.swift in Sources */,
+				AIRTRIG0000000000000001 /* RecordingTriggerModels.swift in Sources */,
+				AIRTRIG0000000000000003 /* RecordingTriggerController.swift in Sources */,
+				AIRRTRED000000000000001 /* RealtimeDiagnosticsRedactor.swift in Sources */,
 				AIRAR0000000000000000001 /* TranscriptArchiveStore.swift in Sources */,
+				AIRARCHC000000000000001 /* TranscriptArchiveClient.swift in Sources */,
 				AIR000000000000000000001D /* RecorderPillView.swift in Sources */,
 				AIR000000000000000000001E /* PreviewView.swift in Sources */,
 				AIR000000000000000000001F /* SettingsView.swift in Sources */,
@@ -341,9 +455,15 @@
 				AIRCS00000000000000000002 /* AIRColdStartInstrumentation.swift in Sources */,
 				AIR0000000000000000000091 /* IOSAppState.swift in Sources */,
 				AIR0000000000000000000092 /* IOSRecorderView.swift in Sources */,
-				AIR000000000000000000009A /* AppleLocalEngines.swift in Sources */,
-				AIR0000000000000000000093 /* Models.swift in Sources */,
-				AIR0000000000000000000094 /* AudioRecorder.swift in Sources */,
+					AIR000000000000000000009A /* AppleLocalEngines.swift in Sources */,
+					AIR0000000000000000000093 /* Models.swift in Sources */,
+					AIR0000000000000000000094 /* AudioRecorder.swift in Sources */,
+					AIRMIC000000000000000002 /* MicrophoneDevice.swift in Sources (iOS) */,
+					AIRAUD00000000000000000A /* AudioPipelineTypes.swift in Sources (iOS) */,
+				AIRAUD00000000000000000B /* RealtimePCMChunker.swift in Sources (iOS) */,
+				AIRAUD00000000000000000C /* BoundedAudioQueue.swift in Sources (iOS) */,
+				AIRAUD00000000000000000D /* ArchiveAudioWriter.swift in Sources (iOS) */,
+				AIRAUD00000000000000000E /* AudioCaptureFanout.swift in Sources (iOS) */,
 				AIR0000000000000000000095 /* TranscriptionEngine.swift in Sources */,
 				AIR0000000000000000000096 /* ImproveEngine.swift in Sources */,
 				AIR0000000000000000000097 /* OpenAIImproveEngine.swift in Sources */,

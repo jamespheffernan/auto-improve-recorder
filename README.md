@@ -70,26 +70,29 @@ The iOS target is configured for iOS 17.0+. It starts with a touch-first record/
 3. Add an OpenAI API key. It is stored in Keychain under service `com.fieldtheory.autoimproverecorder`.
 4. Choose a transcription mode:
    - `Local Whisper` is the default and keeps audio transcription local.
-   - `Local Parakeet` keeps audio transcription local through the Field Theory Parakeet runtime.
+   - `Parakeet.cpp Fast` keeps audio transcription local through AIR's 110M Parakeet.cpp runtime.
+   - `Parakeet.cpp Recommended` keeps audio transcription local through AIR's 0.6B Parakeet.cpp runtime.
    - `Apple Speech` keeps audio transcription local through Apple's Speech framework when supported on this Mac.
    - `OpenAI API` sends the saved recording to OpenAI after recording.
-   - `Fastest` streams microphone audio to OpenAI while recording, then finalizes the streaming transcript on stop. If OpenAI streaming cannot start, fails mid-recording, or no API key is saved, the app falls back to Parakeet using the temporary WAV.
+   - `Fastest` streams microphone audio to OpenAI while recording, then finalizes the streaming transcript on stop. If OpenAI streaming cannot start, fails mid-recording, or no API key is saved, the app falls back to Parakeet.cpp Recommended using the temporary WAV.
 5. Choose an improvement mode:
    - `OpenAI` uses the OpenAI API key for cleanup.
    - `Gemini Flash` uses the Gemini API key for cleanup.
    - `Claude Haiku` uses the Anthropic API key for cleanup.
-   - `Apple local` uses the on-device Foundation Models framework. Paired with `Apple Speech` or `Local Parakeet`, this keeps the whole flow on the Mac.
-   - `Ollama local` sends transcript text to a local Ollama server. Paired with `Local Whisper` or `Local Parakeet`, this keeps the whole flow on the Mac.
-6. Confirm Parakeet paths if using `Local Parakeet`:
-   - Runtime path: `~/Library/Application Support/fieldtheory-mac/build-parakeet/venv/bin/python`
-   - Script path: `/Applications/Field Theory.app/Contents/Resources/scripts/parakeet-transcribe.py`
-   - Cache path: `~/Library/Application Support/fieldtheory-mac/build-parakeet/cache`
+   - `Apple local` uses the on-device Foundation Models framework. Paired with `Apple Speech` or Parakeet.cpp, this keeps the whole flow on the Mac.
+   - `Ollama local` sends transcript text to a local Ollama server. Paired with `Local Whisper` or Parakeet.cpp, this keeps the whole flow on the Mac.
+6. Confirm AIR's Parakeet.cpp runtime exists under `~/Library/Application Support/AutoImproveRecorder/ParakeetCpp` if using a Parakeet.cpp mode:
+   - CLI: `bin/parakeet-cli`
+   - Fast model: `models/tdt_ctc-110m-q4_k.gguf`
+   - Recommended model: `models/tdt-0.6b-v2-q4_k.gguf`
 7. For Ollama local cleanup, start Ollama and run `ollama pull qwen3:4b-instruct`. The default local endpoint is `http://127.0.0.1:11434`. For the experimental speed mode, also run `ollama pull qwen3.5:0.8b-mlx` or `ollama pull qwen3.5:0.8b` and set the model field to that tag.
-8. Grant Microphone permission when prompted.
-9. Grant Speech Recognition permission if prompted by Apple Speech.
-10. Grant Accessibility permission if you want automatic paste into focused text fields or the Paste button to send `Command-V`. If missing, the app falls back to the clipboard when clipboard copying is enabled.
-
-The microphone picker is an MVP preference surface. Recording currently uses the macOS system default input through `AVAudioEngine`; wiring a specific selected input device is left as the next native-audio pass.
+8. Choose a microphone:
+   - `System default` follows the current macOS default input at recording start.
+   - A named input, such as `BOYA mini 2`, is resolved through CoreAudio and passed into `AVAudioEngine` before AIR reads the input format or installs the tap.
+   - If the preferred input is missing, disconnected, busy at start, or exact-silent during startup, AIR quarantines it briefly and records from the best available fallback input.
+9. Grant Microphone permission when prompted.
+10. Grant Speech Recognition permission if prompted by Apple Speech.
+11. Grant Accessibility permission if you want automatic paste into focused text fields or the Paste button to send `Command-V`. If missing, the app falls back to the clipboard when clipboard copying is enabled.
 
 ### iOS
 
@@ -105,25 +108,25 @@ The microphone picker is an MVP preference surface. Recording currently uses the
 
 ## Transcription behavior
 
-`Local Parakeet` keeps transcription local. The app starts Field Theory's `parakeet-transcribe.py` in persistent server mode and sends JSON transcription commands over stdin/stdout:
+`Parakeet.cpp Fast` and `Parakeet.cpp Recommended` keep transcription local. The app runs AIR's installed `parakeet-cli` against model files under `~/Library/Application Support/AutoImproveRecorder/ParakeetCpp`:
 
 ```bash
-"~/Library/Application Support/fieldtheory-mac/build-parakeet/venv/bin/python" \
-  "/Applications/Field Theory.app/Contents/Resources/scripts/parakeet-transcribe.py" \
-  --server \
-  --model nemo-parakeet-tdt-0.6b-v2
+"~/Library/Application Support/AutoImproveRecorder/ParakeetCpp/bin/parakeet-cli" \
+  transcribe \
+  --model "~/Library/Application Support/AutoImproveRecorder/ParakeetCpp/models/tdt-0.6b-v2-q4_k.gguf" \
+  --input recording.wav \
+  --json
 ```
-
-`FIELD_THEORY_PARAKEET_CACHE_DIR` is set to the discovered cache directory so `onnx-asr` uses the installed local model cache.
 
 `Apple Speech` uses Apple's on-device speech APIs when available on the current OS, hardware, locale, and installed speech assets. If it is unavailable, the app shows a local-availability error rather than sending audio elsewhere.
 
-`Fastest` opens `wss://api.openai.com/v1/realtime?intent=transcription` with the saved OpenAI API key, sends the current transcription-session `session.update` shape (`session.type = transcription`, `audio.input.format = audio/pcm` at 24 kHz, `audio.input.transcription.model = gpt-4o-transcribe`), converts each captured microphone buffer to 16-bit mono PCM at 24 kHz, and streams `input_audio_buffer.append` events while the WAV is still being written. On stop, the app commits/finalizes the streaming buffer, uses the ordered completed transcript events when available, and then runs the same improve/copy flow. If the realtime path returns an error or an empty transcript, Parakeet transcribes the saved WAV.
+`Fastest` opens `wss://api.openai.com/v1/realtime?intent=transcription` with the saved OpenAI API key, sends the current transcription-session `session.update` shape (`session.type = transcription`, `audio.input.format = audio/pcm` at 24 kHz, `audio.input.transcription.model = gpt-4o-transcribe`), converts each captured microphone buffer to 16-bit mono PCM at 24 kHz, and streams `input_audio_buffer.append` events while the WAV is still being written. On stop, the app commits/finalizes the streaming buffer, uses the ordered completed transcript events when available, and then runs the same improve/copy flow. If the realtime path returns an error or an empty transcript, Parakeet.cpp Recommended transcribes the saved WAV.
 
 ## Reliability behavior
 
 - Raw transcript is stored separately from cleaned text in the current session; the preview can show the unedited transcript even when cleanup is unavailable or fails.
-- Each completed macOS recording is archived under `~/Library/Application Support/AutoImproveRecorder/TranscriptTruth/` with `audio.wav` plus `record.json` containing the raw transcript, cleaned transcript, final visible transcript, provider/settings metadata, and any failure message.
+- Each completed macOS recording is archived under `~/Library/Application Support/AutoImproveRecorder/TranscriptTruth/` with `audio.wav` plus `record.json` containing the raw transcript, cleaned transcript, final visible transcript, provider/settings metadata, microphone preference/resolution metadata, and any failure message.
+- The microphone inventory is observed with CoreAudio property listeners. AIR refreshes the picker when devices/default input change, but it does not hold the microphone open while idle.
 - If OpenAI improve fails, the preview falls back to raw transcript and shows the error.
 - If OpenAI realtime transcription fails in `Fastest` mode, transcription falls back to local Parakeet using the saved temporary WAV.
 - `Escape` cancel stops recording, closes any realtime transcription session, removes the temporary WAV, and does not touch the clipboard.

@@ -19,6 +19,10 @@ struct OpenAIAudioTranscriber: TranscriptionEngine {
     }
 
     func transcribe(audioURL: URL) async throws -> TranscriptionResult {
+        try await transcribe(audioURL: audioURL, context: .empty)
+    }
+
+    func transcribe(audioURL: URL, context: TranscriptionContext) async throws -> TranscriptionResult {
         let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedKey.isEmpty else {
             throw OpenAIAudioTranscriptionError.missingAPIKey
@@ -59,7 +63,8 @@ struct OpenAIAudioTranscriber: TranscriptionEngine {
             audioURL: uploadURL,
             boundary: boundary,
             contentType: contentType,
-            filename: "audio.\(fileExt)"
+            filename: "audio.\(fileExt)",
+            prompt: context.transcriptionPrompt
         )
 
         // Shared keep-alive session: connection reuse + HTTP/3 hint + 429 retry.
@@ -106,7 +111,8 @@ struct OpenAIAudioTranscriber: TranscriptionEngine {
         audioURL: URL,
         boundary: String,
         contentType: String,
-        filename: String
+        filename: String,
+        prompt: String?
     ) throws -> Data {
         var body = Data()
         func append(_ string: String) {
@@ -124,6 +130,12 @@ struct OpenAIAudioTranscriber: TranscriptionEngine {
         append("--\(boundary)\r\n")
         append("Content-Disposition: form-data; name=\"response_format\"\r\n\r\n")
         append("text\r\n")
+
+        if let prompt, !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            append("--\(boundary)\r\n")
+            append("Content-Disposition: form-data; name=\"prompt\"\r\n\r\n")
+            append("\(prompt)\r\n")
+        }
 
         append("--\(boundary)\r\n")
         append("Content-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\n")

@@ -1,7 +1,12 @@
 import Foundation
 
 protocol ImproveEngine {
-    func improve(rawTranscript: String, outputMode: OutputMode, modificationStrength: Int) async throws -> String
+    func improve(
+        rawTranscript: String,
+        outputMode: OutputMode,
+        modificationStrength: Int,
+        dictionarySnapshot: String
+    ) async throws -> String
 
     /// Streaming-aware improve. Default implementation falls back to the
     /// buffered `improve(...)` call and emits a single `onDelta` containing
@@ -23,11 +28,21 @@ protocol ImproveEngine {
         rawTranscript: String,
         outputMode: OutputMode,
         modificationStrength: Int,
+        dictionarySnapshot: String,
         onDelta: @escaping (String) -> Void
     ) async throws -> String
 }
 
 extension ImproveEngine {
+    func improve(rawTranscript: String, outputMode: OutputMode, modificationStrength: Int) async throws -> String {
+        try await improve(
+            rawTranscript: rawTranscript,
+            outputMode: outputMode,
+            modificationStrength: modificationStrength,
+            dictionarySnapshot: ""
+        )
+    }
+
     /// Default fallback: just runs the buffered improve and emits the entire
     /// result as one synthetic delta. Engines that support SSE override.
     func improveStreaming(
@@ -36,10 +51,27 @@ extension ImproveEngine {
         modificationStrength: Int,
         onDelta: @escaping (String) -> Void
     ) async throws -> String {
+        try await improveStreaming(
+            rawTranscript: rawTranscript,
+            outputMode: outputMode,
+            modificationStrength: modificationStrength,
+            dictionarySnapshot: "",
+            onDelta: onDelta
+        )
+    }
+
+    func improveStreaming(
+        rawTranscript: String,
+        outputMode: OutputMode,
+        modificationStrength: Int,
+        dictionarySnapshot: String,
+        onDelta: @escaping (String) -> Void
+    ) async throws -> String {
         let full = try await improve(
             rawTranscript: rawTranscript,
             outputMode: outputMode,
-            modificationStrength: modificationStrength
+            modificationStrength: modificationStrength,
+            dictionarySnapshot: dictionarySnapshot
         )
         onDelta(full)
         return full
@@ -94,12 +126,21 @@ struct ImprovePrompt {
     var instructions: String
     var input: String
 
-    static func make(rawTranscript: String, outputMode: OutputMode, modificationStrength: Int) -> ImprovePrompt {
+    static func make(
+        rawTranscript: String,
+        outputMode: OutputMode,
+        modificationStrength: Int,
+        dictionarySnapshot: String = ""
+    ) -> ImprovePrompt {
         let strength = min(max(modificationStrength, 1), 5)
+        let trimmedDictionary = dictionarySnapshot.trimmingCharacters(in: .whitespacesAndNewlines)
+        let dictionaryInstruction = trimmedDictionary.isEmpty
+            ? ""
+            : "\n\nUser dictionary terms active for this dictation: \(trimmedDictionary)\nPreserve these dictionary terms exactly when they appear or are the likely intended transcription."
         let instructions = """
         You improve dictated text for direct use.
 
-        Preserve the speaker's intent, thinking process, uncertainty, constraints, names, numbers, code references, ordering, and domain-specific wording. Do not remove a thought just because it is tentative, self-correcting, or exploratory. Only remove words that are clearly disposable dictation artifacts, such as filler sounds, accidental duplicate words, and abandoned fragments that carry no meaning.
+        Preserve the speaker's intent, thinking process, uncertainty, constraints, names, numbers, code references, ordering, and domain-specific wording. Do not remove a thought just because it is tentative, self-correcting, or exploratory. Only remove words that are clearly disposable dictation artifacts, such as filler sounds, accidental duplicate words, and abandoned fragments that carry no meaning.\(dictionaryInstruction)
 
         Do not add facts. Do not answer the speaker. Do not make the text more decisive than the transcript. Return only the improved text with no preface, labels, markdown fence, or commentary.
         """

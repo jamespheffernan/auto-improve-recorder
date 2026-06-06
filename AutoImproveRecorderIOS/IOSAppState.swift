@@ -150,7 +150,14 @@ final class IOSAppState: ObservableObject {
         guard !phase.isBusy else { return }
         let requestedAt = Date()
         let audioURL = AudioRecorder.makeRecordingURL()
-        session = TranscriptSession(audioURL: audioURL, rawTranscript: "", improvedText: "", message: nil, improveFailed: false)
+        session = TranscriptSession(
+            audioURL: audioURL,
+            rawTranscript: "",
+            improvedText: "",
+            message: nil,
+            improveFailed: false,
+            dictionarySnapshot: ""
+        )
         currentHistoryID = nil
         showRawTranscript = false
         recordingEngineReady = false
@@ -248,7 +255,8 @@ final class IOSAppState: ObservableObject {
             rawTranscript: item.rawTranscript,
             improvedText: item.improvedText,
             message: nil,
-            improveFailed: item.improveFailed
+            improveFailed: item.improveFailed,
+            dictionarySnapshot: ""
         )
         showRawTranscript = useRaw
         phase = .ready
@@ -336,7 +344,8 @@ final class IOSAppState: ObservableObject {
                 rawTranscript: "",
                 improvedText: "",
                 message: error.localizedDescription,
-                improveFailed: false
+                improveFailed: false,
+                dictionarySnapshot: ""
             )
             phase = .failed
             statusMessage = error.localizedDescription
@@ -376,6 +385,7 @@ final class IOSAppState: ObservableObject {
                 rawTranscript: raw,
                 outputMode: outputMode,
                 modificationStrength: cleanupStrength,
+                dictionarySnapshot: "",
                 onDelta: { [weak self] partial in
                     let firstThisDelta = !sawFirstDelta
                     sawFirstDelta = true
@@ -500,7 +510,12 @@ final class IOSAppState: ObservableObject {
 private struct UnavailableImproveEngine: ImproveEngine {
     let message: String
 
-    func improve(rawTranscript: String, outputMode: OutputMode, modificationStrength: Int) async throws -> String {
+    func improve(
+        rawTranscript: String,
+        outputMode: OutputMode,
+        modificationStrength: Int,
+        dictionarySnapshot: String
+    ) async throws -> String {
         throw ImproveEngineError.localProviderUnavailable(provider: "Ollama", message: message)
     }
 }

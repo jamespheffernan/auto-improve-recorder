@@ -56,6 +56,7 @@
     },
     {
       "base_url": "http://127.0.0.1:11434",
+      "enabled": false,
       "modification_strength": 2,
       "model": "qwen3:4b-instruct",
       "name": "ollama-qwen3-4b-instruct",
@@ -67,7 +68,6 @@
     },
     {
       "base_url": "http://127.0.0.1:11434",
-      "enabled": false,
       "modification_strength": 2,
       "model": "qwen3.5:0.8b-mlx",
       "name": "ollama-qwen3.5-0.8b-mlx",

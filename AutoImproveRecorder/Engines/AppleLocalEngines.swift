@@ -26,14 +26,20 @@ struct AppleLocalAudioTranscriber: TranscriptionEngine {
 }
 
 struct AppleLocalImproveEngine: ImproveEngine {
-    func improve(rawTranscript: String, outputMode: OutputMode, modificationStrength: Int) async throws -> String {
+    func improve(
+        rawTranscript: String,
+        outputMode: OutputMode,
+        modificationStrength: Int,
+        dictionarySnapshot: String
+    ) async throws -> String {
         #if canImport(FoundationModels)
         #if os(iOS)
         if #available(iOS 26.0, *) {
             return try await AppleFoundationModelImproveEngine().improve(
                 rawTranscript: rawTranscript,
                 outputMode: outputMode,
-                modificationStrength: modificationStrength
+                modificationStrength: modificationStrength,
+                dictionarySnapshot: dictionarySnapshot
             )
         }
         #elseif os(macOS)
@@ -41,7 +47,8 @@ struct AppleLocalImproveEngine: ImproveEngine {
             return try await AppleFoundationModelImproveEngine().improve(
                 rawTranscript: rawTranscript,
                 outputMode: outputMode,
-                modificationStrength: modificationStrength
+                modificationStrength: modificationStrength,
+                dictionarySnapshot: dictionarySnapshot
             )
         }
         #endif
@@ -107,7 +114,12 @@ private struct AppleSpeechTranscriber {
 #if canImport(FoundationModels)
 @available(iOS 26.0, macOS 26.0, *)
 private struct AppleFoundationModelImproveEngine {
-    func improve(rawTranscript: String, outputMode: OutputMode, modificationStrength: Int) async throws -> String {
+    func improve(
+        rawTranscript: String,
+        outputMode: OutputMode,
+        modificationStrength: Int,
+        dictionarySnapshot: String
+    ) async throws -> String {
         let raw = rawTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !raw.isEmpty else {
             throw ImproveEngineError.emptyOutput
@@ -121,7 +133,8 @@ private struct AppleFoundationModelImproveEngine {
         let prompt = ImprovePrompt.make(
             rawTranscript: raw,
             outputMode: outputMode,
-            modificationStrength: modificationStrength
+            modificationStrength: modificationStrength,
+            dictionarySnapshot: dictionarySnapshot
         )
 
         let session = LanguageModelSession(

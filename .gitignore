@@ -12,4 +12,6 @@ xcuserdata/
 
 # Tooling
 node_modules/
+__pycache__/
 .autoresearch/
+.playwright-mcp/

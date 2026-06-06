@@ -15,12 +15,13 @@ python3 Bench/model_eval.py write-config --out Bench/model_eval.providers.json
 `Bench/model_eval.providers.json` is local-first: Field Theory Parakeet
 transcription and Ollama cleanup providers are available, with OpenAI providers
 kept as disabled cloud baselines. The current app default is
-`qwen3:4b-instruct`; `qwen3:8b` remains in the provider file only as an older
-comparison candidate and is too slow for the interactive loop. Ollama providers
-expect Ollama to be running and the selected model already pulled:
+`qwen3.5:0.8b-mlx`; older Qwen/Gemma/Llama entries remain in the provider file
+as disabled comparison candidates unless they are currently being tested.
+Ollama providers expect Ollama to be running and the selected model already
+pulled:
 
 ```bash
-ollama pull qwen3:4b-instruct
+ollama pull qwen3.5:0.8b-mlx
 ```
 
 The Field Theory Parakeet provider points at the installed runtime on this Mac:
@@ -32,6 +33,60 @@ The Field Theory Parakeet provider points at the installed runtime on this Mac:
 ```
 
 OpenAI providers use `OPENAI_API_KEY` when explicitly enabled or selected.
+
+## Current Local Cleanup Result
+
+The current AIR local cleanup default is `qwen3.5:0.8b-mlx`. On June 2, 2026,
+the live app preference also matched that default:
+
+```bash
+defaults read com.fieldtheory.autoimproverecorder ollamaModel
+defaults read com.fieldtheory.autoimproverecorder improvementMode
+```
+
+The small-model bake-off did not find a better Parakeet-style text improvement
+replacement. Prior local runs showed `qwen3.5:0.8b-mlx` as the fastest good
+cleanup model, while `qwen3:4b-instruct` and `qwen3.5:4b-mlx` were meaningfully
+slower and several small GGUF models either over-edited, echoed reasoning, or
+expanded the transcript.
+
+Prompt-shape experiments also did not justify changing app behavior:
+
+- Current app prompt: `.autoresearch/qwen35-mlx-no-prefix-repeat3-read-aloud.csv`
+  reported mean `599 ms`, p50 `593 ms`, mean edit ratio `0.084`, and mean
+  reference WER `0.146` across 48 runs.
+- Current app prompt without `/no_think`: mean `602 ms`, p50 `601 ms`, mean
+  edit ratio `0.096`, and mean reference WER `0.147` across 48 runs, so no
+  stable speed or quality win.
+- Transcript-only prompt without `/no_think`: a 16-run screen showed mean
+  `843 ms` and substantial over-editing, even though some short over-edited
+  outputs completed quickly.
+- Compact/tagged prompt variants leaked prompt scaffolding on some samples and
+  were slower or lower quality than the current prompt.
+
+Output-cap experiments found one safe optimization. Keep the app on
+`qwen3.5:0.8b-mlx` with the existing prompt shape, but use a bounded adaptive
+Ollama `num_predict` cap instead of always requesting 320 output tokens. On a
+48-run same-prompt comparison, `.autoresearch/qwen35-mlx-adaptive-cap-repeat3-read-aloud.csv`
+showed adaptive-cap-320 improved mean latency from `986 ms` to `878 ms`, p50
+from `904 ms` to `785 ms`, and p95 from `1403 ms` to `1292 ms`, with no
+truncation or prompt scaffolding leaks in the corpus screen. Treat this as a
+tail-latency improvement, not a model-quality change.
+
+A larger optimization is the paste-ready bypass. For `Clean` and
+`Near-verbatim` modes, the Ollama engine can return the transcript immediately
+when the text already looks paste-ready: punctuated, terminally punctuated,
+not too short or too long, no obvious filler/false-start artifacts, no spoken
+file-extension artifacts such as `dot swift`, and no explicit transformation
+request such as "make this into a task" or "clean this up". In
+`.autoresearch/qwen35-mlx-bypass-repeat3-read-aloud.csv`, the bypass skipped
+27 of 48 repeated read-aloud runs. Mean latency dropped from `775 ms` to
+`345 ms`, p50 dropped from `777 ms` to `0.10 ms`, and p95 dropped from
+`1042 ms` to `946 ms`. Mean reference WER improved from `0.130` to `0.106`
+because paste-ready transcripts were not unnecessarily over-edited.
+
+Use compact prompt styles only as benchmark experiments until a run beats the
+current app prompt on both latency and preservation.
 
 ## Local-First Quick Run
 
@@ -65,7 +120,7 @@ Run local cleanup on the same real transcripts:
 python3 Bench/model_eval.py improve \
   --corpus .autoresearch/transcript-truth.corpus.json \
   --config Bench/model_eval.providers.json \
-  --provider ollama-qwen3-4b-instruct \
+  --provider ollama-qwen3.5-0.8b-mlx \
   --limit 3 \
   --runs 1 \
   --out .autoresearch/local-improvement-smoke.jsonl
@@ -145,7 +200,7 @@ Run local cleanup against the exact read transcript:
 python3 Bench/model_eval.py improve \
   --corpus .autoresearch/read-aloud.corpus.json \
   --config Bench/model_eval.providers.json \
-  --provider ollama-qwen3-4b-instruct \
+  --provider ollama-qwen3.5-0.8b-mlx \
   --runs 1 \
   --out .autoresearch/read-aloud-improvement.jsonl
 ```
@@ -156,7 +211,7 @@ Run full-pipeline cleanup from Parakeet output:
 python3 Bench/model_eval.py improve \
   --transcription-results .autoresearch/read-aloud-transcription.jsonl \
   --config Bench/model_eval.providers.json \
-  --provider ollama-qwen3-4b-instruct \
+  --provider ollama-qwen3.5-0.8b-mlx \
   --runs 1 \
   --out .autoresearch/read-aloud-pipeline-improvement.jsonl
 ```

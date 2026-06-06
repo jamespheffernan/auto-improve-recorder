@@ -23,21 +23,42 @@ enum AccessibilityPasteController {
     }
 
     static func focusedElementAcceptsText(promptForPermission: Bool = false) -> Bool {
-        guard isTrusted(prompt: promptForPermission), let element = focusedElement() else {
-            return false
-        }
-
-        return elementAcceptsText(element)
+        currentDeliveryContext(promptForPermission: promptForPermission).focusedTarget?.acceptsText == true
     }
 
     static func focusedTextTargetFrame(promptForPermission: Bool = false) -> CGRect? {
-        guard isTrusted(prompt: promptForPermission),
-              let element = focusedElement(),
-              elementAcceptsText(element) else {
+        currentDeliveryContext(promptForPermission: promptForPermission).focusedTarget?.frame
+    }
+
+    static func currentFocusedApp() -> FocusedApp? {
+        guard let app = NSWorkspace.shared.frontmostApplication,
+              let bundleIdentifier = app.bundleIdentifier,
+              !bundleIdentifier.isEmpty else {
             return nil
         }
 
-        return elementFrame(element)
+        return FocusedApp(bundleIdentifier: bundleIdentifier, displayName: app.localizedName)
+    }
+
+    static func focusedTextTarget(promptForPermission: Bool = false) -> FocusedTextTarget? {
+        currentDeliveryContext(promptForPermission: promptForPermission).focusedTarget
+    }
+
+    static func currentDeliveryContext(promptForPermission: Bool = false) -> DeliveryContext {
+        let frontmostApp = currentFocusedApp()
+        let trusted = isTrusted(prompt: promptForPermission)
+
+        guard trusted, let element = focusedElement() else {
+            return DeliveryContext(focusedApp: frontmostApp, focusedTarget: nil, accessibilityTrusted: trusted)
+        }
+
+        let acceptsText = elementAcceptsText(element)
+        let target = FocusedTextTarget(
+            acceptsText: acceptsText,
+            frame: acceptsText ? elementFrame(element) : nil
+        )
+
+        return DeliveryContext(focusedApp: frontmostApp, focusedTarget: target, accessibilityTrusted: trusted)
     }
 
     static func paste(

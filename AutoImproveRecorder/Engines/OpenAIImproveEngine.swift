@@ -17,7 +17,12 @@ struct OpenAIImproveEngine: ImproveEngine {
         return URL(string: "https://api.openai.com/v1/responses")!
     }
 
-    func improve(rawTranscript: String, outputMode: OutputMode, modificationStrength: Int) async throws -> String {
+    func improve(
+        rawTranscript: String,
+        outputMode: OutputMode,
+        modificationStrength: Int,
+        dictionarySnapshot: String
+    ) async throws -> String {
         guard !apiKey.isEmpty else {
             throw ImproveEngineError.missingAPIKey
         }
@@ -31,7 +36,8 @@ struct OpenAIImproveEngine: ImproveEngine {
         let prompt = ImprovePrompt.make(
             rawTranscript: rawTranscript,
             outputMode: outputMode,
-            modificationStrength: modificationStrength
+            modificationStrength: modificationStrength,
+            dictionarySnapshot: dictionarySnapshot
         )
 
         let body: [String: Any] = [
@@ -116,6 +122,7 @@ struct OpenAIImproveEngine: ImproveEngine {
         rawTranscript: String,
         outputMode: OutputMode,
         modificationStrength: Int,
+        dictionarySnapshot: String,
         onDelta: @escaping (String) -> Void
     ) async throws -> String {
         guard !apiKey.isEmpty else {
@@ -134,7 +141,8 @@ struct OpenAIImproveEngine: ImproveEngine {
         let prompt = ImprovePrompt.make(
             rawTranscript: rawTranscript,
             outputMode: outputMode,
-            modificationStrength: modificationStrength
+            modificationStrength: modificationStrength,
+            dictionarySnapshot: dictionarySnapshot
         )
 
         let body: [String: Any] = [

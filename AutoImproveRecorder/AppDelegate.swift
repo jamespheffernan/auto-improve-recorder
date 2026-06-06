@@ -4,48 +4,48 @@ import AppKit
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let state = AppState.shared
     private let hotKeyCenter = HotKeyCenter()
-    private let pillController = FloatingPillWindowController()
     private let previewController = PreviewWindowController()
     private let settingsController = SettingsWindowController()
     private let edgeGlowController = EdgeGlowWindowController()
     private var statusItem: NSStatusItem?
+    private var dictionaryServiceProvider: DictionaryServiceProvider?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
 
-        state.showPill = { [weak self] in self?.pillController.show() }
-        state.hidePill = { [weak self] in self?.pillController.hide() }
         state.showPreview = { [weak self] in self?.previewController.show() }
         state.showSettings = { [weak self] in self?.settingsController.show() }
         state.menuNeedsUpdate = { [weak self] in self?.rebuildMenu() }
         state.registerRecordingHotKey = { [weak self] hotKey in
             self?.hotKeyCenter.registerRecordingHotKey(hotKey) ?? false
         }
+        state.unregisterRecordingHotKey = { [weak self] in self?.hotKeyCenter.unregisterRecordingHotKey() }
         state.registerCancelHotKey = { [weak self] in self?.hotKeyCenter.registerCancelHotKey() }
         state.unregisterCancelHotKey = { [weak self] in self?.hotKeyCenter.unregisterCancelHotKey() }
         state.registerWalkieTalkieLatchHotKey = { [weak self] in self?.hotKeyCenter.registerWalkieTalkieLatchHotKey() }
         state.unregisterWalkieTalkieLatchHotKey = { [weak self] in self?.hotKeyCenter.unregisterWalkieTalkieLatchHotKey() }
-        state.showProcessingSignal = { [weak self, weak state] in
-            self?.edgeGlowController.showProcessing {
-                guard state?.autoSubmitDetectedTextFields == true else { return nil }
+        state.showProcessingSignal = { [weak self] visualState in
+            self?.edgeGlowController.showProcessing(visualState) {
                 return AccessibilityPasteController.focusedTextTargetFrame(promptForPermission: false)
             }
         }
-        state.flashReadySignal = { [weak self] in self?.edgeGlowController.flashReady() }
-        state.hideProcessingSignal = { [weak self] in self?.edgeGlowController.hide() }
+        state.flashReadySignal = { [weak self] visualState in
+            self?.edgeGlowController.flashReady(visualState)
+        }
+        state.hideProcessingSignal = { [weak self] in
+            self?.edgeGlowController.hide()
+        }
+        let dictionaryServiceProvider = DictionaryServiceProvider(store: state.dictionaryStore) { [weak self] message in
+            self?.state.statusMessage = message
+            self?.rebuildMenu()
+        }
+        self.dictionaryServiceProvider = dictionaryServiceProvider
+        NSApp.servicesProvider = dictionaryServiceProvider
+        NSUpdateDynamicServices()
 
         setupStatusItem()
-        hotKeyCenter.handler = { [weak self] receivedAt in
-            self?.state.recordingHotKeyPressed(requestedAt: receivedAt)
-        }
-        hotKeyCenter.releaseHandler = { [weak self] in
-            self?.state.recordingHotKeyReleased()
-        }
-        hotKeyCenter.cancelHandler = { [weak self] in
-            self?.state.cancelRecording()
-        }
-        hotKeyCenter.walkieTalkieLatchHandler = { [weak self] in
-            self?.state.latchCurrentWalkieTalkieRecording()
+        hotKeyCenter.eventHandler = { [weak self] event in
+            self?.state.handleHotKeyEvent(event)
         }
         state.refreshRecordingHotKeyRegistration()
         state.prewarmLocalModels()
@@ -53,6 +53,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         hotKeyCenter.unregister()
+        state.prepareForApplicationTermination()
     }
 
     private func setupStatusItem() {
@@ -70,9 +71,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let menu = NSMenu()
         menu.delegate = self
 
-        let recordTitle = state.isRecording ? "Stop Recording" : "Start Recording"
+        let recordTitle: String
+        switch state.phase {
+        case .starting:
+            recordTitle = "Starting Recording"
+        case .recording:
+            recordTitle = "Stop Recording"
+        case .transcribing:
+            recordTitle = "Transcribing"
+        case .improving:
+            recordTitle = "Cleaning Text"
+        case .delivering:
+            recordTitle = "Pasting Text"
+        case .idle, .ready, .failed:
+            recordTitle = "Start Recording"
+        }
         let recordItem = NSMenuItem(title: recordTitle, action: #selector(toggleRecording), keyEquivalent: "")
         recordItem.target = self
+        recordItem.isEnabled = state.isRecording || !state.phase.isBusy
         menu.addItem(recordItem)
 
         let previewItem = NSMenuItem(title: "Show Preview", action: #selector(showPreview), keyEquivalent: "")

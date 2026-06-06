@@ -12,7 +12,7 @@ final class FloatingPillWindowController {
                     .environmentObject(AppState.shared)
             )
             let panel = NSPanel(
-                contentRect: NSRect(x: 0, y: 0, width: 360, height: 64),
+                contentRect: NSRect(x: 0, y: 0, width: 416, height: 78),
                 styleMask: [.borderless, .nonactivatingPanel],
                 backing: .buffered,
                 defer: false
@@ -86,13 +86,14 @@ final class SettingsWindowController {
                     .environmentObject(AppState.shared)
             )
             let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 560, height: 620),
-                styleMask: [.titled, .closable, .miniaturizable],
+                contentRect: NSRect(x: 0, y: 0, width: 620, height: 580),
+                styleMask: [.titled, .closable, .miniaturizable, .resizable],
                 backing: .buffered,
                 defer: false
             )
             window.title = "Auto Improve Settings"
             window.contentViewController = hosting
+            window.contentMinSize = NSSize(width: 560, height: 460)
             window.isReleasedWhenClosed = false
             window.center()
             self.window = window
@@ -113,21 +114,21 @@ final class EdgeGlowWindowController {
     private var targetFrameProvider: (() -> CGRect?)?
     private var targetMonitor: Timer?
 
-    func showProcessing(targetFrameProvider: (() -> CGRect?)? = nil) {
+    func showProcessing(_ visualState: ProcessingVisualState, targetFrameProvider: (() -> CGRect?)? = nil) {
         hideToken = UUID()
         self.targetFrameProvider = targetFrameProvider
         startTargetMonitor()
-        show(mode: .processing)
+        show(visualState: visualState)
     }
 
-    func flashReady() {
+    func flashReady(_ visualState: ProcessingVisualState) {
         let token = UUID()
         let readyTarget = currentTarget
         hideToken = token
         stopTargetMonitor()
-        show(mode: .ready, target: readyTarget)
+        show(visualState: visualState, target: readyTarget)
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.05) { [weak self] in
             guard let self, self.hideToken == token else { return }
             self.hide()
         }
@@ -141,10 +142,10 @@ final class EdgeGlowWindowController {
         panel?.orderOut(nil)
     }
 
-    private func show(mode: EdgeGlowView.Mode, target: TargetHighlightFrame? = nil) {
+    private func show(visualState: ProcessingVisualState, target: TargetHighlightFrame? = nil) {
         let panel = panel ?? makePanel()
         self.panel = panel
-        model.mode = mode
+        model.visualState = visualState
         if let target {
             currentTarget = target
         } else {
@@ -253,38 +254,18 @@ final class EdgeGlowWindowController {
 }
 
 private struct EdgeGlowView: View {
-    enum Mode {
-        case processing
-        case ready
-
-        var color: Color {
-            switch self {
-            case .processing:
-                return Color(red: 0.98, green: 0.58, blue: 0.18)
-            case .ready:
-                return Color(red: 0.38, green: 0.95, blue: 0.62)
-            }
-        }
-
-        var baseOpacity: Double {
-            switch self {
-            case .processing:
-                return 0.34
-            case .ready:
-                return 0.72
-            }
-        }
-    }
-
     @ObservedObject var model: EdgeGlowModel
+    @ObservedObject private var appState = AppState.shared
     @State private var pulse = false
 
     var body: some View {
         GeometryReader { proxy in
-            let mode = model.mode
-            let color = mode.color
-            let opacity = mode.baseOpacity * (pulse ? 1 : 0.68)
+            let visualState = model.visualState
+            let color = visualState.glowColor
+            let opacity = visualState.baseGlowOpacity * (pulse ? 1 : 0.68)
             let depth = min(max(proxy.size.width, proxy.size.height) * 0.045, 72)
+            let target = targetRect(in: proxy)
+            let readoutPosition = glowReadoutPosition(in: proxy.size)
 
             ZStack {
                 edgeBand(color: color, opacity: opacity, start: .top, end: .bottom)
@@ -304,17 +285,30 @@ private struct EdgeGlowView: View {
                     .frame(maxWidth: .infinity, alignment: .trailing)
 
                 Rectangle()
-                    .stroke(color.opacity(opacity), lineWidth: mode == .processing ? 3 : 5)
-                    .blur(radius: mode == .processing ? 7 : 10)
-                    .padding(mode == .processing ? 2 : 0)
+                    .stroke(color.opacity(opacity), lineWidth: visualState.isSuccessfulDelivery ? 5 : 3)
+                    .blur(radius: visualState.isSuccessfulDelivery ? 10 : 7)
+                    .padding(visualState.isSuccessfulDelivery ? 0 : 2)
 
-                if let rect = targetRect(in: proxy) {
+                if visualState.showsGlowReadout {
+                    GlowReadoutView(
+                        visualState: visualState,
+                        color: color,
+                        opacity: opacity,
+                        statusMessage: appState.statusMessage,
+                        recordingStartedAt: appState.recordingStartedAt,
+                        isLatched: appState.walkieTalkieIsLatchedForDisplay,
+                        commandHint: visualState == .recording ? recordingCommandHint : nil
+                    )
+                    .position(readoutPosition)
+                }
+
+                if let rect = target {
                     TargetFieldHighlight(
                         rect: rect,
                         color: color,
                         opacity: opacity,
                         pulse: pulse,
-                        showSubmitIndicator: mode == .processing
+                        visualState: visualState
                     )
                 }
             }
@@ -328,6 +322,17 @@ private struct EdgeGlowView: View {
         }
         .ignoresSafeArea()
         .background(Color.clear)
+    }
+
+    private var recordingCommandHint: String {
+        if appState.recordingTriggerMode == .walkieTalkie {
+            if appState.walkieTalkieIsLatchedForDisplay {
+                return "\(appState.recordingHotKey.label) sends · Esc cancels"
+            }
+            return "Release sends · double-press locks · Esc cancels"
+        }
+
+        return "\(appState.recordingHotKey.label) sends · Esc cancels"
     }
 
     private func targetRect(in proxy: GeometryProxy) -> CGRect? {
@@ -344,6 +349,13 @@ private struct EdgeGlowView: View {
         rect.origin.x = min(max(rect.origin.x, 10), max(10, proxy.size.width - rect.width - 10))
         rect.origin.y = min(max(rect.origin.y, 10), max(10, proxy.size.height - rect.height - 10))
         return rect
+    }
+
+    private func glowReadoutPosition(in size: CGSize) -> CGPoint {
+        CGPoint(
+            x: size.width / 2,
+            y: max(96, size.height - 104)
+        )
     }
 
     private func edgeBand(
@@ -366,9 +378,217 @@ private struct EdgeGlowView: View {
 }
 
 private final class EdgeGlowModel: ObservableObject {
-    @Published var mode: EdgeGlowView.Mode = .processing
+    @Published var visualState: ProcessingVisualState = .transcribing
     @Published var targetRect: CGRect?
     @Published var screenFrame: CGRect = NSScreen.main?.frame ?? .zero
+}
+
+private extension ProcessingVisualState {
+    var glowColor: Color {
+        switch self {
+        case .starting:
+            return Color(red: 0.72, green: 0.77, blue: 0.82)
+        case .recording:
+            return Color(red: 1.00, green: 0.24, blue: 0.24)
+        case .transcribing:
+            return Color(red: 0.98, green: 0.58, blue: 0.18)
+        case .improving:
+            return Color(red: 0.22, green: 0.74, blue: 0.70)
+        case .delivering:
+            return Color(red: 0.35, green: 0.62, blue: 1.00)
+        case .pasted, .submitted, .copied, .ready:
+            return Color(red: 0.38, green: 0.95, blue: 0.62)
+        case .failed:
+            return Color(red: 1.00, green: 0.36, blue: 0.28)
+        case .idle:
+            return Color(red: 0.58, green: 0.64, blue: 0.70)
+        }
+    }
+
+    var showsGlowReadout: Bool {
+        switch self {
+        case .idle:
+            return false
+        case .starting, .recording, .transcribing, .improving, .delivering, .pasted, .submitted, .copied, .ready, .failed:
+            return true
+        }
+    }
+
+    var showsStageStrip: Bool {
+        switch self {
+        case .transcribing, .improving, .delivering, .pasted, .submitted, .copied, .ready:
+            return true
+        case .idle, .starting, .recording, .failed:
+            return false
+        }
+    }
+
+    var baseGlowOpacity: Double {
+        switch self {
+        case .pasted, .submitted, .copied, .ready:
+            return 0.72
+        case .failed:
+            return 0.62
+        case .idle:
+            return 0.22
+        case .starting, .recording, .transcribing, .improving, .delivering:
+            return 0.34
+        }
+    }
+}
+
+private struct GlowReadoutView: View {
+    let visualState: ProcessingVisualState
+    let color: Color
+    let opacity: Double
+    let statusMessage: String?
+    let recordingStartedAt: Date?
+    let isLatched: Bool
+    let commandHint: String?
+
+    var body: some View {
+        TimelineView(.periodic(from: Date(), by: 0.2)) { timeline in
+            VStack(alignment: .center, spacing: 6) {
+                HStack(spacing: 9) {
+                    Circle()
+                        .fill(color.opacity(0.95))
+                        .frame(width: 7, height: 7)
+                        .shadow(color: color.opacity(opacity), radius: 10)
+
+                    if visualState == .recording {
+                        GlowWaveform(color: color)
+                        Text(elapsedText(now: timeline.date))
+                            .font(.system(size: 13, weight: .bold, design: .monospaced))
+                            .foregroundStyle(.white)
+                    } else {
+                        Image(systemName: visualState.symbolName)
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(.white)
+                        Text(visualState.label)
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(.white)
+                    }
+                }
+                .padding(.horizontal, 11)
+                .padding(.vertical, 8)
+                .background(
+                    Capsule()
+                        .fill(.black.opacity(0.54))
+                        .background(.ultraThinMaterial, in: Capsule())
+                )
+                .overlay(
+                    Capsule()
+                        .stroke(color.opacity(opacity * 0.9), lineWidth: 1)
+                )
+                .shadow(color: color.opacity(opacity * 0.66), radius: 18)
+
+                if visualState.showsStageStrip {
+                    StageRailView(visualState: visualState, color: color, opacity: opacity)
+                }
+
+                VStack(alignment: .center, spacing: 2) {
+                    Text(readoutTitle)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.88))
+                    Text(readoutDetail)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.62))
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 300, alignment: .center)
+                .shadow(color: .black.opacity(0.32), radius: 8, y: 1)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("\(readoutTitle). \(readoutDetail)")
+        }
+    }
+
+    private var readoutTitle: String {
+        if visualState == .recording, isLatched {
+            return "Recording locked"
+        }
+        return visualState.label
+    }
+
+    private var readoutDetail: String {
+        if let commandHint {
+            return commandHint
+        }
+        if let statusMessage, !statusMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return statusMessage
+        }
+        return visualState.detail
+    }
+
+    private func elapsedText(now: Date) -> String {
+        guard let recordingStartedAt else { return "00:00" }
+        let elapsed = max(0, Int(now.timeIntervalSince(recordingStartedAt)))
+        return String(format: "%02d:%02d", elapsed / 60, elapsed % 60)
+    }
+}
+
+private struct GlowWaveform: View {
+    let color: Color
+    @State private var active = false
+
+    private let heights: [CGFloat] = [7, 14, 20, 11, 18]
+
+    var body: some View {
+        HStack(spacing: 3) {
+            ForEach(Array(heights.enumerated()), id: \.offset) { index, height in
+                Capsule()
+                    .fill(color.opacity(0.92))
+                    .frame(width: 3, height: active ? height : max(6, 22 - height))
+                    .animation(
+                        .easeInOut(duration: 0.58)
+                            .repeatForever(autoreverses: true)
+                            .delay(Double(index) * 0.08),
+                        value: active
+                    )
+            }
+        }
+        .frame(width: 30, height: 22)
+        .onAppear {
+            active = true
+        }
+    }
+}
+
+private struct StageRailView: View {
+    let visualState: ProcessingVisualState
+    let color: Color
+    let opacity: Double
+
+    private let stages: [ProcessingVisualState] = [.transcribing, .improving, .delivering, .ready]
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(Array(stages.enumerated()), id: \.offset) { index, stage in
+                Capsule()
+                    .fill(fill(for: stage, index: index))
+                    .frame(width: visualState == stage ? 34 : 24, height: 4)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(.black.opacity(0.28), in: Capsule())
+    }
+
+    private func fill(for stage: ProcessingVisualState, index: Int) -> Color {
+        if visualState == stage || (visualState.isSuccessfulDelivery && stage == .ready) {
+            return color.opacity(0.96)
+        }
+        if index < currentIndex || visualState.isSuccessfulDelivery {
+            return color.opacity(opacity * 0.64)
+        }
+        return .white.opacity(0.22)
+    }
+
+    private var currentIndex: Int {
+        stages.firstIndex(of: visualState) ?? (visualState.isSuccessfulDelivery ? stages.count : -1)
+    }
 }
 
 private struct TargetHighlightFrame {
@@ -381,7 +601,7 @@ private struct TargetFieldHighlight: View {
     let color: Color
     let opacity: Double
     let pulse: Bool
-    let showSubmitIndicator: Bool
+    let visualState: ProcessingVisualState
 
     var body: some View {
         ZStack {
@@ -392,7 +612,7 @@ private struct TargetFieldHighlight: View {
                 .frame(width: rect.width, height: rect.height)
                 .position(x: rect.midX, y: rect.midY)
 
-            if showSubmitIndicator {
+            if visualState == .delivering {
                 SubmitDots(color: color, opacity: opacity, pulse: pulse)
                     .frame(width: 44, height: 22)
                     .position(x: indicatorX, y: indicatorY)

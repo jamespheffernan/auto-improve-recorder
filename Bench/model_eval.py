@@ -108,6 +108,23 @@ Preserve the speaker's intent, thinking process, uncertainty, constraints, names
 
 Do not add facts. Do not answer the speaker. Do not make the text more decisive than the transcript. Return only the improved text with no preface, labels, markdown fence, or commentary."""
 
+COMPACT_LOCAL_IMPROVE_INSTRUCTIONS = (
+    "You are a dictation cleanup engine. Rewrite only the transcript between "
+    "<transcript> tags. Preserve intent, uncertainty, constraints, names, "
+    "numbers, code, order, and domain terms. Remove only filler, accidental "
+    "repeats, false starts, and obvious transcription errors. Do not add facts "
+    "or answer the speaker. Do not copy instructions or tags. Return only the "
+    "cleaned transcript."
+)
+
+TRANSCRIPT_ONLY_LOCAL_IMPROVE_INSTRUCTIONS = (
+    "You are a dictation cleanup engine. The user message is raw dictated "
+    "transcript text. Preserve intent, uncertainty, constraints, names, "
+    "numbers, code, order, and domain terms. Remove only filler, accidental "
+    "repeats, false starts, and obvious transcription errors. Do not add facts "
+    "or answer the speaker. Return only the cleaned transcript."
+)
+
 OUTPUT_MODES = {
     "verbatim": {
         "label": "Near-verbatim",
@@ -131,8 +148,29 @@ OUTPUT_MODES = {
     },
 }
 
+COMPACT_OUTPUT_MODE_INSTRUCTIONS = {
+    "verbatim": "Near-verbatim: fix punctuation, capitalization, and obvious transcription errors only.",
+    "lightCleanup": "Clean lightly. Keep thinking, uncertainty, caveats, ordering, and substantive asides. Remove disposable dictation artifacts and obvious speech-to-text mistakes.",
+    "promptCleanup": "Rewrite as a clear instruction while preserving every request, constraint, example, name, technical detail, and uncertainty.",
+    "structuredTask": "Convert to objective, context, constraints, and deliverables when present. Keep unresolved questions.",
+}
+
 FILLER_RE = re.compile(
     r"\b(um+|uh+|er+|ah+|like|you know|i mean|sort of|kind of|basically|actually)\b",
+    re.IGNORECASE,
+)
+PASTE_READY_FILLER_RE = re.compile(
+    r"\b(um+|uh+|er+|ah+|you know|i mean|sort of|kind of|basically|actually)\b",
+    re.IGNORECASE,
+)
+PASTE_READY_SPEECH_ARTIFACT_RE = re.compile(
+    r"\b(wait actually|no sorry|scratch that|start over|what i mean|let me rephrase|new paragraph)\b"
+    r"|\bdot\s+[A-Za-z0-9_]+\b|\bslash\s+[A-Za-z0-9_]+\b",
+    re.IGNORECASE,
+)
+PASTE_READY_TRANSFORM_REQUEST_RE = re.compile(
+    r"\b(make this into|turn this into|convert this|rewrite this|clean this up|make it sound|"
+    r"summari[sz]e|format this|structure this|write (?:\w+\s+){0,3}(email|slack|message|prompt|task))\b",
     re.IGNORECASE,
 )
 
@@ -259,6 +297,36 @@ def edit_ratio(source: str, output: str) -> float:
 
 def count_fillers(text: str) -> int:
     return len(FILLER_RE.findall(text))
+
+
+def paste_ready_bypass_text(provider: dict[str, Any], transcript: str) -> str | None:
+    if not provider.get("paste_ready_bypass"):
+        return None
+    if provider.get("output_mode", "lightCleanup") not in ("lightCleanup", "verbatim"):
+        return None
+
+    text = re.sub(r"\s+", " ", transcript).strip()
+    if not text:
+        return None
+    words = re.findall(r"[A-Za-z0-9']+", text)
+    if not 6 <= len(words) <= 90:
+        return None
+    if PASTE_READY_TRANSFORM_REQUEST_RE.search(text):
+        return None
+    if PASTE_READY_FILLER_RE.search(text):
+        return None
+    if PASTE_READY_SPEECH_ARTIFACT_RE.search(text):
+        return None
+    lowered = [word.lower() for word in words]
+    if any(left == right and len(left) > 2 for left, right in zip(lowered, lowered[1:])):
+        return None
+    if len(words) > 12 and not re.search(r"[,.!?;:]", text):
+        return None
+    if not re.search(r"""[.!?]["')\]]*$""", text):
+        return None
+    if text[:1].islower():
+        return None
+    return text
 
 
 def audio_duration_seconds(path: Path) -> float | None:
@@ -456,6 +524,11 @@ def improve_openai(provider: dict[str, Any], transcript: str) -> str:
 
 
 def improve_prompt(provider: dict[str, Any], transcript: str) -> tuple[str, str]:
+    if provider.get("prompt_style") == "compact_local":
+        return compact_local_improve_prompt(provider, transcript)
+    if provider.get("prompt_style") == "transcript_only_local":
+        return transcript_only_local_improve_prompt(provider, transcript)
+
     mode_key = provider.get("output_mode", "lightCleanup")
     mode = OUTPUT_MODES.get(mode_key, OUTPUT_MODES["lightCleanup"])
     strength = min(max(int(provider.get("modification_strength", 2)), 1), 5)
@@ -469,15 +542,63 @@ Raw transcript:
     return provider.get("instructions", IMPROVE_INSTRUCTIONS), input_text
 
 
+def compact_local_improve_prompt(provider: dict[str, Any], transcript: str) -> tuple[str, str]:
+    mode_key = provider.get("output_mode", "lightCleanup")
+    mode_instruction = COMPACT_OUTPUT_MODE_INSTRUCTIONS.get(mode_key, COMPACT_OUTPUT_MODE_INSTRUCTIONS["lightCleanup"])
+    strength = min(max(int(provider.get("modification_strength", 2)), 1), 5)
+    input_text = f"""Mode: {mode_instruction}
+Strength: {strength}/5.
+
+<transcript>
+{transcript}
+</transcript>"""
+    return provider.get("instructions", COMPACT_LOCAL_IMPROVE_INSTRUCTIONS), input_text
+
+
+def transcript_only_local_improve_prompt(provider: dict[str, Any], transcript: str) -> tuple[str, str]:
+    mode_key = provider.get("output_mode", "lightCleanup")
+    mode_instruction = COMPACT_OUTPUT_MODE_INSTRUCTIONS.get(mode_key, COMPACT_OUTPUT_MODE_INSTRUCTIONS["lightCleanup"])
+    strength = min(max(int(provider.get("modification_strength", 2)), 1), 5)
+    instructions = provider.get(
+        "instructions",
+        f"{TRANSCRIPT_ONLY_LOCAL_IMPROVE_INSTRUCTIONS} Mode: {mode_instruction} Strength: {strength}/5.",
+    )
+    return instructions, transcript
+
+
+def adaptive_ollama_max_tokens(provider: dict[str, Any], transcript: str) -> int | None:
+    if not provider.get("adaptive_max_tokens"):
+        return provider.get("max_tokens")
+
+    mode_key = provider.get("output_mode", "lightCleanup")
+    estimated_input_tokens = max(24, len(transcript) // 4)
+    ratio = {
+        "verbatim": 1.15,
+        "lightCleanup": 1.0,
+        "promptCleanup": 1.05,
+        "structuredTask": 0.8,
+    }.get(mode_key, 1.0)
+    minimum = int(provider.get("adaptive_min_tokens", 96))
+    maximum = int(provider.get("adaptive_max_token_cap", 512))
+    return min(maximum, max(minimum, int(estimated_input_tokens * ratio) + 48))
+
+
 def improve_ollama(provider: dict[str, Any], transcript: str) -> str:
+    bypass_text = paste_ready_bypass_text(provider, transcript)
+    if bypass_text is not None:
+        return bypass_text
+
     base = provider.get("base_url", "http://127.0.0.1:11434").rstrip("/")
     url = f"{base}/api/chat"
     instructions, input_text = improve_prompt(provider, transcript)
+    user_content = input_text
+    if provider.get("no_think_prefix", True):
+        user_content = "/no_think\n\n" + user_content
     payload = {
         "model": provider.get("model", "qwen3:4b-instruct"),
         "messages": [
             {"role": "system", "content": instructions},
-            {"role": "user", "content": "/no_think\n\n" + input_text},
+            {"role": "user", "content": user_content},
         ],
         "think": False,
         "keep_alive": provider.get("keep_alive", "30m"),
@@ -486,8 +607,9 @@ def improve_ollama(provider: dict[str, Any], transcript: str) -> str:
         },
         "stream": False,
     }
-    if provider.get("max_tokens") is not None:
-        payload["options"]["num_predict"] = int(provider["max_tokens"])
+    max_tokens = adaptive_ollama_max_tokens(provider, transcript)
+    if max_tokens is not None:
+        payload["options"]["num_predict"] = int(max_tokens)
     for option_key in ("top_p", "top_k", "repeat_penalty", "num_ctx"):
         if provider.get(option_key) is not None:
             payload["options"][option_key] = provider[option_key]

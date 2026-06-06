@@ -2,10 +2,26 @@ import AppKit
 import AVFoundation
 import Combine
 import Foundation
+import OSLog
+
+private let recordingStartupLogger = Logger(
+    subsystem: "com.fieldtheory.autoimproverecorder",
+    category: "RecordingStartup"
+)
+
+private let microphoneDeviceLogger = Logger(
+    subsystem: "com.fieldtheory.autoimproverecorder",
+    category: "MicrophoneDevice"
+)
+
+private let recordingTriggerLogger = Logger(
+    subsystem: "com.fieldtheory.autoimproverecorder",
+    category: "RecordingTrigger"
+)
 
 @MainActor
 final class AppState: ObservableObject {
-    static let shared = AppState()
+    static let shared = AppState(environment: .live)
 
     @Published var phase: RecorderPhase = .idle {
         didSet { menuNeedsUpdate?() }
@@ -13,103 +29,130 @@ final class AppState: ObservableObject {
     @Published var session: TranscriptSession = .empty
     @Published var showRawTranscript = false
     @Published var statusMessage: String?
-    @Published var lastOpenAIRealtimeDiagnostics: OpenAIRealtimeDiagnostics? {
-        didSet { saveOpenAIRealtimeDiagnostics() }
-    }
+    @Published var processingVisualState: ProcessingVisualState = .idle
+    @Published var recordingStartedAt: Date?
+    @Published private(set) var walkieTalkieIsLatchedForDisplay = false
+    @Published var lastOpenAIRealtimeDiagnostics: OpenAIRealtimeDiagnostics?
+    @Published private(set) var permissionStatus = PermissionStatus(
+        microphone: .notDetermined,
+        accessibility: .denied
+    )
+    @Published private(set) var diagnosticEvents: [DiagnosticEvent] = []
+    @Published private(set) var localModelStatuses: [LocalModelID: LocalModelStatus] = [:]
 
     @Published var apiKey: String = "" {
-        didSet { KeychainStore.saveOpenAIAPIKey(apiKey) }
+        didSet { saveCredentials(debounced: true) }
     }
     @Published var geminiAPIKey: String = "" {
-        didSet { KeychainStore.saveGeminiAPIKey(geminiAPIKey) }
+        didSet { saveCredentials(debounced: true) }
     }
     @Published var anthropicAPIKey: String = "" {
-        didSet { KeychainStore.saveAnthropicAPIKey(anthropicAPIKey) }
+        didSet { saveCredentials(debounced: true) }
     }
     @Published var autoImproveMode: AutoImproveMode = .automatic {
-        didSet { defaults.set(autoImproveMode.rawValue, forKey: Keys.autoImproveMode) }
+        didSet { saveSettings(reason: .general) }
     }
     @Published var recordingTriggerMode: RecordingTriggerMode = .walkieTalkie {
         didSet {
-            defaults.set(recordingTriggerMode.rawValue, forKey: Keys.recordingTriggerMode)
+            saveSettings(reason: .recordingTrigger)
             if recordingTriggerMode != .walkieTalkie {
                 unregisterWalkieTalkieLatchHotKey?()
             }
         }
     }
-    @Published var recordingHotKey: RecordingHotKey = .r {
+    @Published var recordingHotKey: RecordingHotKey = .defaultValue {
         didSet {
-            defaults.set(recordingHotKey.rawValue, forKey: Keys.recordingHotKey)
+            saveSettings(reason: .recordingHotKey)
             applyRecordingHotKey(previous: oldValue)
         }
     }
     @Published var transcriptionMode: TranscriptionMode = .localWhisper {
-        didSet { defaults.set(transcriptionMode.rawValue, forKey: Keys.transcriptionMode) }
+        didSet { saveSettings(reason: .general) }
     }
     @Published var improvementMode: ImprovementMode = .ollamaLocal {
-        didSet { defaults.set(improvementMode.rawValue, forKey: Keys.improvementMode) }
+        didSet { saveSettings(reason: .general) }
     }
     @Published var thresholdWords: Int = 35 {
-        didSet { defaults.set(thresholdWords, forKey: Keys.thresholdWords) }
+        didSet { saveSettings(reason: .general) }
     }
     @Published var modificationStrength: Int = 2 {
-        didSet { defaults.set(modificationStrength, forKey: Keys.modificationStrength) }
+        didSet { saveSettings(reason: .general) }
     }
     @Published var outputMode: OutputMode = .lightCleanup {
-        didSet { defaults.set(outputMode.rawValue, forKey: Keys.outputMode) }
-    }
-    @Published var parakeetRuntimePath: String = "" {
-        didSet { defaults.set(parakeetRuntimePath, forKey: Keys.parakeetRuntimePath) }
-    }
-    @Published var parakeetScriptPath: String = "" {
-        didSet { defaults.set(parakeetScriptPath, forKey: Keys.parakeetScriptPath) }
-    }
-    @Published var parakeetCachePath: String = "" {
-        didSet { defaults.set(parakeetCachePath, forKey: Keys.parakeetCachePath) }
+        didSet { saveSettings(reason: .general) }
     }
     @Published var ollamaBaseURL: String = "http://127.0.0.1:11434" {
-        didSet { defaults.set(ollamaBaseURL, forKey: Keys.ollamaBaseURL) }
+        didSet { saveSettings(reason: .textField, debounced: true) }
     }
     @Published var ollamaModel: String = "qwen3.5:0.8b-mlx" {
-        didSet { defaults.set(ollamaModel, forKey: Keys.ollamaModel) }
+        didSet { saveSettings(reason: .textField, debounced: true) }
     }
     @Published var preferredMicrophoneID: String = "" {
-        didSet { defaults.set(preferredMicrophoneID, forKey: Keys.preferredMicrophoneID) }
+        didSet {
+            saveSettings(reason: .general)
+            availableMicrophones = microphonesIncludingSavedPreference(availableMicrophones)
+            updateResolvedMicrophoneSummary()
+        }
     }
     @Published var copyFinishedTextToClipboard: Bool = true {
-        didSet { defaults.set(copyFinishedTextToClipboard, forKey: Keys.copyFinishedTextToClipboard) }
+        didSet { saveSettings(reason: .general) }
     }
     @Published var autoSubmitDetectedTextFields: Bool = false {
-        didSet { defaults.set(autoSubmitDetectedTextFields, forKey: Keys.autoSubmitDetectedTextFields) }
+        didSet { saveSettings(reason: .general) }
     }
-    @Published var availableMicrophones: [AudioInputDevice] = AudioInputDeviceDiscovery.inputDevices()
+    @Published var appDeliveryRules: [AppDeliveryRule] = [] {
+        didSet { saveSettings(reason: .appDeliveryRules) }
+    }
+    @Published private(set) var deliveryRuleCandidateApps: [FocusedApp] = []
+    @Published var availableMicrophones: [AudioInputDevice] = [.systemDefault]
+    @Published private(set) var resolvedMicrophoneSummary = "Using system default."
+    let dictionaryStore = UserDictionaryStore()
 
-    var showPill: (() -> Void)?
-    var hidePill: (() -> Void)?
     var showPreview: (() -> Void)?
     var showSettings: (() -> Void)?
     var menuNeedsUpdate: (() -> Void)?
     var registerRecordingHotKey: ((RecordingHotKey) -> Bool)?
+    var unregisterRecordingHotKey: (() -> Void)?
     var registerCancelHotKey: (() -> Void)?
     var unregisterCancelHotKey: (() -> Void)?
     var registerWalkieTalkieLatchHotKey: (() -> Void)?
     var unregisterWalkieTalkieLatchHotKey: (() -> Void)?
-    var showProcessingSignal: (() -> Void)?
-    var flashReadySignal: (() -> Void)?
+    var showProcessingSignal: ((ProcessingVisualState) -> Void)?
+    var flashReadySignal: ((ProcessingVisualState) -> Void)?
     var hideProcessingSignal: (() -> Void)?
 
+    private let environment: AppEnvironment
     private let defaults = UserDefaults.standard
-    private let audioRecorder = AudioRecorder()
+    private lazy var recordingTriggerController = RecordingTriggerController { [weak self] in
+        self?.recordingTriggerBehavior ?? .holdToTalk
+    }
     private let realtimeAudioSink = OpenAIRealtimeAudioSink()
     private var activeStreamingTranscriber: OpenAIRealtimeTranscriber?
     private var activeRealtimeStartupTask: Task<Void, Never>?
     private var activeRecordingID: UUID?
-    private var activeArchiveDraft: TranscriptArchiveDraft?
+    private var activeProcessingRecordingID: UUID?
+    private var activeArchiveDraftState = ActiveTranscriptArchiveDraftState()
+    private var activeArchiveDraft: TranscriptArchiveDraft? {
+        get { activeArchiveDraftState.draft }
+        set { activeArchiveDraftState.replace(with: newValue) }
+    }
+    private var preparedArchiveDraft: TranscriptArchiveDraft?
+    private var microphonePermissionKnownAuthorized = false
     private var isStartingRecording = false
-    private var activeWalkieTalkieRecording = false
-    private var walkieTalkieRecordingLatched = false
-    private var walkieTalkieKeyIsDown = false
+    private var activeStartID: UUID?
+    private var activeStartIsTriggerManaged = false
     private var isRevertingRecordingHotKey = false
+    private var visualResetToken = UUID()
+    private var microphoneUseLockHeartbeatTask: Task<Void, Never>?
+    private var microphoneDeviceObserver: MicrophoneDeviceObserver?
+    private var quarantinedMicrophoneIDs: [String: Date] = [:]
+    private var activeMicrophoneResolution: MicrophoneResolution?
+    private var activeMicrophoneHealthMonitor: MicrophoneHealthMonitor?
+    private var microphoneRecoveryInProgress = false
+    private let microphoneRetryCooldown: TimeInterval = 10
+    private var triggerTimerTasks: [RecordingTriggerTimerKind: Task<Void, Never>] = [:]
+    private var localModelStatusTask: Task<Void, Never>?
+    private var recordingHotKeyCaptureIsActive = false
 
     private enum Keys {
         static let autoImproveMode = "autoImproveMode"
@@ -120,50 +163,49 @@ final class AppState: ObservableObject {
         static let thresholdWords = "thresholdWords"
         static let modificationStrength = "modificationStrength"
         static let outputMode = "outputMode"
-        static let parakeetRuntimePath = "parakeetRuntimePath"
-        static let parakeetScriptPath = "parakeetScriptPath"
-        static let parakeetCachePath = "parakeetCachePath"
         static let ollamaBaseURL = "ollamaBaseURL"
         static let ollamaModel = "ollamaModel"
         static let preferredMicrophoneID = "preferredMicrophoneID"
         static let copyFinishedTextToClipboard = "copyFinishedTextToClipboard"
         static let autoSubmitDetectedTextFields = "autoSubmitDetectedTextFields"
+        static let appDeliveryRules = "appDeliveryRules.v1"
         static let lastOpenAIRealtimeErrorSummary = "lastOpenAIRealtimeErrorSummary"
         static let lastOpenAIRealtimeErrorDetails = "lastOpenAIRealtimeErrorDetails"
     }
 
-    private init() {
-        apiKey = KeychainStore.loadOpenAIAPIKey() ?? ""
-        geminiAPIKey = KeychainStore.loadGeminiAPIKey() ?? ""
-        anthropicAPIKey = KeychainStore.loadAnthropicAPIKey() ?? ""
-        autoImproveMode = AutoImproveMode(rawValue: defaults.string(forKey: Keys.autoImproveMode) ?? "") ?? .automatic
-        recordingTriggerMode = RecordingTriggerMode(rawValue: defaults.string(forKey: Keys.recordingTriggerMode) ?? "") ?? .walkieTalkie
-        recordingHotKey = RecordingHotKey(rawValue: defaults.string(forKey: Keys.recordingHotKey) ?? "") ?? .r
-        transcriptionMode = TranscriptionMode(rawValue: defaults.string(forKey: Keys.transcriptionMode) ?? "") ?? .localWhisper
-        improvementMode = ImprovementMode(rawValue: defaults.string(forKey: Keys.improvementMode) ?? "") ?? .ollamaLocal
-        let savedThreshold = defaults.integer(forKey: Keys.thresholdWords)
-        thresholdWords = savedThreshold > 0 ? savedThreshold : 35
-        let savedStrength = defaults.integer(forKey: Keys.modificationStrength)
-        modificationStrength = savedStrength > 0 ? min(max(savedStrength, 1), 5) : 2
-        outputMode = OutputMode(rawValue: defaults.string(forKey: Keys.outputMode) ?? "") ?? .lightCleanup
-        preferredMicrophoneID = defaults.string(forKey: Keys.preferredMicrophoneID) ?? ""
-        if defaults.object(forKey: Keys.copyFinishedTextToClipboard) == nil {
-            copyFinishedTextToClipboard = true
-        } else {
-            copyFinishedTextToClipboard = defaults.bool(forKey: Keys.copyFinishedTextToClipboard)
-        }
-        autoSubmitDetectedTextFields = defaults.bool(forKey: Keys.autoSubmitDetectedTextFields)
-        let savedOpenAISummary = defaults.string(forKey: Keys.lastOpenAIRealtimeErrorSummary) ?? ""
-        let savedOpenAIDetails = defaults.string(forKey: Keys.lastOpenAIRealtimeErrorDetails) ?? ""
-        let savedOpenAIDiagnostics = OpenAIRealtimeDiagnostics(summary: savedOpenAISummary, details: savedOpenAIDetails)
-        lastOpenAIRealtimeDiagnostics = savedOpenAIDiagnostics.isEmpty ? nil : savedOpenAIDiagnostics
+    init(environment: AppEnvironment = .live) {
+        self.environment = environment
+        let credentials = environment.secrets.loadCredentials()
+        apiKey = credentials.openAIAPIKey
+        geminiAPIKey = credentials.geminiAPIKey
+        anthropicAPIKey = credentials.anthropicAPIKey
+        let settings = environment.settings.load()
+        autoImproveMode = settings.autoImproveMode
+        recordingTriggerMode = settings.recordingTriggerMode
+        recordingHotKey = settings.recordingHotKey
+        transcriptionMode = settings.transcriptionMode
+        improvementMode = settings.improvementMode
+        thresholdWords = settings.thresholdWords
+        modificationStrength = settings.modificationStrength
+        outputMode = settings.outputMode
+        preferredMicrophoneID = settings.preferredMicrophoneID
+        copyFinishedTextToClipboard = settings.completion.copyFinishedTextToClipboard
+        autoSubmitDetectedTextFields = settings.completion.autoSubmitDetectedTextFields
+        appDeliveryRules = settings.appDeliveryRules
+        microphonePermissionKnownAuthorized = environment.permissions.cachedMicrophonePermissionWasGranted
+        diagnosticEvents = environment.diagnostics.latestEvents(limit: 5)
+        lastOpenAIRealtimeDiagnostics = latestOpenAIRealtimeDiagnostics() ?? legacyOpenAIRealtimeDiagnostics()
 
-        let detected = ParakeetRuntimeDiscovery.detect()
-        parakeetRuntimePath = defaults.string(forKey: Keys.parakeetRuntimePath) ?? detected.pythonPath
-        parakeetScriptPath = defaults.string(forKey: Keys.parakeetScriptPath) ?? detected.scriptPath
-        parakeetCachePath = defaults.string(forKey: Keys.parakeetCachePath) ?? detected.cachePath
-        ollamaBaseURL = defaults.string(forKey: Keys.ollamaBaseURL) ?? "http://127.0.0.1:11434"
-        ollamaModel = defaults.string(forKey: Keys.ollamaModel) ?? "qwen3.5:0.8b-mlx"
+        ollamaBaseURL = settings.ollama.baseURL
+        ollamaModel = settings.ollama.model
+        refreshMicrophones()
+        microphoneDeviceObserver = MicrophoneDeviceObserver { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.handleMicrophoneDevicesChanged()
+            }
+        }
+        microphoneDeviceObserver?.start()
+        refreshDeliveryRuleCandidateApps()
     }
 
     var isRecording: Bool {
@@ -171,6 +213,15 @@ final class AppState: ObservableObject {
             return true
         }
         return false
+    }
+
+    private var recordingTriggerBehavior: RecordingTriggerBehavior {
+        switch recordingTriggerMode {
+        case .walkieTalkie:
+            return .holdToTalk
+        case .toggle:
+            return .toggle
+        }
     }
 
     var displayText: String {
@@ -186,25 +237,295 @@ final class AppState: ObservableObject {
     }
 
     var accessibilityPasteAvailable: Bool {
-        AccessibilityPasteController.isTrusted(prompt: false)
+        environment.permissions.accessibilityState(prompt: false) == .authorized
     }
 
     func refreshMicrophones() {
-        availableMicrophones = AudioInputDeviceDiscovery.inputDevices()
+        availableMicrophones = microphonesIncludingSavedPreference(
+            AudioInputDeviceDiscovery.inputDevices()
+        )
+        updateResolvedMicrophoneSummary()
     }
 
-    func autodetectParakeetRuntime() {
-        let detected = ParakeetRuntimeDiscovery.detect()
-        parakeetRuntimePath = detected.pythonPath
-        parakeetScriptPath = detected.scriptPath
-        parakeetCachePath = detected.cachePath
-        statusMessage = detected.isUsable
-            ? "Parakeet runtime detected."
-            : "Parakeet runtime was not fully detected. Check the paths below."
+    private func handleMicrophoneDevicesChanged() {
+        refreshMicrophones()
+    }
+
+    private func microphonesIncludingSavedPreference(_ discovered: [AudioInputDevice]) -> [AudioInputDevice] {
+        let preferredID = preferredMicrophoneID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !preferredID.isEmpty,
+              !discovered.contains(where: { $0.id == preferredID }) else {
+            return discovered
+        }
+
+        var devices = discovered
+        devices.append(
+            AudioInputDevice(
+                id: preferredID,
+                name: "Previously selected microphone (unavailable)",
+                coreAudioDeviceID: nil,
+                transportType: nil,
+                isConnected: false,
+                isInputCapable: false,
+                isSystemDefault: false
+            )
+        )
+        return devices
+    }
+
+    private func updateResolvedMicrophoneSummary() {
+        do {
+            let resolution = try MicrophoneResolver.resolve(
+                preferences: .fromPreferredMicrophoneID(preferredMicrophoneID),
+                devices: availableMicrophones,
+                quarantinedUntil: quarantinedMicrophoneIDs,
+                now: Date()
+            )
+            resolvedMicrophoneSummary = microphoneSummary(for: resolution)
+        } catch {
+            resolvedMicrophoneSummary = error.localizedDescription
+        }
+    }
+
+    private func microphoneSummary(for resolution: MicrophoneResolution) -> String {
+        if preferredMicrophoneID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "Using system default: \(resolution.device.name)."
+        }
+
+        if resolution.usedFallback {
+            return "Preferred microphone unavailable; using \(resolution.device.name)."
+        }
+
+        return "Using \(resolution.device.name)."
+    }
+
+    func refreshDeliveryRuleCandidateApps() {
+        let existingBundleIdentifiers = Set(appDeliveryRules.map(\.bundleIdentifier))
+        let ownBundleIdentifier = Bundle.main.bundleIdentifier
+        var seenBundleIdentifiers = Set<String>()
+
+        deliveryRuleCandidateApps = NSWorkspace.shared.runningApplications.compactMap { app in
+            guard app.activationPolicy == .regular,
+                  let bundleIdentifier = app.bundleIdentifier,
+                  !bundleIdentifier.isEmpty,
+                  bundleIdentifier != ownBundleIdentifier,
+                  !existingBundleIdentifiers.contains(bundleIdentifier),
+                  seenBundleIdentifiers.insert(bundleIdentifier).inserted else {
+                return nil
+            }
+
+            return FocusedApp(bundleIdentifier: bundleIdentifier, displayName: app.localizedName)
+        }
+        .sorted { lhs, rhs in
+            lhs.displayName.localizedCaseInsensitiveCompare(rhs.displayName) == .orderedAscending
+        }
+    }
+
+    func localModelStatus(for id: LocalModelID) -> LocalModelStatus? {
+        localModelStatuses[id]
+    }
+
+    func refreshLocalModelStatuses() {
+        let input = localModelInventoryInput()
+        localModelStatusTask?.cancel()
+        localModelStatusTask = Task { [weak self] in
+            let inventory = LocalModelInventory()
+            let statuses = await inventory.statuses(input: input)
+            guard !Task.isCancelled else { return }
+
+            await MainActor.run {
+                self?.localModelStatuses = Dictionary(uniqueKeysWithValues: statuses.map { ($0.id, $0) })
+            }
+        }
+    }
+
+    func refreshReadiness(promptForAccessibility: Bool = false) async {
+        permissionStatus = await environment.permissions.snapshot(promptForAccessibility: promptForAccessibility)
+        refreshDiagnostics()
+    }
+
+    func promptForAccessibilityPermission() {
+        Task { await refreshReadiness(promptForAccessibility: true) }
+    }
+
+    func refreshDiagnostics() {
+        diagnosticEvents = environment.diagnostics.latestEvents(limit: 5)
+    }
+
+    func useRecommendedLocalTranscription() {
+        applyLocalModelPreset(.recommended)
+    }
+
+    func useFastLocalTranscription() {
+        applyLocalModelPreset(.fast)
+    }
+
+    func useAllLocalPreset() {
+        applyLocalModelPreset(.allLocal)
+    }
+
+    func useAppleSpeechPreset() {
+        applyLocalModelPreset(.appleSpeech)
+    }
+
+    func useCloudRealtimePreset() {
+        applyLocalModelPreset(.cloudRealtime)
+    }
+
+    private func applyLocalModelPreset(_ preset: LocalModelPreset) {
+        if let transcriptionMode = TranscriptionMode(rawValue: preset.transcriptionModeRawValue) {
+            self.transcriptionMode = transcriptionMode
+        }
+
+        if let improvementModeRawValue = preset.improvementModeRawValue,
+           let improvementMode = ImprovementMode(rawValue: improvementModeRawValue) {
+            self.improvementMode = improvementMode
+        }
+
+        if let ollamaModel = preset.ollamaModel {
+            self.ollamaModel = ollamaModel
+        }
+
+        switch preset {
+        case .recommended:
+            statusMessage = "Using Parakeet.cpp Recommended for local transcription."
+        case .fast:
+            statusMessage = "Using Parakeet.cpp Fast for local transcription."
+        case .allLocal:
+            statusMessage = "Using Parakeet.cpp Recommended with Ollama qwen3.5 local cleanup."
+        case .appleSpeech:
+            statusMessage = "Using Apple Speech for local transcription when available."
+        case .cloudRealtime:
+            statusMessage = "Using Cloud Realtime transcription."
+        }
+
+        refreshLocalModelStatuses()
+    }
+
+    private func localModelInventoryInput() -> LocalModelInventoryInput {
+        LocalModelInventoryInput(
+            parakeetCppBasePath: LocalModelInventory.defaultParakeetCppBasePath,
+            ollamaBaseURL: ollamaBaseURL,
+            ollamaModel: ollamaModel,
+            hasOpenAIAPIKey: !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        )
+    }
+
+    func addAppDeliveryRule(for app: FocusedApp) {
+        if let index = appDeliveryRules.firstIndex(where: { $0.bundleIdentifier == app.bundleIdentifier }) {
+            appDeliveryRules[index].appName = app.displayName
+            appDeliveryRules[index].isEnabled = true
+            statusMessage = "Enabled app rule for \(app.displayName)."
+        } else {
+            appDeliveryRules.append(.defaultRule(for: app))
+            statusMessage = "Added app rule for \(app.displayName)."
+        }
+        refreshDeliveryRuleCandidateApps()
+    }
+
+    func removeAppDeliveryRule(id: AppDeliveryRule.ID) {
+        guard let rule = appDeliveryRules.first(where: { $0.id == id }) else { return }
+        appDeliveryRules.removeAll { $0.id == id }
+        statusMessage = "Removed app rule for \(rule.appName)."
+        refreshDeliveryRuleCandidateApps()
+    }
+
+    func resetAppDeliveryRulesToDefaults() {
+        appDeliveryRules = AppDeliveryRuleStore.defaultRules
+        statusMessage = "Restored default app rules."
+        refreshDeliveryRuleCandidateApps()
+    }
+
+    func addDictionaryEntry(_ text: String) {
+        do {
+            if try dictionaryStore.addEntry(text) == nil {
+                statusMessage = "That dictionary entry already exists."
+            } else {
+                statusMessage = "Added dictionary entry."
+            }
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
+    func deleteDictionaryEntry(id: UserDictionaryEntry.ID) {
+        do {
+            try dictionaryStore.deleteEntry(id: id)
+            statusMessage = "Deleted dictionary entry."
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
+    func addReplacementRule(phrase: String, replacement: String) {
+        do {
+            if try dictionaryStore.addReplacementRule(phrase: phrase, replacement: replacement) == nil {
+                statusMessage = "That replacement rule already exists."
+            } else {
+                statusMessage = "Added replacement rule."
+            }
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
+    func deleteReplacementRule(id: DictionaryReplacementRule.ID) {
+        do {
+            try dictionaryStore.deleteReplacementRule(id: id)
+            statusMessage = "Deleted replacement rule."
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
+    func importSuperwhisperDictionary() {
+        do {
+            statusMessage = try dictionaryStore.importSuperwhisper().message
+        } catch {
+            statusMessage = error.localizedDescription
+        }
     }
 
     func refreshRecordingHotKeyRegistration() {
         applyRecordingHotKey(previous: nil)
+    }
+
+    func beginRecordingHotKeyCapture() {
+        guard !recordingHotKeyCaptureIsActive else { return }
+        recordingHotKeyCaptureIsActive = true
+        unregisterRecordingHotKey?()
+    }
+
+    func endRecordingHotKeyCapture() {
+        guard recordingHotKeyCaptureIsActive else { return }
+        recordingHotKeyCaptureIsActive = false
+        refreshRecordingHotKeyRegistration()
+    }
+
+    func discardPreparedRecordingDraft() {
+        environment.archive.deleteDraft(preparedArchiveDraft)
+        preparedArchiveDraft = nil
+    }
+
+    private func discardActiveArchiveDraftIfNeeded() {
+        environment.archive.deleteDraft(activeArchiveDraftState.takeDraftToDelete())
+    }
+
+    func prepareForApplicationTermination() {
+        saveSettings(reason: .general)
+        saveCredentials()
+        cancelAllRecordingTriggerTimers()
+        activeRealtimeStartupTask?.cancel()
+        activeRealtimeStartupTask = nil
+        activeStartID = nil
+        activeStartIsTriggerManaged = false
+        activeRecordingID = nil
+        activeProcessingRecordingID = nil
+        activeMicrophoneResolution = nil
+        discardActiveArchiveDraftIfNeeded()
+        discardPreparedRecordingDraft()
+        _ = environment.recording.stopRecording()
+        endMicrophoneUseLock()
     }
 
     func prewarmLocalModels() {
@@ -212,10 +533,20 @@ final class AppState: ObservableObject {
         let selectedImprovementMode = improvementMode
         let selectedOllamaBaseURL = ollamaBaseURL
         let selectedOllamaModel = ollamaModel
+        let selectedAPIKey = apiKey
+
+        prewarmRecordingStartResources()
 
         Task.detached(priority: .utility) {
             if selectedTranscriptionMode == .localWhisper {
                 await WhisperCppTranscriber().warmUp()
+            }
+            if selectedTranscriptionMode == .localParakeetCppFast {
+                await ParakeetCppTranscriber(variant: .fast110M).warmUp()
+            }
+            if selectedTranscriptionMode == .localParakeetCppRecommended ||
+                (selectedTranscriptionMode == .fastest && selectedAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) {
+                await ParakeetCppTranscriber(variant: .recommended06B).warmUp()
             }
             if selectedImprovementMode == .ollamaLocal {
                 await OllamaImproveEngine(
@@ -224,6 +555,40 @@ final class AppState: ObservableObject {
                 ).warmUp()
             }
         }
+    }
+
+    private func prewarmRecordingStartResources() {
+        #if os(iOS)
+        if environment.permissions.hasMicrophonePermission {
+            microphonePermissionKnownAuthorized = true
+            environment.permissions.rememberMicrophonePermissionGranted()
+        }
+        #endif
+        environment.recording.prepareForFastStartIfAuthorized()
+        prepareNextArchiveDraftIfNeeded()
+    }
+
+    private func prepareNextArchiveDraftIfNeeded() {
+        guard preparedArchiveDraft == nil else { return }
+        do {
+            preparedArchiveDraft = try environment.archive.prepareRecording(createdAt: Date())
+        } catch {
+            NSLog("Transcript archive prewarm failed: \(error.localizedDescription)")
+        }
+    }
+
+    private func consumePreparedArchiveDraft(createdAt: Date) throws -> TranscriptArchiveDraft {
+        if let draft = preparedArchiveDraft {
+            preparedArchiveDraft = nil
+            return TranscriptArchiveDraft(
+                id: draft.id,
+                createdAt: createdAt,
+                directoryURL: draft.directoryURL,
+                audioURL: draft.audioURL
+            )
+        }
+
+        return try environment.archive.prepareRecording(createdAt: createdAt)
     }
 
     func toggleRecording(requestedAt: Date = Date()) {
@@ -235,6 +600,7 @@ final class AppState: ObservableObject {
     }
 
     private func applyRecordingHotKey(previous: RecordingHotKey?) {
+        guard !recordingHotKeyCaptureIsActive else { return }
         guard !isRevertingRecordingHotKey, let registerRecordingHotKey else { return }
         guard registerRecordingHotKey(recordingHotKey) else {
             statusMessage = "Could not register \(recordingHotKey.label)."
@@ -251,63 +617,152 @@ final class AppState: ObservableObject {
         }
     }
 
+    func handleHotKeyEvent(_ event: HotKeyCenter.Event) {
+        guard !recordingHotKeyCaptureIsActive else { return }
+
+        switch event {
+        case .recordingPressed(let receivedAt, let eventID, let isRepeat):
+            handleRecordingTriggerEvent(.recordHotKeyDown(receivedAt: receivedAt, eventID: eventID, isRepeat: isRepeat))
+        case .recordingReleased(let receivedAt, let eventID):
+            handleRecordingTriggerEvent(.recordHotKeyUp(receivedAt: receivedAt, eventID: eventID))
+        case .cancelPressed(let receivedAt):
+            handleCancelHotKeyPressed(receivedAt: receivedAt)
+        case .latchPressed(let receivedAt):
+            handleRecordingTriggerEvent(.latchHotKeyDown(receivedAt: receivedAt))
+        }
+    }
+
     func recordingHotKeyPressed(requestedAt: Date = Date()) {
-        guard recordingTriggerMode == .walkieTalkie else {
-            toggleRecording(requestedAt: requestedAt)
-            return
-        }
-
-        guard !walkieTalkieKeyIsDown else { return }
-        walkieTalkieKeyIsDown = true
-
-        if isRecording {
-            if activeWalkieTalkieRecording && walkieTalkieRecordingLatched {
-                stopRecording()
-            }
-            return
-        }
-
-        guard !phase.isBusy, !isStartingRecording else { return }
-        activeWalkieTalkieRecording = true
-        walkieTalkieRecordingLatched = false
-        startRecording(requestedAt: requestedAt)
+        handleRecordingTriggerEvent(.recordHotKeyDown(receivedAt: requestedAt, eventID: 0, isRepeat: false))
     }
 
     func recordingHotKeyReleased() {
-        walkieTalkieKeyIsDown = false
-        guard recordingTriggerMode == .walkieTalkie else { return }
-        stopUnlatchedWalkieTalkieRecordingIfNeeded()
+        handleRecordingTriggerEvent(.recordHotKeyUp(receivedAt: Date(), eventID: 0))
     }
 
     func latchCurrentWalkieTalkieRecording() {
-        guard recordingTriggerMode == .walkieTalkie,
-              activeWalkieTalkieRecording,
-              isRecording,
-              !walkieTalkieRecordingLatched
-        else { return }
-
-        walkieTalkieRecordingLatched = true
-        unregisterWalkieTalkieLatchHotKey?()
-        statusMessage = "Recording latched."
+        handleRecordingTriggerEvent(.latchHotKeyDown(receivedAt: Date()))
     }
 
-    func startRecording(requestedAt: Date = Date()) {
+    private func handleRecordingTriggerEvent(_ event: RecordingTriggerEvent) {
+        let commands = recordingTriggerController.handle(event)
+        processRecordingTriggerCommands(commands)
+    }
+
+    private func handleCancelHotKeyPressed(receivedAt: Date) {
+        let shouldFallbackToAppCancel = phase.canCancelActiveRecording
+        let commands = recordingTriggerController.handle(.cancelHotKeyDown(receivedAt: receivedAt))
+        let triggerRequestedCancel = commands.requestsCancel
+        processRecordingTriggerCommands(commands)
+
+        if shouldFallbackToAppCancel && !triggerRequestedCancel {
+            cancelRecording()
+        }
+    }
+
+    private func processRecordingTriggerCommands(_ commands: [RecordingTriggerCommand]) {
+        for command in commands {
+            switch command {
+            case .requestStart(let startID, _, let requestedAt):
+                startRecording(startID: startID, requestedAt: requestedAt, triggerManaged: true)
+            case .requestStop(_, _, _, let shouldTranscribe):
+                stopRecording(shouldTranscribe: shouldTranscribe)
+            case .requestCancel(let reason):
+                if reason != .startFailed {
+                    cancelRecording()
+                }
+            case .enterLatch:
+                walkieTalkieIsLatchedForDisplay = recordingTriggerBehavior == .holdToTalk
+                unregisterWalkieTalkieLatchHotKey?()
+            case .exitLatch:
+                walkieTalkieIsLatchedForDisplay = false
+                unregisterWalkieTalkieLatchHotKey?()
+            case .scheduleTimer(let kind, let token, let firesAt):
+                scheduleRecordingTriggerTimer(kind: kind, token: token, firesAt: firesAt)
+            case .cancelTimer(let kind, let token):
+                cancelRecordingTriggerTimer(kind: kind, token: token)
+            case .showStatus(let message):
+                statusMessage = message
+            case .ignore:
+                break
+            case .log(let event):
+                logRecordingTrigger(event)
+            }
+        }
+    }
+
+    private func scheduleRecordingTriggerTimer(kind: RecordingTriggerTimerKind, token: UUID, firesAt: Date) {
+        cancelRecordingTriggerTimer(kind: kind, token: nil)
+        triggerTimerTasks[kind] = Task { @MainActor [weak self] in
+            let delay = max(0, firesAt.timeIntervalSinceNow)
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            self?.handleRecordingTriggerEvent(.timerElapsed(kind: kind, token: token, at: Date()))
+        }
+    }
+
+    private func cancelRecordingTriggerTimer(kind: RecordingTriggerTimerKind, token: UUID?) {
+        guard let task = triggerTimerTasks[kind] else { return }
+        task.cancel()
+        triggerTimerTasks[kind] = nil
+    }
+
+    private func cancelAllRecordingTriggerTimers() {
+        for task in triggerTimerTasks.values {
+            task.cancel()
+        }
+        triggerTimerTasks.removeAll()
+    }
+
+    private func resetRecordingTriggerState(reason: String) {
+        cancelAllRecordingTriggerTimers()
+        handleRecordingTriggerEvent(.reset(reason: reason, at: Date()))
+    }
+
+    private func logRecordingTrigger(_ event: RecordingTriggerDiagnosticEvent) {
+        recordingTriggerLogger.info(
+            "\(event.event, privacy: .public): \(event.previousState, privacy: .public) -> \(event.nextState, privacy: .public); commands=\(event.commands.joined(separator: ","), privacy: .public) \(event.detail, privacy: .public)"
+        )
+    }
+
+    func startRecording(
+        startID: UUID = UUID(),
+        requestedAt: Date = Date(),
+        triggerManaged: Bool = false
+    ) {
         guard !phase.isBusy, !isStartingRecording else { return }
+        cancelScheduledVisualReset()
+        activeStartID = startID
+        activeStartIsTriggerManaged = triggerManaged
+        beginMicrophoneUseLock(reason: "starting")
+        registerCancelHotKey?()
+        if recordingTriggerBehavior == .holdToTalk {
+            registerWalkieTalkieLatchHotKey?()
+        }
         isStartingRecording = true
+        recordingStartedAt = nil
+        phase = .starting
+        processingVisualState = .starting
+        statusMessage = "Opening microphone."
+        showProcessingSignal?(.starting)
         logRecordingStartup("start requested", requestedAt: requestedAt)
-        Task { await startRecordingFlow(requestedAt: requestedAt) }
+        Task { await startRecordingFlow(startID: startID, requestedAt: requestedAt) }
     }
 
-    func stopRecording() {
+    func stopRecording(shouldTranscribe: Bool = true) {
         guard case .recording = phase else { return }
         unregisterCancelHotKey?()
-        resetWalkieTalkieRecordingState()
+        unregisterWalkieTalkieLatchHotKey?()
         activeRealtimeStartupTask?.cancel()
         activeRealtimeStartupTask = nil
-        activeRecordingID = nil
+        let stoppedRecordingID = activeRecordingID
         let streamingTranscriber = activeStreamingTranscriber
         activeStreamingTranscriber = nil
-        guard let audioURL = audioRecorder.stop() else {
+        guard let audioURL = environment.recording.stopRecording() else {
+            activeRecordingID = nil
+            activeMicrophoneResolution = nil
+            activeMicrophoneHealthMonitor = nil
+            endMicrophoneUseLock()
             realtimeAudioSink.clear()
             if let streamingTranscriber {
                 Task { await streamingTranscriber.cancel() }
@@ -315,25 +770,92 @@ final class AppState: ObservableObject {
             failWithMessage("Recording stopped before an audio file was created.")
             return
         }
+        endMicrophoneUseLock()
+        activeMicrophoneHealthMonitor = nil
         realtimeAudioSink.clear()
+        activeRecordingID = nil
 
+        guard shouldTranscribe else {
+            if let streamingTranscriber {
+                Task { await streamingTranscriber.cancel() }
+            }
+            try? FileManager.default.removeItem(at: audioURL)
+            discardActiveArchiveDraftIfNeeded()
+            activeMicrophoneResolution = nil
+            activeMicrophoneHealthMonitor = nil
+            session = .empty
+            showRawTranscript = false
+            recordingStartedAt = nil
+            walkieTalkieIsLatchedForDisplay = false
+            phase = .idle
+            processingVisualState = .idle
+            statusMessage = "Recording discarded."
+            hideProcessingSignal?()
+            prewarmRecordingStartResources()
+            return
+        }
+
+        recordingStartedAt = nil
+        activeProcessingRecordingID = stoppedRecordingID
         phase = .transcribing
+        processingVisualState = .transcribing
         statusMessage = transcriptionStatusMessage(streamingTranscriber: streamingTranscriber)
-        showProcessingSignal?()
-        showPill?()
+        showProcessingSignal?(.transcribing)
+        handleRecordingTriggerEvent(.processingBegan(recordingID: stoppedRecordingID, at: Date()))
         Task { await processRecording(audioURL: audioURL, streamingTranscriber: streamingTranscriber) }
     }
 
     func cancelRecording() {
-        guard case .recording = phase else { return }
+        guard case .starting = phase else {
+            cancelActiveRecording()
+            return
+        }
+
         unregisterCancelHotKey?()
-        resetWalkieTalkieRecordingState()
+        unregisterWalkieTalkieLatchHotKey?()
         activeRealtimeStartupTask?.cancel()
         activeRealtimeStartupTask = nil
+        activeStartID = nil
+        activeStartIsTriggerManaged = false
+        isStartingRecording = false
         activeRecordingID = nil
+        activeProcessingRecordingID = nil
+        activeMicrophoneResolution = nil
+        activeMicrophoneHealthMonitor = nil
+        let audioURL = environment.recording.stopRecording()
+        endMicrophoneUseLock()
+        realtimeAudioSink.clear()
+        if let audioURL {
+            try? FileManager.default.removeItem(at: audioURL)
+        }
+        discardActiveArchiveDraftIfNeeded()
+        session = .empty
+        showRawTranscript = false
+        phase = .idle
+        processingVisualState = .idle
+        recordingStartedAt = nil
+        walkieTalkieIsLatchedForDisplay = false
+        statusMessage = "Recording cancelled."
+        hideProcessingSignal?()
+        prewarmRecordingStartResources()
+    }
+
+    private func cancelActiveRecording() {
+        guard case .recording = phase else { return }
+        unregisterCancelHotKey?()
+        unregisterWalkieTalkieLatchHotKey?()
+        activeRealtimeStartupTask?.cancel()
+        activeRealtimeStartupTask = nil
+        activeStartID = nil
+        activeStartIsTriggerManaged = false
+        activeRecordingID = nil
+        activeProcessingRecordingID = nil
+        activeMicrophoneResolution = nil
+        activeMicrophoneHealthMonitor = nil
         let streamingTranscriber = activeStreamingTranscriber
         activeStreamingTranscriber = nil
-        let audioURL = audioRecorder.stop()
+        let audioURL = environment.recording.stopRecording()
+        endMicrophoneUseLock()
         realtimeAudioSink.clear()
         if let streamingTranscriber {
             Task { await streamingTranscriber.cancel() }
@@ -341,14 +863,16 @@ final class AppState: ObservableObject {
         if let audioURL {
             try? FileManager.default.removeItem(at: audioURL)
         }
-        TranscriptArchiveStore.deleteDraft(activeArchiveDraft)
-        activeArchiveDraft = nil
+        discardActiveArchiveDraftIfNeeded()
         session = .empty
         showRawTranscript = false
         phase = .idle
+        processingVisualState = .idle
+        recordingStartedAt = nil
+        walkieTalkieIsLatchedForDisplay = false
         statusMessage = "Recording cancelled."
         hideProcessingSignal?()
-        hidePill?()
+        prewarmRecordingStartResources()
     }
 
     func copyDisplayText() {
@@ -358,11 +882,11 @@ final class AppState: ObservableObject {
 
     func pasteDisplayText() {
         let text = displayText
-        copyToPasteboard(text)
         do {
-            try AccessibilityPasteController.paste(text: text)
+            try environment.delivery.pasteManually(text)
             statusMessage = "Pasted."
         } catch {
+            copyToPasteboard(text)
             statusMessage = "Copied. Enable Accessibility for AutoImproveRecorder in System Settings to paste automatically."
         }
     }
@@ -391,16 +915,44 @@ final class AppState: ObservableObject {
         statusMessage = "Copied OpenAI diagnostics."
     }
 
-    private func startRecordingFlow(requestedAt: Date) async {
-        defer { isStartingRecording = false }
+    func copyLatestDiagnostics() {
+        refreshDiagnostics()
+        guard let event = diagnosticEvents.first else { return }
+        let details = event.details.trimmingCharacters(in: .whitespacesAndNewlines)
+        copyToPasteboard(details.isEmpty ? event.summary : details)
+        statusMessage = "Copied diagnostics."
+    }
+
+    private func startRecordingFlow(startID: UUID, requestedAt: Date) async {
+        defer {
+            if activeStartID == startID {
+                activeStartID = nil
+                activeStartIsTriggerManaged = false
+            }
+            isStartingRecording = false
+        }
         activeArchiveDraft = nil
 
         do {
-            try await AudioRecorder.requestMicrophonePermission()
-            logRecordingStartup("microphone permission ready", requestedAt: requestedAt)
+            if environment.permissions.microphoneState() == .authorized {
+                let hadCachedPermission = microphonePermissionKnownAuthorized
+                microphonePermissionKnownAuthorized = true
+                environment.permissions.rememberMicrophonePermissionGranted()
+                let source = hadCachedPermission ? "verified" : "ready"
+                logRecordingStartup("microphone permission \(source)", requestedAt: requestedAt)
+            } else {
+                microphonePermissionKnownAuthorized = false
+                try await environment.permissions.requestMicrophone()
+                microphonePermissionKnownAuthorized = true
+                environment.permissions.rememberMicrophonePermissionGranted()
+                logRecordingStartup("microphone permission ready", requestedAt: requestedAt)
+            }
+
+            guard activeStartID == startID, case .starting = phase else { return }
 
             let recordingID = UUID()
-            let archiveDraft = try TranscriptArchiveStore.prepareRecording(createdAt: requestedAt)
+            let archiveDraft = try consumePreparedArchiveDraft(createdAt: requestedAt)
+            let dictionarySnapshot = dictionaryStore.currentSnapshotString
             activeArchiveDraft = archiveDraft
             let shouldPrepareRealtime = transcriptionMode == .fastest
             let shouldBufferRealtimeAudio = shouldPrepareRealtime &&
@@ -409,25 +961,28 @@ final class AppState: ObservableObject {
             let audioURL: URL
             let audioSink = realtimeAudioSink
             do {
-                audioURL = try audioRecorder.start(
+                let microphoneResolution = try resolveMicrophoneForRecording()
+                audioURL = try startAudioRecorder(
                     at: archiveDraft.audioURL,
-                    bufferSize: 1024,
-                    streamHandler: { buffer in
-                        audioSink.appendAudioBuffer(buffer)
-                    },
-                    onFirstBuffer: {
-                        NSLog(
-                            "Recording startup: first audio buffer after %.3fs.",
-                            Date().timeIntervalSince(requestedAt)
-                        )
-                    }
+                    initialResolution: microphoneResolution,
+                    audioSink: audioSink,
+                    requestedAt: requestedAt
                 )
             } catch {
                 realtimeAudioSink.clear()
                 throw error
             }
+            guard activeStartID == startID, case .starting = phase else { return }
+            activeStartID = nil
             activeRecordingID = recordingID
-            session = TranscriptSession(audioURL: audioURL, rawTranscript: "", improvedText: "", message: nil, improveFailed: false)
+            session = TranscriptSession(
+                audioURL: audioURL,
+                rawTranscript: "",
+                improvedText: "",
+                message: nil,
+                improveFailed: false,
+                dictionarySnapshot: dictionarySnapshot
+            )
             showRawTranscript = false
             if shouldPrepareRealtime {
                 statusMessage = shouldBufferRealtimeAudio
@@ -437,54 +992,276 @@ final class AppState: ObservableObject {
                 statusMessage = nil
             }
             phase = .recording(audioURL)
+            processingVisualState = .recording
+            let beganAt = Date()
+            recordingStartedAt = beganAt
+            beginMicrophoneUseLock(reason: "recording")
             registerCancelHotKey?()
-            finishWalkieTalkieStartIfNeeded()
+            let triggerManaged = activeStartIsTriggerManaged
+            activeStartIsTriggerManaged = false
+            if triggerManaged {
+                handleRecordingTriggerEvent(.recordingBegan(startID: startID, recordingID: recordingID, beganAt: beganAt))
+            } else {
+                handleRecordingTriggerEvent(.externalRecordingBegan(recordingID: recordingID, beganAt: beganAt))
+            }
             guard case .recording = phase else { return }
-            showPill?()
+            showProcessingSignal?(.recording)
             logRecordingStartup("audio engine started and recording UI shown", requestedAt: requestedAt)
 
             if shouldPrepareRealtime {
                 activeRealtimeStartupTask = Task { [weak self] in
                     await self?.prepareRealtimeTranscriberForActiveRecording(
                         recordingID: recordingID,
+                        dictionarySnapshot: dictionarySnapshot,
                         requestedAt: requestedAt
                     )
                 }
             }
         } catch {
-            TranscriptArchiveStore.deleteDraft(activeArchiveDraft)
+            recordDiagnosticEvent(
+                subsystem: .microphone,
+                severity: .error,
+                summary: "Recording start failed",
+                details: error.localizedDescription,
+                relatedProvider: nil
+            )
+            discardActiveArchiveDraftIfNeeded()
             activeRecordingID = nil
+            activeMicrophoneResolution = nil
+            activeMicrophoneHealthMonitor = nil
             activeRealtimeStartupTask = nil
-            activeArchiveDraft = nil
             realtimeAudioSink.clear()
-            resetWalkieTalkieRecordingState()
+            handleRecordingTriggerEvent(.startFailed(startID: startID, error: error.localizedDescription, at: Date()))
             failWithMessage(error.localizedDescription)
         }
     }
 
-    private func finishWalkieTalkieStartIfNeeded() {
-        guard recordingTriggerMode == .walkieTalkie, activeWalkieTalkieRecording else { return }
-        registerWalkieTalkieLatchHotKey?()
-        if !walkieTalkieKeyIsDown && !walkieTalkieRecordingLatched {
-            stopRecording()
+    private func resolveMicrophoneForRecording() throws -> MicrophoneResolution {
+        refreshMicrophones()
+        let resolution = try MicrophoneResolver.resolve(
+            preferences: .fromPreferredMicrophoneID(preferredMicrophoneID),
+            devices: availableMicrophones,
+            quarantinedUntil: quarantinedMicrophoneIDs,
+            now: Date()
+        )
+        microphoneDeviceLogger.info(
+            "Resolved microphone requested=\(resolution.requestedID ?? "", privacy: .public) id=\(resolution.device.id, privacy: .public) name=\(resolution.device.name, privacy: .public) fallback=\(resolution.usedFallback, privacy: .public) reason=\(resolution.reason.rawValue, privacy: .public)"
+        )
+        if resolution.usedFallback {
+            statusMessage = "Preferred microphone unavailable; using \(resolution.device.name)."
+        }
+        return resolution
+    }
+
+    private func startAudioRecorder(
+        at audioURL: URL,
+        initialResolution: MicrophoneResolution,
+        audioSink: OpenAIRealtimeAudioSink,
+        requestedAt: Date
+    ) throws -> URL {
+        do {
+            activeMicrophoneResolution = initialResolution
+            return try startAudioRecorderOnce(
+                at: audioURL,
+                resolution: initialResolution,
+                audioSink: audioSink,
+                requestedAt: requestedAt
+            )
+        } catch {
+            guard shouldRetryWithFallback(after: error, resolution: initialResolution) else {
+                throw error
+            }
+
+            quarantineMicrophone(initialResolution.device.id, reason: error.localizedDescription)
+            let fallbackResolution = try resolveMicrophoneForRecording()
+            guard fallbackResolution.device.id != initialResolution.device.id else {
+                throw error
+            }
+
+            statusMessage = "Could not use \(initialResolution.device.name); using \(fallbackResolution.device.name)."
+            activeMicrophoneResolution = fallbackResolution
+            return try startAudioRecorderOnce(
+                at: audioURL,
+                resolution: fallbackResolution,
+                audioSink: audioSink,
+                requestedAt: requestedAt
+            )
         }
     }
 
-    private func stopUnlatchedWalkieTalkieRecordingIfNeeded() {
-        guard activeWalkieTalkieRecording, !walkieTalkieRecordingLatched else { return }
-        if isRecording {
-            stopRecording()
+    private func startAudioRecorderOnce(
+        at audioURL: URL,
+        resolution: MicrophoneResolution,
+        audioSink: OpenAIRealtimeAudioSink,
+        requestedAt: Date
+    ) throws -> URL {
+        let healthMonitor = shouldMonitorForPreferredMicrophoneHealth(resolution)
+            ? MicrophoneHealthMonitor(configuration: .startupFallback)
+            : nil
+        activeMicrophoneHealthMonitor = healthMonitor
+        return try environment.recording.startRecording(
+            at: audioURL,
+            microphone: resolution.device,
+            bufferSize: environment.recording.fastStartBufferSize,
+            streamHandler: { [weak self] buffer in
+                if let event = healthMonitor?.observe(buffer) {
+                    Task { @MainActor [weak self] in
+                        self?.handleMicrophoneHealthEvent(
+                            event,
+                            resolution: resolution,
+                            audioURL: audioURL,
+                            audioSink: audioSink,
+                            requestedAt: requestedAt
+                        )
+                    }
+                }
+                audioSink.appendAudioBuffer(buffer)
+            },
+            onFirstBuffer: {
+                NSLog(
+                    "Recording startup: first audio buffer after %.3fs.",
+                    Date().timeIntervalSince(requestedAt)
+                )
+            }
+        )
+    }
+
+    private func shouldMonitorForPreferredMicrophoneHealth(_ resolution: MicrophoneResolution) -> Bool {
+        !resolution.usedFallback &&
+            !resolution.device.id.isEmpty &&
+            preferredMicrophoneID.trimmingCharacters(in: .whitespacesAndNewlines) == resolution.device.id
+    }
+
+    private func handleMicrophoneHealthEvent(
+        _ event: MicrophoneHealthEvent,
+        resolution: MicrophoneResolution,
+        audioURL: URL,
+        audioSink: OpenAIRealtimeAudioSink,
+        requestedAt: Date
+    ) {
+        guard event.kind == .exactSilentStartup,
+              !microphoneRecoveryInProgress,
+              case .recording = phase,
+              activeMicrophoneResolution == resolution,
+              shouldMonitorForPreferredMicrophoneHealth(resolution) else {
+            return
+        }
+
+        recoverFromSilentPreferredMicrophone(
+            resolution,
+            event: event,
+            audioURL: audioURL,
+            audioSink: audioSink,
+            requestedAt: requestedAt
+        )
+    }
+
+    private func recoverFromSilentPreferredMicrophone(
+        _ resolution: MicrophoneResolution,
+        event: MicrophoneHealthEvent,
+        audioURL: URL,
+        audioSink: OpenAIRealtimeAudioSink,
+        requestedAt: Date
+    ) {
+        microphoneRecoveryInProgress = true
+        defer { microphoneRecoveryInProgress = false }
+
+        let observedMS = Int(event.observedDuration * 1000)
+        let reason = "Exact digital silence for \(observedMS)ms across \(event.silentBufferCount) startup buffers."
+        quarantineMicrophone(resolution.device.id, reason: reason)
+
+        do {
+            let fallbackResolution = try resolveMicrophoneForRecording()
+            guard fallbackResolution.device.id != resolution.device.id else {
+                return
+            }
+
+            activeRealtimeStartupTask?.cancel()
+            activeRealtimeStartupTask = nil
+            if let streamingTranscriber = activeStreamingTranscriber {
+                activeStreamingTranscriber = nil
+                Task { await streamingTranscriber.cancel() }
+            }
+
+            _ = environment.recording.stopRecording()
+            activeMicrophoneHealthMonitor = nil
+            realtimeAudioSink.clear()
+
+            let shouldPrepareRealtime = transcriptionMode == .fastest
+            let shouldBufferRealtimeAudio = shouldPrepareRealtime &&
+                !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            audioSink.reset(bufferPendingAudio: shouldBufferRealtimeAudio)
+
+            statusMessage = "Could not hear \(resolution.device.name); using \(fallbackResolution.device.name)."
+            activeMicrophoneResolution = fallbackResolution
+            _ = try startAudioRecorderOnce(
+                at: audioURL,
+                resolution: fallbackResolution,
+                audioSink: audioSink,
+                requestedAt: requestedAt
+            )
+            microphoneDeviceLogger.info(
+                "Recovered from exact-silent microphone id=\(resolution.device.id, privacy: .public) fallbackID=\(fallbackResolution.device.id, privacy: .public) fallbackName=\(fallbackResolution.device.name, privacy: .public)"
+            )
+
+            if shouldPrepareRealtime, let recordingID = activeRecordingID {
+                let dictionarySnapshot = session.dictionarySnapshot
+                activeRealtimeStartupTask = Task { [weak self] in
+                    await self?.prepareRealtimeTranscriberForActiveRecording(
+                        recordingID: recordingID,
+                        dictionarySnapshot: dictionarySnapshot,
+                        requestedAt: requestedAt
+                    )
+                }
+            }
+        } catch {
+            activeMicrophoneHealthMonitor = nil
+            failWithMessage(error.localizedDescription)
         }
     }
 
-    private func resetWalkieTalkieRecordingState() {
-        activeWalkieTalkieRecording = false
-        walkieTalkieRecordingLatched = false
-        unregisterWalkieTalkieLatchHotKey?()
+    private func shouldRetryWithFallback(after error: Error, resolution: MicrophoneResolution) -> Bool {
+        guard !resolution.usedFallback,
+              !resolution.device.id.isEmpty,
+              preferredMicrophoneID.trimmingCharacters(in: .whitespacesAndNewlines) == resolution.device.id else {
+            return false
+        }
+
+        return true
     }
 
-    private func prepareRealtimeTranscriberForActiveRecording(recordingID: UUID, requestedAt: Date) async {
-        let streamingTranscriber = await prepareStreamingTranscriberIfNeeded()
+    private func quarantineMicrophone(_ id: String, reason: String) {
+        guard !id.isEmpty else { return }
+        let expiresAt = Date().addingTimeInterval(microphoneRetryCooldown)
+        quarantinedMicrophoneIDs[id] = expiresAt
+        updateResolvedMicrophoneSummary()
+        microphoneDeviceLogger.info(
+            "Quarantined microphone id=\(id, privacy: .public) until=\(expiresAt.ISO8601Format(), privacy: .public) reason=\(reason, privacy: .public)"
+        )
+    }
+
+    private func prepareRealtimeTranscriberForActiveRecording(
+        recordingID: UUID,
+        dictionarySnapshot: String,
+        requestedAt: Date
+    ) async {
+        let selectedMode = transcriptionMode
+        let selectedAPIKey = apiKey
+        let streamingTranscriber = await environment.transcription.prepareRealtimeIfNeeded(
+            mode: selectedMode,
+            apiKey: selectedAPIKey,
+            dictionarySnapshot: dictionarySnapshot,
+            status: { [weak self] message in
+                await MainActor.run {
+                    self?.statusMessage = message
+                }
+            },
+            recordDiagnostics: { [weak self] diagnostics in
+                await MainActor.run {
+                    self?.recordOpenAIRealtimeDiagnostics(diagnostics)
+                }
+            }
+        )
 
         guard !Task.isCancelled,
               activeRecordingID == recordingID,
@@ -513,11 +1290,18 @@ final class AppState: ObservableObject {
 
     private func processRecording(audioURL: URL, streamingTranscriber: OpenAIRealtimeTranscriber?) async {
         do {
-            let result = try await transcribe(audioURL: audioURL, streamingTranscriber: streamingTranscriber)
-            session.rawTranscript = result.text
+            let dictionarySnapshot = session.dictionarySnapshot
+            let result = try await transcribe(
+                audioURL: audioURL,
+                streamingTranscriber: streamingTranscriber,
+                dictionarySnapshot: dictionarySnapshot
+            )
+            let transcript = dictionaryStore.applyReplacementRules(to: result.text)
+            session.rawTranscript = transcript
             session.improvedText = ""
             session.message = nil
             session.improveFailed = false
+            session.dictionarySnapshot = dictionarySnapshot
             persistTranscriptArchive(transcriptionEngineName: result.engineName)
 
             switch autoImproveMode {
@@ -532,13 +1316,7 @@ final class AppState: ObservableObject {
                 statusMessage = "Transcript ready."
                 finishProcessing()
             case .automatic:
-                if wordCount(result.text) >= thresholdWords {
-                    // Pipeline scheduling win: signal "transcript captured" the
-                    // instant raw text is in hand so the user sees the first
-                    // useful result immediately, while the improve roundtrip
-                    // is still in flight. The improve completion path still
-                    // owns the final paste/clipboard delivery.
-                    flashReadySignal?()
+                if wordCount(transcript) >= thresholdWords {
                     await improveCurrentTranscript(force: false)
                 } else {
                     phase = .ready
@@ -553,126 +1331,42 @@ final class AppState: ObservableObject {
                 rawTranscript: "",
                 improvedText: "",
                 message: error.localizedDescription,
-                improveFailed: false
+                improveFailed: false,
+                dictionarySnapshot: session.dictionarySnapshot
             )
             persistTranscriptArchive(transcriptionEngineName: nil)
             phase = .failed
+            processingVisualState = .failed
             statusMessage = error.localizedDescription
             finishProcessing()
         }
     }
 
-    private func prepareStreamingTranscriberIfNeeded() async -> OpenAIRealtimeTranscriber? {
-        guard transcriptionMode == .fastest else { return nil }
-
-        if apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            let reason = "Fastest mode needs an OpenAI API key. Falling back to Parakeet."
-            recordOpenAIRealtimeDiagnostics(OpenAIRealtimeDiagnostics(summary: reason, details: reason))
-            statusMessage = reason
-            return nil
-        }
-
-        let transcriber = OpenAIRealtimeTranscriber(apiKey: apiKey)
-        do {
-            try await transcriber.start()
-            return transcriber
-        } catch {
-            let summary = "OpenAI streaming unavailable; falling back to Parakeet. \(error.localizedDescription)"
-            let diagnostics = await transcriber.diagnostics(summary: summary)
-            recordOpenAIRealtimeDiagnostics(diagnostics)
-            statusMessage = "OpenAI streaming unavailable; falling back to Parakeet."
-            NSLog("OpenAI realtime transcription start failed: \(diagnostics.details)")
-            await transcriber.cancel()
-            return nil
-        }
-    }
-
-    private func transcribe(audioURL: URL, streamingTranscriber: OpenAIRealtimeTranscriber?) async throws -> TranscriptionResult {
-        let startedAt = Date()
-
-        if transcriptionMode == .openAIAPI {
-            return try await transcribeWithOpenAIAPI(audioURL: audioURL, startedAt: startedAt)
-        }
-
-        if transcriptionMode == .localWhisper {
-            return try await transcribeWithLocalWhisper(audioURL: audioURL, startedAt: startedAt)
-        }
-
-        if transcriptionMode == .appleLocal {
-            return try await transcribeWithAppleLocal(audioURL: audioURL, startedAt: startedAt)
-        }
-
-        if transcriptionMode == .fastest, let streamingTranscriber {
-            do {
-                let result = try await streamingTranscriber.finish()
-                let elapsed = Date().timeIntervalSince(startedAt)
-                if shouldVerifyRealtimeTranscript(result.text) {
-                    let reason = "OpenAI realtime returned a suspiciously short transcript (‘\(result.text)’); using OpenAI API transcription instead."
-                    recordOpenAIRealtimeDiagnostics(await streamingTranscriber.diagnostics(summary: reason))
-                    NSLog(reason)
-                    statusMessage = "Realtime transcript looked wrong; using OpenAI API."
-                    return try await transcribeWithOpenAIAPI(audioURL: audioURL, startedAt: Date())
-                }
-                statusMessage = String(format: "OpenAI transcript ready in %.1fs.", elapsed)
-                return result
-            } catch {
-                let summary = "OpenAI streaming failed; falling back to OpenAI API. \(error.localizedDescription)"
-                let diagnostics = await streamingTranscriber.diagnostics(summary: summary)
-                recordOpenAIRealtimeDiagnostics(diagnostics)
-                NSLog("OpenAI realtime transcription finalize failed; falling back to OpenAI API: \(diagnostics.details)")
-                statusMessage = "OpenAI streaming failed; using OpenAI API."
-                return try await transcribeWithOpenAIAPI(audioURL: audioURL, startedAt: Date())
-            }
-        } else if transcriptionMode == .fastest {
-            statusMessage = "Fastest unavailable; falling back to Parakeet."
-        }
-
-        let fallbackStartedAt = Date()
-        let transcriber = ParakeetTranscriber(
-            pythonPath: parakeetRuntimePath,
-            scriptPath: parakeetScriptPath,
-            cachePath: parakeetCachePath
+    private func transcribe(
+        audioURL: URL,
+        streamingTranscriber: OpenAIRealtimeTranscriber?,
+        dictionarySnapshot: String
+    ) async throws -> TranscriptionResult {
+        let request = TranscriptionServiceRequest(
+            audioURL: audioURL,
+            mode: transcriptionMode,
+            apiKey: apiKey,
+            dictionarySnapshot: dictionarySnapshot,
+            streamingTranscriber: streamingTranscriber
         )
-        let result = try await transcriber.transcribe(audioURL: audioURL)
-        let elapsed = Date().timeIntervalSince(fallbackStartedAt)
-        NSLog("Parakeet transcription finished in %.2fs via fallback/local mode.", elapsed)
-        statusMessage = String(format: "Parakeet transcript ready in %.1fs.", elapsed)
-        return result
-    }
-
-    private func transcribeWithOpenAIAPI(audioURL: URL, startedAt: Date) async throws -> TranscriptionResult {
-        statusMessage = "Transcribing with OpenAI API."
-        let transcriber = OpenAIAudioTranscriber(apiKey: apiKey)
-        let result = try await transcriber.transcribe(audioURL: audioURL)
-        let elapsed = Date().timeIntervalSince(startedAt)
-        NSLog("OpenAI API transcription finished in %.2fs.", elapsed)
-        statusMessage = String(format: "OpenAI API transcript ready in %.1fs.", elapsed)
-        return result
-    }
-
-    private func transcribeWithAppleLocal(audioURL: URL, startedAt: Date) async throws -> TranscriptionResult {
-        statusMessage = "Transcribing with Apple Speech."
-        let result = try await AppleLocalAudioTranscriber().transcribe(audioURL: audioURL)
-        let elapsed = Date().timeIntervalSince(startedAt)
-        NSLog("Apple Speech transcription finished in %.2fs.", elapsed)
-        statusMessage = String(format: "Apple Speech transcript ready in %.1fs.", elapsed)
-        return result
-    }
-
-    private func transcribeWithLocalWhisper(audioURL: URL, startedAt: Date) async throws -> TranscriptionResult {
-        statusMessage = "Transcribing with local Whisper."
-        let result = try await WhisperCppTranscriber().transcribe(audioURL: audioURL)
-        let elapsed = Date().timeIntervalSince(startedAt)
-        NSLog("whisper.cpp transcription finished in %.2fs.", elapsed)
-        statusMessage = String(format: "Local Whisper transcript ready in %.1fs.", elapsed)
-        return result
-    }
-
-    private func shouldVerifyRealtimeTranscript(_ text: String) -> Bool {
-        let words = text
-            .split { !$0.isLetter && !$0.isNumber }
-            .filter { !$0.isEmpty }
-        return words.count <= 2
+        return try await environment.transcription.transcribe(
+            request,
+            status: { [weak self] message in
+                await MainActor.run {
+                    self?.statusMessage = message
+                }
+            },
+            recordDiagnostics: { [weak self] diagnostics in
+                await MainActor.run {
+                    self?.recordOpenAIRealtimeDiagnostics(diagnostics)
+                }
+            }
+        )
     }
 
     private func improveCurrentTranscript(force: Bool) async {
@@ -684,43 +1378,46 @@ final class AppState: ObservableObject {
         }
 
         phase = .improving
+        processingVisualState = .improving
         statusMessage = "Improving with \(improvementMode.detailLabel)."
-        showProcessingSignal?()
-        showPill?()
+        showProcessingSignal?(.improving)
 
         do {
-            let engine = makeImproveEngine()
             // Progressive update path: invoke streaming improve. The engine
             // calls back with the cumulative improved text; we hop to main
-            // and update session.improvedText so the preview pill / UI can
-            // paint the partial result immediately. The first delta also
-            // fires flashReadySignal? (see flashFirstImprovedDelta) which is
-            // the user-visible "first improved character" moment.
+            // and update session.improvedText so the preview surface can
+            // paint the partial result immediately.
             //
             // Paste / clipboard side-effects ONLY happen in finishProcessing()
             // after this call returns -- that guarantees no double-paste even
             // though we update session.improvedText many times during stream.
-            var sawFirstDelta = false
-            let improved = try await engine.improveStreaming(
-                rawTranscript: raw,
-                outputMode: outputMode,
-                modificationStrength: cleanupStrength,
-                onDelta: { [weak self] partial in
-                    let firstThisDelta = !sawFirstDelta
-                    sawFirstDelta = true
-                    Task { @MainActor [weak self] in
-                        guard let self else { return }
-                        // Show the partial improved text in the preview surface.
-                        // Suppressing showRawTranscript flips the menu/pill onto
-                        // the (still-incomplete) improved buffer.
-                        self.session.improvedText = partial
-                        self.showRawTranscript = false
-                        if firstThisDelta {
-                            // First-visible moment for streamed improvements.
-                            self.flashFirstImprovedDelta()
+            let improved = try await environment.improvement.improve(
+                ImprovementServiceRequest(
+                    rawTranscript: raw,
+                    mode: improvementMode,
+                    outputMode: outputMode,
+                    modificationStrength: cleanupStrength,
+                    dictionarySnapshot: session.dictionarySnapshot,
+                    credentials: ProviderCredentials(
+                        openAIAPIKey: apiKey,
+                        geminiAPIKey: geminiAPIKey,
+                        anthropicAPIKey: anthropicAPIKey
+                    ),
+                    ollama: OllamaSettings(
+                        baseURL: ollamaBaseURL,
+                        model: ollamaModel
+                    ),
+                    onDelta: { [weak self] partial in
+                        Task { @MainActor [weak self] in
+                            guard let self else { return }
+                            // Show the partial improved text in the preview surface.
+                            // Suppressing showRawTranscript flips the menu/pill onto
+                            // the (still-incomplete) improved buffer.
+                            self.session.improvedText = partial
+                            self.showRawTranscript = false
                         }
                     }
-                }
+                )
             )
             session.improvedText = improved
             session.message = nil
@@ -742,30 +1439,6 @@ final class AppState: ObservableObject {
         finishProcessing()
     }
 
-    /// First improved character is visible in the preview. Flash the same
-    /// "ready signal" the user gets on the raw transcript path so they know
-    /// improvement is underway and partial text is already onscreen. We do
-    /// NOT paste here -- paste/clipboard happens once at finishProcessing()
-    /// to preserve the no-double-paste guardrail.
-    private func flashFirstImprovedDelta() {
-        flashReadySignal?()
-    }
-
-    private func makeImproveEngine() -> any ImproveEngine {
-        switch improvementMode {
-        case .openAI:
-            return OpenAIImproveEngine(apiKey: apiKey)
-        case .geminiFlash:
-            return GeminiImproveEngine(apiKey: geminiAPIKey)
-        case .claudeHaiku:
-            return AnthropicImproveEngine(apiKey: anthropicAPIKey)
-        case .appleLocal:
-            return AppleLocalImproveEngine()
-        case .ollamaLocal:
-            return OllamaImproveEngine(baseURL: ollamaBaseURL, model: ollamaModel)
-        }
-    }
-
     private var cleanupStrength: Int {
         switch outputMode {
         case .verbatim:
@@ -781,24 +1454,39 @@ final class AppState: ObservableObject {
 
     private func persistTranscriptArchive(transcriptionEngineName: String?) {
         guard let archiveDraft = activeArchiveDraft ?? archiveDraftFromSession() else { return }
-        let record = TranscriptArchiveRecord(
-            id: archiveDraft.id,
-            createdAt: archiveDraft.createdAt,
-            updatedAt: Date(),
-            audioPath: archiveDraft.audioURL.path,
+        let microphoneResolution = activeMicrophoneResolution
+        let content = TranscriptArchiveContent(
             rawTranscript: session.rawTranscript,
             cleanedTranscript: session.improvedText,
             finalTranscript: session.preferredText,
             improveFailed: session.improveFailed,
             message: session.message ?? statusMessage,
+            dictionarySnapshot: session.dictionarySnapshot
+        )
+        let metadata = TranscriptArchiveMetadata(
+            updatedAt: Date(),
             transcriptionMode: transcriptionMode.rawValue,
             transcriptionEngine: transcriptionEngineName,
             improvementMode: improvementMode.rawValue,
             cleanupMode: outputMode.rawValue,
             autoImproveMode: autoImproveMode.rawValue,
-            thresholdWords: thresholdWords
+            thresholdWords: thresholdWords,
+            microphonePreferenceID: preferredMicrophoneID,
+            microphoneResolvedID: microphoneResolution?.device.id,
+            microphoneResolvedName: microphoneResolution?.device.name,
+            microphoneUsedFallback: microphoneResolution?.usedFallback ?? false,
+            microphoneFallbackReason: microphoneResolution?.usedFallback == true
+                ? microphoneResolution?.reason.rawValue
+                : nil
         )
-        TranscriptArchiveStore.save(record)
+        let record = environment.archive.record(
+            draft: archiveDraft,
+            content: content,
+            metadata: metadata
+        )
+        if environment.archive.save(record) {
+            activeArchiveDraftState.markCommittedIfCurrent(id: archiveDraft.id)
+        }
     }
 
     private func archiveDraftFromSession() -> TranscriptArchiveDraft? {
@@ -822,8 +1510,10 @@ final class AppState: ObservableObject {
         switch transcriptionMode {
         case .localWhisper:
             return "Transcribing with local Whisper."
-        case .localParakeet, .fastest:
-            return "Transcribing with local Parakeet."
+        case .localParakeetCppFast:
+            return "Transcribing with Parakeet.cpp Fast."
+        case .localParakeetCppRecommended, .fastest:
+            return "Transcribing with Parakeet.cpp Recommended."
         case .appleLocal:
             return "Transcribing with Apple Speech."
         case .openAIAPI:
@@ -833,53 +1523,73 @@ final class AppState: ObservableObject {
 
     private func finishProcessing() {
         unregisterCancelHotKey?()
+        defer {
+            let processingRecordingID = activeProcessingRecordingID
+            activeProcessingRecordingID = nil
+            handleRecordingTriggerEvent(.processingFinished(recordingID: processingRecordingID, at: Date()))
+            prewarmRecordingStartResources()
+        }
         let text = displayText.trimmingCharacters(in: .whitespacesAndNewlines)
         if !text.isEmpty {
-            completeWithText(text)
-            flashReadySignal?()
+            phase = .delivering
+            processingVisualState = .delivering
+            statusMessage = "Delivering text."
+            showProcessingSignal?(.delivering)
+
+            let deliveryState = completeWithText(text)
+            processingVisualState = deliveryState
+            phase = .ready
+            flashReadySignal?(deliveryState)
+            scheduleVisualReset(after: 1.25)
         } else {
+            processingVisualState = phase == .failed ? .failed : .ready
             hideProcessingSignal?()
+            scheduleVisualReset(after: 0.8)
         }
-        hidePill?()
     }
 
-    private func completeWithText(_ text: String) {
-        if AccessibilityPasteController.focusedElementAcceptsText(promptForPermission: true) {
-            do {
-                try AccessibilityPasteController.paste(
-                    text: text,
-                    leaveClipboardChanged: copyFinishedTextToClipboard,
-                    submitAfterPaste: autoSubmitDetectedTextFields
-                )
-                if autoSubmitDetectedTextFields {
-                    statusMessage = copyFinishedTextToClipboard
-                        ? "Pasted, submitted, and copied to clipboard."
-                        : "Pasted and submitted."
-                } else {
-                    statusMessage = copyFinishedTextToClipboard
-                        ? "Pasted and copied to clipboard."
-                        : "Pasted."
-                }
-                return
-            } catch {
-                if copyFinishedTextToClipboard {
-                    copyToPasteboard(text)
-                    statusMessage = "Copied. Enable Accessibility for AutoImproveRecorder in System Settings " +
-                        "to paste automatically."
-                } else {
-                    statusMessage = "Text ready. Enable Accessibility for AutoImproveRecorder in System Settings " +
-                        "to paste automatically."
-                }
-                return
+    @discardableResult
+    private func completeWithText(_ text: String) -> ProcessingVisualState {
+        let result = environment.delivery.deliver(
+            DeliveryRequest(
+                text: text,
+                globalSettings: GlobalCompletionSettings(
+                    copyFinishedTextToClipboard: copyFinishedTextToClipboard,
+                    autoSubmitDetectedTextFields: autoSubmitDetectedTextFields
+                ),
+                rules: appDeliveryRules
+            )
+        )
+        statusMessage = result.statusMessage
+        return processingVisualState(for: result.outcome)
+    }
+
+    private func processingVisualState(for outcome: DeliveryOutcome) -> ProcessingVisualState {
+        switch outcome {
+        case .pasted:
+            return .pasted
+        case .submitted:
+            return .submitted
+        case .copied:
+            return .copied
+        case .ready:
+            return .ready
+        }
+    }
+
+    private func scheduleVisualReset(after delay: TimeInterval) {
+        let token = UUID()
+        visualResetToken = token
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self, self.visualResetToken == token, !self.phase.isBusy else { return }
+            if self.phase == .ready {
+                self.processingVisualState = .idle
             }
         }
+    }
 
-        if copyFinishedTextToClipboard {
-            copyToPasteboard(text)
-            statusMessage = "Copied to clipboard."
-        } else {
-            statusMessage = "Text ready."
-        }
+    private func cancelScheduledVisualReset() {
+        visualResetToken = UUID()
     }
 
     private func completionNotificationBody() -> String {
@@ -914,44 +1624,137 @@ final class AppState: ObservableObject {
 
     private func failWithMessage(_ message: String) {
         unregisterCancelHotKey?()
+        unregisterWalkieTalkieLatchHotKey?()
+        resetRecordingTriggerState(reason: "terminal failure: \(message)")
+        endMicrophoneUseLock()
         session.message = message
         phase = .failed
+        processingVisualState = .failed
+        recordingStartedAt = nil
+        walkieTalkieIsLatchedForDisplay = false
         statusMessage = message
         hideProcessingSignal?()
-        hidePill?()
         showPreview?()
     }
 
     private func recordOpenAIRealtimeDiagnostics(_ diagnostics: OpenAIRealtimeDiagnostics) {
         guard !diagnostics.isEmpty else { return }
         lastOpenAIRealtimeDiagnostics = diagnostics
+        recordDiagnosticEvent(
+            subsystem: .openAIRealtime,
+            severity: .error,
+            summary: diagnostics.summary,
+            details: diagnostics.details,
+            relatedProvider: "OpenAI Realtime"
+        )
+        menuNeedsUpdate?()
         NSLog("Last OpenAI realtime diagnostics: \(diagnostics.details)")
     }
 
-    private func logRecordingStartup(_ message: String, requestedAt: Date) {
-        NSLog("Recording startup: \(message) after %.3fs.", Date().timeIntervalSince(requestedAt))
+    private func recordDiagnosticEvent(
+        subsystem: DiagnosticSubsystem,
+        severity: DiagnosticSeverity,
+        summary: String,
+        details: String,
+        relatedProvider: String?
+    ) {
+        let event = DiagnosticEvent(
+            id: UUID(),
+            createdAt: Date(),
+            subsystem: subsystem,
+            severity: severity,
+            summary: summary,
+            details: details,
+            relatedProvider: relatedProvider
+        )
+        diagnosticEvents = Array(([event] + diagnosticEvents).prefix(5))
+        environment.diagnostics.record(event)
     }
 
-    private func saveOpenAIRealtimeDiagnostics() {
-        // Pipeline scheduling: when this runs while transcribe / improve are
-        // active, the synchronous UserDefaults writes show up on the critical
-        // path. Defer the persistence to a background queue so the main
-        // actor returns immediately. The menu refresh stays on the main actor
-        // because it touches UI.
-        let summary = lastOpenAIRealtimeDiagnostics?.summary ?? ""
-        let details = lastOpenAIRealtimeDiagnostics?.details ?? ""
-        DispatchQueue.global(qos: .utility).async {
-            let defaults = UserDefaults.standard
-            defaults.set(summary, forKey: Keys.lastOpenAIRealtimeErrorSummary)
-            defaults.set(details, forKey: Keys.lastOpenAIRealtimeErrorDetails)
+    private func logRecordingStartup(_ message: String, requestedAt: Date) {
+        let elapsed = String(format: "%.3f", Date().timeIntervalSince(requestedAt))
+        recordingStartupLogger.info("\(message, privacy: .public) after \(elapsed, privacy: .public)s.")
+    }
+
+    private func beginMicrophoneUseLock(reason: String) {
+        microphoneUseLockHeartbeatTask?.cancel()
+        MicrophoneUseLock.write(reason: reason)
+        microphoneUseLockHeartbeatTask = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 10_000_000_000)
+                guard !Task.isCancelled else { return }
+                MicrophoneUseLock.write(reason: reason)
+            }
         }
-        menuNeedsUpdate?()
+    }
+
+    private func endMicrophoneUseLock() {
+        microphoneUseLockHeartbeatTask?.cancel()
+        microphoneUseLockHeartbeatTask = nil
+        MicrophoneUseLock.clear()
+    }
+
+    private func latestOpenAIRealtimeDiagnostics() -> OpenAIRealtimeDiagnostics? {
+        environment.diagnostics
+            .latestEvents(limit: 20)
+            .first { $0.subsystem == .openAIRealtime }
+            .map { OpenAIRealtimeDiagnostics(summary: $0.summary, details: $0.details) }
+    }
+
+    private func legacyOpenAIRealtimeDiagnostics() -> OpenAIRealtimeDiagnostics? {
+        let savedOpenAISummary = defaults.string(forKey: Keys.lastOpenAIRealtimeErrorSummary) ?? ""
+        let savedOpenAIDetails = defaults.string(forKey: Keys.lastOpenAIRealtimeErrorDetails) ?? ""
+        let diagnostics = OpenAIRealtimeDiagnostics(summary: savedOpenAISummary, details: savedOpenAIDetails)
+        return diagnostics.isEmpty ? nil : diagnostics
+    }
+
+    private func saveSettings(reason: SettingsSaveReason, debounced: Bool = false) {
+        let snapshot = currentSettingsSnapshot()
+        if debounced {
+            environment.settings.saveDebounced(snapshot, reason: reason)
+        } else {
+            environment.settings.save(snapshot, reason: reason)
+        }
+    }
+
+    private func saveCredentials(debounced: Bool = false) {
+        let credentials = ProviderCredentials(
+            openAIAPIKey: apiKey,
+            geminiAPIKey: geminiAPIKey,
+            anthropicAPIKey: anthropicAPIKey
+        )
+        if debounced {
+            environment.secrets.saveCredentialsDebounced(credentials)
+        } else {
+            environment.secrets.saveCredentials(credentials)
+        }
+    }
+
+    private func currentSettingsSnapshot() -> AppSettingsSnapshot {
+        AppSettingsSnapshot(
+            autoImproveMode: autoImproveMode,
+            recordingTriggerMode: recordingTriggerMode,
+            recordingHotKey: recordingHotKey,
+            transcriptionMode: transcriptionMode,
+            improvementMode: improvementMode,
+            thresholdWords: thresholdWords,
+            modificationStrength: modificationStrength,
+            outputMode: outputMode,
+            ollama: OllamaSettings(
+                baseURL: ollamaBaseURL,
+                model: ollamaModel
+            ),
+            preferredMicrophoneID: preferredMicrophoneID,
+            completion: GlobalCompletionSettings(
+                copyFinishedTextToClipboard: copyFinishedTextToClipboard,
+                autoSubmitDetectedTextFields: autoSubmitDetectedTextFields
+            ),
+            appDeliveryRules: appDeliveryRules
+        )
     }
 
     private func copyToPasteboard(_ text: String) {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(text, forType: .string)
+        environment.delivery.copy(text)
     }
 
     private func wordCount(_ text: String) -> Int {
@@ -959,22 +1762,42 @@ final class AppState: ObservableObject {
     }
 }
 
+private extension RecorderPhase {
+    var canCancelActiveRecording: Bool {
+        switch self {
+        case .starting, .recording:
+            return true
+        case .idle, .transcribing, .improving, .delivering, .ready, .failed:
+            return false
+        }
+    }
+}
+
 private final class OpenAIRealtimeAudioSink {
     private let lock = NSLock()
-    private let maxPendingSeconds = 15.0
+    private let maxPendingAudioBytes = 8 * 1024 * 1024
     private var transcriber: OpenAIRealtimeTranscriber?
     private var shouldBufferPendingAudio = false
     private var isReplayingPendingAudio = false
-    private var pendingBuffers: [AVAudioPCMBuffer] = []
-    private var pendingFrameCount: AVAudioFramePosition = 0
+    private var pendingBuffers: BoundedAudioQueue<AVAudioPCMBuffer>
+    private var firstPendingBufferAt: Date?
+    private var maxReplayLagMs: Double = 0
+
+    init() {
+        pendingBuffers = BoundedAudioQueue<AVAudioPCMBuffer>(
+            maxBytes: maxPendingAudioBytes,
+            byteCount: Self.byteCount
+        )
+    }
 
     func reset(bufferPendingAudio: Bool) {
         lock.lock()
         transcriber = nil
         shouldBufferPendingAudio = bufferPendingAudio
         isReplayingPendingAudio = false
-        pendingBuffers.removeAll()
-        pendingFrameCount = 0
+        pendingBuffers.reset()
+        firstPendingBufferAt = nil
+        maxReplayLagMs = 0
         lock.unlock()
     }
 
@@ -984,27 +1807,32 @@ private final class OpenAIRealtimeAudioSink {
         self.transcriber = transcriber
         shouldBufferPendingAudio = false
         isReplayingPendingAudio = true
-        var buffersToReplay = pendingBuffers
-        pendingBuffers.removeAll()
-        pendingFrameCount = 0
+        var buffersToReplay = pendingBuffers.snapshot()
+        var replayBaseLagMs = firstPendingBufferAt.map { Date().timeIntervalSince($0) * 1000 } ?? 0
+        pendingBuffers.removeAll(keepingCapacity: true)
+        firstPendingBufferAt = nil
         lock.unlock()
 
         var replayedBufferCount = 0
         while true {
             for buffer in buffersToReplay {
+                recordReplayLag(for: buffer, baseLagMs: replayBaseLagMs)
                 transcriber.appendAudioBuffer(buffer)
             }
             replayedBufferCount += buffersToReplay.count
 
             lock.lock()
             if pendingBuffers.isEmpty {
+                let diagnostics = diagnosticsLinesLocked(replayedBufferCount: replayedBufferCount)
                 isReplayingPendingAudio = false
                 lock.unlock()
+                transcriber.recordCaptureDiagnostics(diagnostics)
                 break
             }
-            buffersToReplay = pendingBuffers
-            pendingBuffers.removeAll()
-            pendingFrameCount = 0
+            buffersToReplay = pendingBuffers.snapshot()
+            replayBaseLagMs = firstPendingBufferAt.map { Date().timeIntervalSince($0) * 1000 } ?? 0
+            pendingBuffers.removeAll(keepingCapacity: true)
+            firstPendingBufferAt = nil
             lock.unlock()
         }
 
@@ -1025,16 +1853,22 @@ private final class OpenAIRealtimeAudioSink {
             return
         }
 
+        if pendingBuffers.isEmpty {
+            firstPendingBufferAt = Date()
+        }
+        let droppedBefore = pendingBuffers.droppedElements
         pendingBuffers.append(copiedBuffer)
-        pendingFrameCount += AVAudioFramePosition(copiedBuffer.frameLength)
-        trimPendingBuffersIfNeeded(sampleRate: copiedBuffer.format.sampleRate)
+        if pendingBuffers.droppedElements > droppedBefore {
+            firstPendingBufferAt = Date()
+        }
         lock.unlock()
     }
 
     func discardPendingAudio() {
         lock.lock()
-        pendingBuffers.removeAll()
-        pendingFrameCount = 0
+        pendingBuffers.reset()
+        firstPendingBufferAt = nil
+        maxReplayLagMs = 0
         shouldBufferPendingAudio = false
         isReplayingPendingAudio = false
         lock.unlock()
@@ -1045,17 +1879,37 @@ private final class OpenAIRealtimeAudioSink {
         transcriber = nil
         shouldBufferPendingAudio = false
         isReplayingPendingAudio = false
-        pendingBuffers.removeAll()
-        pendingFrameCount = 0
+        pendingBuffers.reset()
+        firstPendingBufferAt = nil
+        maxReplayLagMs = 0
         lock.unlock()
     }
 
-    private func trimPendingBuffersIfNeeded(sampleRate: Double) {
+    private func recordReplayLag(for buffer: AVAudioPCMBuffer, baseLagMs: Double) {
+        let sampleRate = buffer.format.sampleRate
         guard sampleRate > 0 else { return }
-        let maxPendingFrames = AVAudioFramePosition(sampleRate * maxPendingSeconds)
-        while pendingFrameCount > maxPendingFrames, !pendingBuffers.isEmpty {
-            let removed = pendingBuffers.removeFirst()
-            pendingFrameCount -= AVAudioFramePosition(removed.frameLength)
+        let durationMs = Double(buffer.frameLength) / sampleRate * 1000
+        lock.lock()
+        maxReplayLagMs = max(maxReplayLagMs, baseLagMs + durationMs)
+        lock.unlock()
+    }
+
+    private func diagnosticsLinesLocked(replayedBufferCount: Int) -> [String] {
+        var lines: [String] = []
+        lines.append("Realtime pending buffers replayed: \(replayedBufferCount)")
+        lines.append("Realtime pending queue max bytes: \(pendingBuffers.maxObservedPendingBytes)")
+        lines.append("Realtime pending queue dropped buffers: \(pendingBuffers.droppedElements)")
+        lines.append("Realtime pending queue dropped bytes: \(pendingBuffers.droppedBytes)")
+        lines.append("Realtime replay lag max: \(String(format: "%.1f", maxReplayLagMs))ms")
+        return lines
+    }
+
+    private static func byteCount(for buffer: AVAudioPCMBuffer) -> Int {
+        let buffers = UnsafeMutableAudioBufferListPointer(
+            UnsafeMutablePointer(mutating: buffer.audioBufferList)
+        )
+        return buffers.reduce(0) { total, audioBuffer in
+            total + Int(audioBuffer.mDataByteSize)
         }
     }
 
@@ -1081,5 +1935,38 @@ private final class OpenAIRealtimeAudioSink {
         }
 
         return copiedBuffer
+    }
+}
+
+private enum MicrophoneUseLock {
+    private static var directoryURL: URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first ??
+            FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support", isDirectory: true)
+        return base.appendingPathComponent("AutoImproveRecorder", isDirectory: true)
+    }
+
+    static var url: URL {
+        directoryURL.appendingPathComponent("mic-active.lock")
+    }
+
+    static func write(reason: String) {
+        let body = """
+        pid=\(ProcessInfo.processInfo.processIdentifier)
+        reason=\(reason)
+        updatedAt=\(ISO8601DateFormatter().string(from: Date()))
+        """
+        let fileManager = FileManager.default
+        try? fileManager.createDirectory(
+            at: directoryURL,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        try? fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directoryURL.path)
+        try? body.write(to: url, atomically: true, encoding: .utf8)
+        try? fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+    }
+
+    static func clear() {
+        try? FileManager.default.removeItem(at: url)
     }
 }

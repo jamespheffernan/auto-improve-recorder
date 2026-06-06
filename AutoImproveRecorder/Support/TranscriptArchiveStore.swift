@@ -7,6 +7,29 @@ struct TranscriptArchiveDraft: Equatable {
     let audioURL: URL
 }
 
+struct ActiveTranscriptArchiveDraftState: Equatable {
+    private(set) var draft: TranscriptArchiveDraft?
+    private(set) var isCommitted = false
+
+    mutating func replace(with draft: TranscriptArchiveDraft?) {
+        self.draft = draft
+        isCommitted = false
+    }
+
+    mutating func markCommittedIfCurrent(id: String) {
+        guard draft?.id == id else { return }
+        isCommitted = true
+    }
+
+    mutating func takeDraftToDelete() -> TranscriptArchiveDraft? {
+        defer {
+            draft = nil
+            isCommitted = false
+        }
+        return isCommitted ? nil : draft
+    }
+}
+
 struct TranscriptArchiveRecord: Codable, Equatable {
     var id: String
     var createdAt: Date
@@ -23,6 +46,63 @@ struct TranscriptArchiveRecord: Codable, Equatable {
     var cleanupMode: String
     var autoImproveMode: String
     var thresholdWords: Int
+    var dictionarySnapshot: String
+    var microphonePreferenceID: String
+    var microphoneResolvedID: String?
+    var microphoneResolvedName: String?
+    var microphoneUsedFallback: Bool
+    var microphoneFallbackReason: String?
+}
+
+extension TranscriptArchiveRecord {
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case createdAt
+        case updatedAt
+        case audioPath
+        case rawTranscript
+        case cleanedTranscript
+        case finalTranscript
+        case improveFailed
+        case message
+        case transcriptionMode
+        case transcriptionEngine
+        case improvementMode
+        case cleanupMode
+        case autoImproveMode
+        case thresholdWords
+        case dictionarySnapshot
+        case microphonePreferenceID
+        case microphoneResolvedID
+        case microphoneResolvedName
+        case microphoneUsedFallback
+        case microphoneFallbackReason
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        updatedAt = try container.decode(Date.self, forKey: .updatedAt)
+        audioPath = try container.decode(String.self, forKey: .audioPath)
+        rawTranscript = try container.decode(String.self, forKey: .rawTranscript)
+        cleanedTranscript = try container.decode(String.self, forKey: .cleanedTranscript)
+        finalTranscript = try container.decode(String.self, forKey: .finalTranscript)
+        improveFailed = try container.decode(Bool.self, forKey: .improveFailed)
+        message = try container.decodeIfPresent(String.self, forKey: .message)
+        transcriptionMode = try container.decode(String.self, forKey: .transcriptionMode)
+        transcriptionEngine = try container.decodeIfPresent(String.self, forKey: .transcriptionEngine)
+        improvementMode = try container.decode(String.self, forKey: .improvementMode)
+        cleanupMode = try container.decode(String.self, forKey: .cleanupMode)
+        autoImproveMode = try container.decode(String.self, forKey: .autoImproveMode)
+        thresholdWords = try container.decode(Int.self, forKey: .thresholdWords)
+        dictionarySnapshot = try container.decodeIfPresent(String.self, forKey: .dictionarySnapshot) ?? ""
+        microphonePreferenceID = try container.decodeIfPresent(String.self, forKey: .microphonePreferenceID) ?? ""
+        microphoneResolvedID = try container.decodeIfPresent(String.self, forKey: .microphoneResolvedID)
+        microphoneResolvedName = try container.decodeIfPresent(String.self, forKey: .microphoneResolvedName)
+        microphoneUsedFallback = try container.decodeIfPresent(Bool.self, forKey: .microphoneUsedFallback) ?? false
+        microphoneFallbackReason = try container.decodeIfPresent(String.self, forKey: .microphoneFallbackReason)
+    }
 }
 
 enum TranscriptArchiveStore {
@@ -59,7 +139,8 @@ enum TranscriptArchiveStore {
             .appendingPathComponent(recordFileName)
     }
 
-    static func save(_ record: TranscriptArchiveRecord) {
+    @discardableResult
+    static func save(_ record: TranscriptArchiveRecord) -> Bool {
         do {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -72,8 +153,10 @@ enum TranscriptArchiveStore {
             )
             try data.write(to: recordURL, options: .atomic)
             appendIndex(record)
+            return true
         } catch {
             NSLog("TranscriptArchiveStore save failed: \(error.localizedDescription)")
+            return false
         }
     }
 

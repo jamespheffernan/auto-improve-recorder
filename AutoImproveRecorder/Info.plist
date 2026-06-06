@@ -28,6 +28,24 @@
 	<string>Auto Improve Recorder needs automation permission only if a future paste method targets another app directly.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Auto Improve Recorder needs microphone access to record audio for local transcription.</string>
+	<key>NSServices</key>
+	<array>
+		<dict>
+			<key>NSMenuItem</key>
+			<dict>
+				<key>default</key>
+				<string>Add to Auto Improve Recorder Dictionary</string>
+			</dict>
+			<key>NSMessage</key>
+			<string>addToAutoImproveRecorderDictionary</string>
+			<key>NSPortName</key>
+			<string>AutoImproveRecorder</string>
+			<key>NSSendTypes</key>
+			<array>
+				<string>NSStringPboardType</string>
+			</array>
+		</dict>
+	</array>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Auto Improve Recorder uses speech recognition to transcribe recordings locally on this Mac when Apple Speech is selected.</string>
 	<key>NSSupportsAutomaticGraphicsSwitching</key>
