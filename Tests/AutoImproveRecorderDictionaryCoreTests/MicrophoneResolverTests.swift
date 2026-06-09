@@ -141,9 +141,123 @@ final class MicrophoneResolverTests: XCTestCase {
         }
     }
 
+    func testPinningPolicyTargetsAvailablePreferredConcreteDevice() {
+        let defaultDevice = makeDevice(
+            id: "headphones",
+            name: "Bluetooth Headphones",
+            coreAudioDeviceID: 41,
+            isSystemDefault: true
+        )
+        let preferredDevice = makeDevice(
+            id: "boya",
+            name: "BOYA mini 2",
+            coreAudioDeviceID: 42
+        )
+
+        let target = MicrophoneDefaultInputPinningPolicy.targetDeviceToPin(
+            preferences: .fromPreferredMicrophoneID("boya"),
+            devices: [.systemDefault, defaultDevice, preferredDevice],
+            quarantinedUntil: [:],
+            now: Date(timeIntervalSince1970: 1_000)
+        )
+
+        XCTAssertEqual(target?.id, "boya")
+    }
+
+    func testPinningPolicyDoesNothingForSystemDefaultPreference() {
+        let preferredDevice = makeDevice(
+            id: "boya",
+            name: "BOYA mini 2",
+            coreAudioDeviceID: 42
+        )
+
+        let target = MicrophoneDefaultInputPinningPolicy.targetDeviceToPin(
+            preferences: .fromPreferredMicrophoneID(""),
+            devices: [.systemDefault, preferredDevice],
+            quarantinedUntil: [:],
+            now: Date(timeIntervalSince1970: 1_000)
+        )
+
+        XCTAssertNil(target)
+    }
+
+    func testPinningPolicyDoesNothingWhenPreferredIsAlreadySystemDefault() {
+        let preferredDevice = makeDevice(
+            id: "boya",
+            name: "BOYA mini 2",
+            coreAudioDeviceID: 42,
+            isSystemDefault: true
+        )
+
+        let target = MicrophoneDefaultInputPinningPolicy.targetDeviceToPin(
+            preferences: .fromPreferredMicrophoneID("boya"),
+            devices: [.systemDefault, preferredDevice],
+            quarantinedUntil: [:],
+            now: Date(timeIntervalSince1970: 1_000)
+        )
+
+        XCTAssertNil(target)
+    }
+
+    func testPinningPolicyDoesNothingWhenPreferredFallsBack() {
+        let fallbackDevice = makeDevice(
+            id: "built-in",
+            name: "Built-in",
+            coreAudioDeviceID: 43,
+            isSystemDefault: true
+        )
+
+        let target = MicrophoneDefaultInputPinningPolicy.targetDeviceToPin(
+            preferences: .fromPreferredMicrophoneID("boya"),
+            devices: [.systemDefault, fallbackDevice],
+            quarantinedUntil: [:],
+            now: Date(timeIntervalSince1970: 1_000)
+        )
+
+        XCTAssertNil(target)
+    }
+
+    func testPinningPolicyDoesNothingWithoutCoreAudioDeviceID() {
+        let preferredDevice = makeDevice(id: "boya", name: "BOYA mini 2")
+
+        let target = MicrophoneDefaultInputPinningPolicy.targetDeviceToPin(
+            preferences: .fromPreferredMicrophoneID("boya"),
+            devices: [.systemDefault, preferredDevice],
+            quarantinedUntil: [:],
+            now: Date(timeIntervalSince1970: 1_000)
+        )
+
+        XCTAssertNil(target)
+    }
+
+    func testPinningPolicyDoesNothingWhilePreferredIsQuarantined() {
+        let preferredDevice = makeDevice(
+            id: "boya",
+            name: "BOYA mini 2",
+            coreAudioDeviceID: 42
+        )
+        let fallbackDevice = makeDevice(
+            id: "built-in",
+            name: "Built-in",
+            coreAudioDeviceID: 43,
+            isSystemDefault: true
+        )
+        let now = Date(timeIntervalSince1970: 1_000)
+
+        let target = MicrophoneDefaultInputPinningPolicy.targetDeviceToPin(
+            preferences: .fromPreferredMicrophoneID("boya"),
+            devices: [.systemDefault, preferredDevice, fallbackDevice],
+            quarantinedUntil: ["boya": Date(timeIntervalSince1970: 1_010)],
+            now: now
+        )
+
+        XCTAssertNil(target)
+    }
+
     private func makeDevice(
         id: String,
         name: String,
+        coreAudioDeviceID: AIRAudioObjectID? = nil,
         isConnected: Bool = true,
         isInputCapable: Bool = true,
         isSystemDefault: Bool = false
@@ -151,7 +265,7 @@ final class MicrophoneResolverTests: XCTestCase {
         MicrophoneDevice(
             id: id,
             name: name,
-            coreAudioDeviceID: nil,
+            coreAudioDeviceID: coreAudioDeviceID,
             transportType: nil,
             isConnected: isConnected,
             isInputCapable: isInputCapable,

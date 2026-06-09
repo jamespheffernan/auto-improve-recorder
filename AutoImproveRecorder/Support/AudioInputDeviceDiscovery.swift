@@ -47,6 +47,17 @@ enum AudioInputDeviceDiscovery {
 }
 
 #if os(macOS)
+enum AudioInputDeviceDiscoveryError: LocalizedError {
+    case defaultInputChangeFailed(OSStatus)
+
+    var errorDescription: String? {
+        switch self {
+        case .defaultInputChangeFailed(let status):
+            return "Could not change the macOS default input device. CoreAudio returned \(status)."
+        }
+    }
+}
+
 extension AudioInputDeviceDiscovery {
     static func defaultInputDeviceID() -> AudioObjectID? {
         var address = AudioObjectPropertyAddress(
@@ -69,6 +80,27 @@ extension AudioInputDeviceDiscovery {
         }
 
         return deviceID
+    }
+
+    static func setDefaultInputDeviceID(_ deviceID: AudioObjectID) throws {
+        var mutableDeviceID = deviceID
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        let status = AudioObjectSetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject),
+            &address,
+            0,
+            nil,
+            UInt32(MemoryLayout<AudioObjectID>.size),
+            &mutableDeviceID
+        )
+
+        guard status == noErr else {
+            throw AudioInputDeviceDiscoveryError.defaultInputChangeFailed(status)
+        }
     }
 }
 

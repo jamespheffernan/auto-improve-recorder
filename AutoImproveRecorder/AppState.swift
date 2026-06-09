@@ -92,6 +92,7 @@ final class AppState: ObservableObject {
             saveSettings(reason: .general)
             availableMicrophones = microphonesIncludingSavedPreference(availableMicrophones)
             updateResolvedMicrophoneSummary()
+            enforcePreferredMicrophoneDefaultInput(reason: "preference changed")
         }
     }
     @Published var copyFinishedTextToClipboard: Bool = true {
@@ -199,6 +200,7 @@ final class AppState: ObservableObject {
         ollamaBaseURL = settings.ollama.baseURL
         ollamaModel = settings.ollama.model
         refreshMicrophones()
+        enforcePreferredMicrophoneDefaultInput(reason: "app launch")
         microphoneDeviceObserver = MicrophoneDeviceObserver { [weak self] in
             Task { @MainActor [weak self] in
                 self?.handleMicrophoneDevicesChanged()
@@ -249,6 +251,7 @@ final class AppState: ObservableObject {
 
     private func handleMicrophoneDevicesChanged() {
         refreshMicrophones()
+        enforcePreferredMicrophoneDefaultInput(reason: "device route changed")
     }
 
     private func microphonesIncludingSavedPreference(_ discovered: [AudioInputDevice]) -> [AudioInputDevice] {
@@ -297,6 +300,38 @@ final class AppState: ObservableObject {
         }
 
         return "Using \(resolution.device.name)."
+    }
+
+    private func enforcePreferredMicrophoneDefaultInput(reason: String) {
+        #if os(macOS)
+        let preferences = MicrophonePreferences.fromPreferredMicrophoneID(preferredMicrophoneID)
+        guard let target = MicrophoneDefaultInputPinningPolicy.targetDeviceToPin(
+            preferences: preferences,
+            devices: availableMicrophones,
+            quarantinedUntil: quarantinedMicrophoneIDs,
+            now: Date()
+        ),
+              let coreAudioDeviceID = target.coreAudioDeviceID else {
+            return
+        }
+
+        do {
+            try AudioInputDeviceDiscovery.setDefaultInputDeviceID(coreAudioDeviceID)
+            microphoneDeviceLogger.info(
+                "Pinned macOS default input to preferred microphone id=\(target.id, privacy: .public) name=\(target.name, privacy: .public) coreAudioDeviceID=\(coreAudioDeviceID, privacy: .public) reason=\(reason, privacy: .public)"
+            )
+            availableMicrophones = availableMicrophones.map { device in
+                var updated = device
+                updated.isSystemDefault = device.isSystemDefaultPlaceholder || device.id == target.id
+                return updated
+            }
+            updateResolvedMicrophoneSummary()
+        } catch {
+            microphoneDeviceLogger.error(
+                "Failed to pin macOS default input to preferred microphone id=\(target.id, privacy: .public) name=\(target.name, privacy: .public) coreAudioDeviceID=\(coreAudioDeviceID, privacy: .public) reason=\(reason, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+            )
+        }
+        #endif
     }
 
     func refreshDeliveryRuleCandidateApps() {
@@ -1296,7 +1331,9 @@ final class AppState: ObservableObject {
                 streamingTranscriber: streamingTranscriber,
                 dictionarySnapshot: dictionarySnapshot
             )
-            let transcript = dictionaryStore.applyReplacementRules(to: result.text)
+            let transcript = TranscriptTextNormalizer.normalizeSpokenNumbers(
+                in: dictionaryStore.applyReplacementRules(to: result.text)
+            )
             session.rawTranscript = transcript
             session.improvedText = ""
             session.message = nil

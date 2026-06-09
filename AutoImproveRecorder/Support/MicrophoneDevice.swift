@@ -219,3 +219,28 @@ enum MicrophoneResolver {
         devices.first(where: \.isSystemDefaultPlaceholder) ?? .systemDefault
     }
 }
+
+enum MicrophoneDefaultInputPinningPolicy {
+    static func targetDeviceToPin(
+        preferences: MicrophonePreferences,
+        devices: [MicrophoneDevice],
+        quarantinedUntil: [String: Date],
+        now: Date
+    ) -> MicrophoneDevice? {
+        guard preferences.mode == .preferred,
+              let resolution = try? MicrophoneResolver.resolve(
+                preferences: preferences,
+                devices: devices,
+                quarantinedUntil: quarantinedUntil,
+                now: now
+              ),
+              !resolution.usedFallback,
+              !resolution.device.isSystemDefaultPlaceholder,
+              resolution.device.coreAudioDeviceID != nil,
+              !resolution.device.isSystemDefault else {
+            return nil
+        }
+
+        return resolution.device
+    }
+}

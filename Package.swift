@@ -31,6 +31,7 @@ let package = Package(
                 "MicrophoneDevice.swift",
                 "MicrophoneHealthMonitor.swift",
                 "RealtimeDiagnosticsRedactor.swift",
+                "TranscriptTextNormalizer.swift",
                 "TranscriptArchiveStore.swift",
                 "TranscriptArchiveClient.swift"
             ]

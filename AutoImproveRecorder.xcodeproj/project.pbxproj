@@ -47,6 +47,7 @@
 		AIRTRIG0000000000000001 /* RecordingTriggerModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRTRIG0000000000000000 /* RecordingTriggerModels.swift */; };
 		AIRTRIG0000000000000003 /* RecordingTriggerController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRTRIG0000000000000002 /* RecordingTriggerController.swift */; };
 		AIRRTRED000000000000001 /* RealtimeDiagnosticsRedactor.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRRTRED000000000000000 /* RealtimeDiagnosticsRedactor.swift */; };
+		AIRTXTNUM00000000000001 /* TranscriptTextNormalizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRTXTNUM00000000000000 /* TranscriptTextNormalizer.swift */; };
 		AIRAR0000000000000000001 /* TranscriptArchiveStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRAR0000000000000000000 /* TranscriptArchiveStore.swift */; };
 		AIRARCHC000000000000001 /* TranscriptArchiveClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRARCHC000000000000000 /* TranscriptArchiveClient.swift */; };
 		AIR000000000000000000001D /* RecorderPillView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR000000000000000000000E /* RecorderPillView.swift */; };
@@ -124,6 +125,7 @@
 		AIRTRIG0000000000000000 /* RecordingTriggerModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingTrigger/RecordingTriggerModels.swift; sourceTree = "<group>"; };
 		AIRTRIG0000000000000002 /* RecordingTriggerController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingTrigger/RecordingTriggerController.swift; sourceTree = "<group>"; };
 		AIRRTRED000000000000000 /* RealtimeDiagnosticsRedactor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimeDiagnosticsRedactor.swift; sourceTree = "<group>"; };
+		AIRTXTNUM00000000000000 /* TranscriptTextNormalizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptTextNormalizer.swift; sourceTree = "<group>"; };
 		AIRAR0000000000000000000 /* TranscriptArchiveStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptArchiveStore.swift; sourceTree = "<group>"; };
 		AIRARCHC000000000000000 /* TranscriptArchiveClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptArchiveClient.swift; sourceTree = "<group>"; };
 		AIR000000000000000000000E /* RecorderPillView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecorderPillView.swift; sourceTree = "<group>"; };
@@ -273,6 +275,7 @@
 				AIRTRIG0000000000000000 /* RecordingTriggerModels.swift */,
 				AIRTRIG0000000000000002 /* RecordingTriggerController.swift */,
 				AIRRTRED000000000000000 /* RealtimeDiagnosticsRedactor.swift */,
+				AIRTXTNUM00000000000000 /* TranscriptTextNormalizer.swift */,
 				AIRAR0000000000000000000 /* TranscriptArchiveStore.swift */,
 				AIRARCHC000000000000000 /* TranscriptArchiveClient.swift */,
 			);
@@ -437,6 +440,7 @@
 				AIRTRIG0000000000000001 /* RecordingTriggerModels.swift in Sources */,
 				AIRTRIG0000000000000003 /* RecordingTriggerController.swift in Sources */,
 				AIRRTRED000000000000001 /* RealtimeDiagnosticsRedactor.swift in Sources */,
+				AIRTXTNUM00000000000001 /* TranscriptTextNormalizer.swift in Sources */,
 				AIRAR0000000000000000001 /* TranscriptArchiveStore.swift in Sources */,
 				AIRARCHC000000000000001 /* TranscriptArchiveClient.swift in Sources */,
 				AIR000000000000000000001D /* RecorderPillView.swift in Sources */,
