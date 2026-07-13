@@ -112,6 +112,7 @@ enum RecordingTriggerState: Equatable {
         keyDown: Bool,
         pressedAt: Date,
         releasedDuringStartupAt: Date?,
+        latchRequested: Bool,
         startupReleaseToken: UUID?
     )
     case recordingHeld(
@@ -155,7 +156,7 @@ enum RecordingTriggerState: Equatable {
     }
 
     var activeStartID: UUID? {
-        if case .starting(let startID, _, _, _, _, _) = self {
+        if case .starting(let startID, _, _, _, _, _, _) = self {
             return startID
         }
         return nil

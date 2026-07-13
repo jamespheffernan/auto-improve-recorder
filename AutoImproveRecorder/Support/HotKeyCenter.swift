@@ -7,6 +7,16 @@ private let recordingHotKeyLogger = Logger(
     category: "HotKeyCapture"
 )
 
+struct WalkieTalkieLatchHotKeyRegistration {
+    let unmodifiedSpaceRegistered: Bool
+    let spaceWhileHoldingTriggerRegistered: Bool
+
+    static let unavailable = WalkieTalkieLatchHotKeyRegistration(
+        unmodifiedSpaceRegistered: false,
+        spaceWhileHoldingTriggerRegistered: false
+    )
+}
+
 final class HotKeyCenter {
     enum Event {
         case recordingPressed(receivedAt: Date, eventID: UInt64, isRepeat: Bool)
@@ -66,10 +76,12 @@ final class HotKeyCenter {
         }
     }
 
-    func registerWalkieTalkieLatchHotKey() {
+    func registerWalkieTalkieLatchHotKey(for recordingHotKey: RecordingHotKey) -> WalkieTalkieLatchHotKeyRegistration {
         installEventHandlerIfNeeded()
+        let triggerModifiers = recordingHotKey.modifiers
+        let unmodifiedSpaceRegistered: Bool
         if walkieTalkieLatchHotKeyRef == nil {
-            RegisterEventHotKey(
+            let status = RegisterEventHotKey(
                 UInt32(kVK_Space),
                 0,
                 walkieTalkieLatchHotKeyID,
@@ -77,17 +89,38 @@ final class HotKeyCenter {
                 0,
                 &walkieTalkieLatchHotKeyRef
             )
+            unmodifiedSpaceRegistered = status == noErr
+            if status != noErr {
+                recordingHotKeyLogger.error("Could not register unmodified Space latch; status=\(status, privacy: .public).")
+            }
+        } else {
+            unmodifiedSpaceRegistered = true
         }
-        if walkieTalkieModifiedLatchHotKeyRef == nil {
-            RegisterEventHotKey(
+
+        let spaceWhileHoldingTriggerRegistered: Bool
+        if triggerModifiers == 0 {
+            spaceWhileHoldingTriggerRegistered = unmodifiedSpaceRegistered
+        } else if walkieTalkieModifiedLatchHotKeyRef == nil {
+            let status = RegisterEventHotKey(
                 UInt32(kVK_Space),
-                RecordingHotKey.hyperModifiers,
+                triggerModifiers,
                 walkieTalkieModifiedLatchHotKeyID,
                 GetApplicationEventTarget(),
                 0,
                 &walkieTalkieModifiedLatchHotKeyRef
             )
+            spaceWhileHoldingTriggerRegistered = status == noErr
+            if status != noErr {
+                recordingHotKeyLogger.error("Could not register Space latch with active trigger modifiers; status=\(status, privacy: .public).")
+            }
+        } else {
+            spaceWhileHoldingTriggerRegistered = true
         }
+
+        return WalkieTalkieLatchHotKeyRegistration(
+            unmodifiedSpaceRegistered: unmodifiedSpaceRegistered,
+            spaceWhileHoldingTriggerRegistered: spaceWhileHoldingTriggerRegistered
+        )
     }
 
     private func installEventHandlerIfNeeded() {
