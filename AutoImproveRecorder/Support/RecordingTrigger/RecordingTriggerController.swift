@@ -91,11 +91,12 @@ final class RecordingTriggerController {
                 keyDown: true,
                 pressedAt: receivedAt,
                 releasedDuringStartupAt: nil,
+                latchRequested: false,
                 startupReleaseToken: nil
             )
             return [.requestStart(startID: startID, source: source, requestedAt: receivedAt)]
 
-        case .starting(let startID, let source, let keyDown, _, _, let token):
+        case .starting(let startID, let source, let keyDown, _, _, let latchRequested, let token):
             guard !keyDown else { return [.ignore(reason: .repeatedKeyDown)] }
             state = .starting(
                 startID: startID,
@@ -103,6 +104,7 @@ final class RecordingTriggerController {
                 keyDown: true,
                 pressedAt: receivedAt,
                 releasedDuringStartupAt: nil,
+                latchRequested: latchRequested,
                 startupReleaseToken: nil
             )
             return [.cancelTimer(kind: .startupReleaseGrace, token: token)]
@@ -155,7 +157,7 @@ final class RecordingTriggerController {
         case .idle:
             return [.ignore(reason: .releaseWithoutActiveRecording)]
 
-        case .starting(let startID, let source, _, let pressedAt, _, let token):
+        case .starting(let startID, let source, _, let pressedAt, _, let latchRequested, let token):
             guard behaviorProvider() == .holdToTalk else {
                 state = .starting(
                     startID: startID,
@@ -163,6 +165,7 @@ final class RecordingTriggerController {
                     keyDown: false,
                     pressedAt: pressedAt,
                     releasedDuringStartupAt: nil,
+                    latchRequested: latchRequested,
                     startupReleaseToken: token
                 )
                 return []
@@ -175,6 +178,7 @@ final class RecordingTriggerController {
                 keyDown: false,
                 pressedAt: pressedAt,
                 releasedDuringStartupAt: receivedAt,
+                latchRequested: latchRequested,
                 startupReleaseToken: releaseToken
             )
             return [
@@ -248,7 +252,7 @@ final class RecordingTriggerController {
         switch state {
         case .idle, .processingBusy:
             return []
-        case .starting(_, _, _, _, _, let token):
+        case .starting(_, _, _, _, _, _, let token):
             state = .idle(clean: true)
             return [
                 .cancelTimer(kind: .startupReleaseGrace, token: token),
@@ -284,6 +288,27 @@ final class RecordingTriggerController {
         guard behaviorProvider() == .holdToTalk else { return [] }
 
         switch state {
+        case .starting(
+            let startID,
+            let source,
+            let keyDown,
+            let pressedAt,
+            let releasedAt,
+            let latchRequested,
+            let startupReleaseToken
+        ):
+            guard !latchRequested else { return [] }
+            state = .starting(
+                startID: startID,
+                startedFrom: source,
+                keyDown: keyDown,
+                pressedAt: pressedAt,
+                releasedDuringStartupAt: releasedAt,
+                latchRequested: true,
+                startupReleaseToken: startupReleaseToken
+            )
+            return [.showStatus("Recording will latch when ready.")]
+
         case .recordingHeld(let recordingID, _, let beganAt, _, let lostReleaseToken):
             state = .recordingLatched(
                 recordingID: recordingID,
@@ -312,7 +337,15 @@ final class RecordingTriggerController {
     }
 
     private func handleRecordingBegan(startID: UUID, recordingID: UUID, beganAt: Date) -> [RecordingTriggerCommand] {
-        guard case .starting(let currentStartID, _, let keyDown, let pressedAt, let releasedAt, let startupReleaseToken) = state,
+        guard case .starting(
+            let currentStartID,
+            _,
+            let keyDown,
+            let pressedAt,
+            let releasedAt,
+            let latchRequested,
+            let startupReleaseToken
+        ) = state,
               currentStartID == startID else {
             return [.ignore(reason: .staleLifecycleEvent)]
         }
@@ -320,6 +353,19 @@ final class RecordingTriggerController {
         if behaviorProvider() == .toggle {
             state = .recordingLatched(recordingID: recordingID, beganAt: beganAt, latchSource: .latchHotKey)
             return [.enterLatch(source: .latchHotKey)]
+        }
+
+        if latchRequested {
+            state = .recordingLatched(
+                recordingID: recordingID,
+                beganAt: beganAt,
+                latchSource: .latchHotKey
+            )
+            return [
+                .cancelTimer(kind: .startupReleaseGrace, token: startupReleaseToken),
+                .enterLatch(source: .latchHotKey),
+                .showStatus("Recording latched.")
+            ]
         }
 
         if let releasedAt {
@@ -402,7 +448,7 @@ final class RecordingTriggerController {
                 )
             ] + (shouldTranscribe ? [] : [.showStatus("Recording discarded.")])
 
-        case (.startupReleaseGrace, .starting(_, _, _, _, _, let startupReleaseToken)):
+        case (.startupReleaseGrace, .starting(_, _, _, _, _, _, let startupReleaseToken)):
             guard startupReleaseToken == token else { return [.ignore(reason: .staleTimer)] }
             return []
 

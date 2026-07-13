@@ -116,7 +116,7 @@ final class AppState: ObservableObject {
     var unregisterRecordingHotKey: (() -> Void)?
     var registerCancelHotKey: (() -> Void)?
     var unregisterCancelHotKey: (() -> Void)?
-    var registerWalkieTalkieLatchHotKey: (() -> Void)?
+    var registerWalkieTalkieLatchHotKey: ((RecordingHotKey) -> WalkieTalkieLatchHotKeyRegistration)?
     var unregisterWalkieTalkieLatchHotKey: (() -> Void)?
     var showProcessingSignal: ((ProcessingVisualState) -> Void)?
     var flashReadySignal: ((ProcessingVisualState) -> Void)?
@@ -127,6 +127,7 @@ final class AppState: ObservableObject {
     private lazy var recordingTriggerController = RecordingTriggerController { [weak self] in
         self?.recordingTriggerBehavior ?? .holdToTalk
     }
+    private var activeSpaceLatchRegistrationFailed = false
     private let realtimeAudioSink = OpenAIRealtimeAudioSink()
     private var activeStreamingTranscriber: OpenAIRealtimeTranscriber?
     private var activeRealtimeStartupTask: Task<Void, Never>?
@@ -772,13 +773,20 @@ final class AppState: ObservableObject {
         beginMicrophoneUseLock(reason: "starting")
         registerCancelHotKey?()
         if recordingTriggerBehavior == .holdToTalk {
-            registerWalkieTalkieLatchHotKey?()
+            let registration = registerWalkieTalkieLatchHotKey?(recordingHotKey) ?? .unavailable
+            activeSpaceLatchRegistrationFailed = triggerManaged
+                ? !registration.spaceWhileHoldingTriggerRegistered
+                : !registration.unmodifiedSpaceRegistered
+        } else {
+            activeSpaceLatchRegistrationFailed = false
         }
         isStartingRecording = true
         recordingStartedAt = nil
         phase = .starting
         processingVisualState = .starting
-        statusMessage = "Opening microphone."
+        statusMessage = activeSpaceLatchRegistrationFailed
+            ? "Opening microphone. Space latch unavailable; hold to talk for this recording."
+            : "Opening microphone."
         showProcessingSignal?(.starting)
         logRecordingStartup("start requested", requestedAt: requestedAt)
         Task { await startRecordingFlow(startID: startID, requestedAt: requestedAt) }
@@ -1040,6 +1048,11 @@ final class AppState: ObservableObject {
                 handleRecordingTriggerEvent(.externalRecordingBegan(recordingID: recordingID, beganAt: beganAt))
             }
             guard case .recording = phase else { return }
+            if activeSpaceLatchRegistrationFailed &&
+                recordingTriggerBehavior == .holdToTalk &&
+                !walkieTalkieIsLatchedForDisplay {
+                statusMessage = "Space latch unavailable; keep holding to record."
+            }
             showProcessingSignal?(.recording)
             logRecordingStartup("audio engine started and recording UI shown", requestedAt: requestedAt)
 

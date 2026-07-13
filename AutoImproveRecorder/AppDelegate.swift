@@ -22,7 +22,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         state.unregisterRecordingHotKey = { [weak self] in self?.hotKeyCenter.unregisterRecordingHotKey() }
         state.registerCancelHotKey = { [weak self] in self?.hotKeyCenter.registerCancelHotKey() }
         state.unregisterCancelHotKey = { [weak self] in self?.hotKeyCenter.unregisterCancelHotKey() }
-        state.registerWalkieTalkieLatchHotKey = { [weak self] in self?.hotKeyCenter.registerWalkieTalkieLatchHotKey() }
+        state.registerWalkieTalkieLatchHotKey = { [weak self] recordingHotKey in
+            self?.hotKeyCenter.registerWalkieTalkieLatchHotKey(for: recordingHotKey) ?? .unavailable
+        }
         state.unregisterWalkieTalkieLatchHotKey = { [weak self] in self?.hotKeyCenter.unregisterWalkieTalkieLatchHotKey() }
         state.showProcessingSignal = { [weak self] visualState in
             self?.edgeGlowController.showProcessing(visualState) {
