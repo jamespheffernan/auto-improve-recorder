@@ -25,6 +25,7 @@
 		AIRAUD000000000000000009 /* AudioCaptureFanout.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRAUD000000000000000008 /* AudioCaptureFanout.swift */; };
 		AIR0000000000000000000015 /* TranscriptionEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR0000000000000000000006 /* TranscriptionEngine.swift */; };
 		AIR0000000000000000000016 /* ParakeetTranscriber.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR0000000000000000000007 /* ParakeetTranscriber.swift */; };
+		AIR00000000000000000000F2 /* ParakeetCAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR00000000000000000000F1 /* ParakeetCAPI.swift */; };
 		AIR0000000000000000000017 /* ImproveEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR0000000000000000000008 /* ImproveEngine.swift */; };
 		AIR0000000000000000000018 /* OpenAIImproveEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR0000000000000000000009 /* OpenAIImproveEngine.swift */; };
 		AIR0000000000000000000019 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR000000000000000000000A /* KeychainStore.swift */; };
@@ -104,6 +105,7 @@
 		AIRAUD000000000000000008 /* AudioCaptureFanout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioCaptureFanout.swift; sourceTree = "<group>"; };
 		AIR0000000000000000000006 /* TranscriptionEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptionEngine.swift; sourceTree = "<group>"; };
 		AIR0000000000000000000007 /* ParakeetTranscriber.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ParakeetTranscriber.swift; sourceTree = "<group>"; };
+		AIR00000000000000000000F1 /* ParakeetCAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ParakeetCAPI.swift; sourceTree = "<group>"; };
 		AIR0000000000000000000008 /* ImproveEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImproveEngine.swift; sourceTree = "<group>"; };
 		AIR0000000000000000000009 /* OpenAIImproveEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAIImproveEngine.swift; sourceTree = "<group>"; };
 		AIR000000000000000000000A /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
@@ -230,6 +232,7 @@
 			children = (
 				AIR0000000000000000000006 /* TranscriptionEngine.swift */,
 				AIR0000000000000000000007 /* ParakeetTranscriber.swift */,
+				AIR00000000000000000000F1 /* ParakeetCAPI.swift */,
 				AIR0000000000000000000008 /* ImproveEngine.swift */,
 				AIR0000000000000000000009 /* OpenAIImproveEngine.swift */,
 				AIR000000000000000000002D /* AlternativeImproveEngines.swift */,
@@ -413,6 +416,7 @@
 				AIRAUD000000000000000009 /* AudioCaptureFanout.swift in Sources */,
 				AIR0000000000000000000015 /* TranscriptionEngine.swift in Sources */,
 				AIR0000000000000000000016 /* ParakeetTranscriber.swift in Sources */,
+				AIR00000000000000000000F2 /* ParakeetCAPI.swift in Sources */,
 				AIR0000000000000000000017 /* ImproveEngine.swift in Sources */,
 				AIR0000000000000000000018 /* OpenAIImproveEngine.swift in Sources */,
 				AIR000000000000000000002C /* AlternativeImproveEngines.swift in Sources */,

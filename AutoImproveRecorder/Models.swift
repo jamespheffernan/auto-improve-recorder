@@ -533,6 +533,8 @@ enum TranscriptionMode: String, CaseIterable, Identifiable, Codable {
     case localWhisper
     case localParakeetCppFast
     case localParakeetCppRecommended
+    case localParakeetCppResident
+    case localParakeetStreaming
     case appleLocal
     case openAIAPI
     case fastest
@@ -547,6 +549,10 @@ enum TranscriptionMode: String, CaseIterable, Identifiable, Codable {
             return "Parakeet.cpp Fast"
         case .localParakeetCppRecommended:
             return "Parakeet.cpp Recommended"
+        case .localParakeetCppResident:
+            return "Parakeet.cpp Resident"
+        case .localParakeetStreaming:
+            return "Parakeet Live (resident)"
         case .appleLocal:
             return "Apple Speech"
         case .openAIAPI:

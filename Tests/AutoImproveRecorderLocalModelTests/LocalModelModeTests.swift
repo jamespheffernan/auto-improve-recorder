@@ -6,6 +6,9 @@ final class LocalModelModeTests: XCTestCase {
         XCTAssertEqual(LocalModelPreset.recommended.transcriptionModeRawValue, "localParakeetCppRecommended")
         XCTAssertNil(LocalModelPreset.recommended.improvementModeRawValue)
 
+        XCTAssertEqual(LocalModelPreset.resident.transcriptionModeRawValue, "localParakeetCppResident")
+        XCTAssertNil(LocalModelPreset.resident.improvementModeRawValue)
+
         XCTAssertEqual(LocalModelPreset.fast.transcriptionModeRawValue, "localParakeetCppFast")
         XCTAssertNil(LocalModelPreset.fast.improvementModeRawValue)
 
