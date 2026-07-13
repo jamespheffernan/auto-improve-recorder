@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Wave → Stage Transition Lab</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="lab">
+      <header class="lab-header">
+        <div>
+          <p class="eyebrow">AutoImproveRecorder</p>
+          <h1>Wave&nbsp;→&nbsp;Stage transition lab</h1>
+        </div>
+        <p class="readout">
+          <span id="phase" class="phase">Recording</span>
+          <span id="tau" class="tau">0&nbsp;ms</span>
+        </p>
+      </header>
+
+      <section class="stage" aria-label="Pill series">
+        <div class="baseline" aria-hidden="true"></div>
+        <div class="pills" id="pills"></div>
+        <div class="stage-caption" aria-hidden="true">
+          <span>recording waveform</span>
+          <span>the handoff</span>
+          <span>settled stage</span>
+        </div>
+      </section>
+
+      <section class="scrubber">
+        <input
+          type="range"
+          id="scrub"
+          min="0"
+          max="1000"
+          value="458"
+          step="1"
+          aria-label="Scrub the transition timeline"
+        />
+        <div class="axis">
+          <span>−760&nbsp;ms · recording</span>
+          <span class="axis-mark">release</span>
+          <span>+1100&nbsp;ms · settled</span>
+        </div>
+      </section>
+
+      <section class="transport">
+        <button id="stepBack" type="button" class="ghost" title="Step back 16 ms">⟨ 16ms</button>
+        <button id="play" type="button" class="primary">▶ Play slow-mo</button>
+        <button id="stepFwd" type="button" class="ghost" title="Step forward 16 ms">16ms ⟩</button>
+        <button id="toHandoff" type="button" class="ghost">Jump to release</button>
+        <label class="loop"><input type="checkbox" id="loop" checked /> Loop</label>
+        <label class="speed">
+          Slow-mo <output id="speedOut">0.15×</output>
+          <input type="range" id="speed" min="0.05" max="1" step="0.01" value="0.15" />
+        </label>
+      </section>
+
+      <section class="dials" id="dials" aria-label="Handoff controls"></section>
+
+      <p class="hint">
+        Mirrors the handoff model in the main prototype (same Subtle defaults). Scrub, or play in slow
+        motion, to study the waveform&nbsp;→&nbsp;stage moment in isolation. Space toggles play; ← / → step frames.
+      </p>
+    </main>
+    <script src="app.js"></script>
+  </body>
+</html>

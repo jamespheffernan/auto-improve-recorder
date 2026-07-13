@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "waiting-ux-prototype",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "5177", "--directory", "Design/WaitingUXPrototype"],
+      "port": 5177
+    },
+    {
+      "name": "transition-lab",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "5178", "--directory", "Design/TransitionLab"],
+      "port": 5178
+    }
+  ]
+}

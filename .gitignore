@@ -5,6 +5,7 @@
 build/
 DerivedData/
 .build/
+/.build-*/
 
 # Xcode user-specific state
 xcuserdata/
@@ -15,3 +16,6 @@ node_modules/
 __pycache__/
 .autoresearch/
 .playwright-mcp/
+/.playwright-cli/
+/.claude/settings.local.json
+/output/playwright/
