@@ -7,6 +7,7 @@ final class LocalModelInventoryTests: XCTestCase {
         let statuses = await statuses(files: [], executables: [], dylibs: [])
 
         XCTAssertEqual(statuses[.parakeetCppRecommended]?.state, .needsRuntime)
+        XCTAssertEqual(statuses[.parakeetCppResident]?.state, .needsRuntime)
         XCTAssertEqual(statuses[.parakeetCppFast]?.state, .needsRuntime)
     }
 
@@ -44,7 +45,20 @@ final class LocalModelInventoryTests: XCTestCase {
         )
 
         XCTAssertEqual(statuses[.parakeetCppRecommended]?.state, .installed)
+        XCTAssertEqual(statuses[.parakeetCppResident]?.state, .needsRuntime)
         XCTAssertEqual(statuses[.parakeetCppFast]?.state, .installed)
+    }
+
+    func testResidentRuntimeReportsInstalledOnlyWhenCAPIIsPresent() async {
+        let statuses = await statuses(
+            files: [
+                "/air/capi/libparakeet.dylib",
+                "/air/models/\(LocalModelInventory.recommendedModelFilename)"
+            ],
+            dylibs: ["/air/capi/libggml.dylib"]
+        )
+
+        XCTAssertEqual(statuses[.parakeetCppResident]?.state, .installed)
     }
 
     func testOllamaReachableWithQwenReportsReady() async {
@@ -153,7 +167,14 @@ private struct FakeLocalRuntimeProbe: LocalRuntimeProbe {
     }
 
     func paths(matching pattern: String) -> [String] {
-        pattern == "/air/lib/libggml*.dylib" ? dylibs : []
+        switch pattern {
+        case "/air/lib/libggml*.dylib":
+            return dylibs.filter { $0.hasPrefix("/air/lib/") }
+        case "/air/capi/libggml*.dylib":
+            return dylibs.filter { $0.hasPrefix("/air/capi/") }
+        default:
+            return []
+        }
     }
 
     func ollamaModelTags(baseURL: URL) async throws -> [String] {

@@ -6,6 +6,7 @@ struct TranscriptionServiceRequest {
     var apiKey: String
     var dictionarySnapshot: String
     var streamingTranscriber: OpenAIRealtimeTranscriber?
+    var parakeetStreamSession: ParakeetLiveStreamSession?
 }
 
 protocol TranscriptionService {
@@ -108,6 +109,22 @@ struct LiveTranscriptionService: TranscriptionService {
                 status: status
             )
 
+        case .localParakeetCppResident:
+            return try await transcribeWithParakeetResident(
+                audioURL: request.audioURL,
+                context: context,
+                startedAt: startedAt,
+                status: status
+            )
+
+        case .localParakeetStreaming:
+            return try await transcribeWithParakeetStreaming(
+                request,
+                context: context,
+                startedAt: startedAt,
+                status: status
+            )
+
         case .fastest:
             return try await transcribeFastest(
                 request,
@@ -162,6 +179,66 @@ struct LiveTranscriptionService: TranscriptionService {
         }
 
         await status("Fastest unavailable; falling back to Parakeet.cpp Recommended.")
+        return try await transcribeWithParakeetCpp(
+            variant: .recommended06B,
+            audioURL: request.audioURL,
+            context: context,
+            startedAt: Date(),
+            status: status
+        )
+    }
+
+    /// Opt-in resident in-process 0.6B model (~0.3 s stop-to-transcript)
+    /// when the C API runtime is installed; falls back to the one-shot CLI
+    /// rather than losing the recording when the resident runtime is absent.
+    private func transcribeWithParakeetResident(
+        audioURL: URL,
+        context: TranscriptionContext,
+        startedAt: Date,
+        status: @escaping (String) async -> Void
+    ) async throws -> TranscriptionResult {
+        guard ParakeetResidentTranscriber.isAvailable else {
+            await status("Resident Parakeet unavailable; using Parakeet.cpp Recommended.")
+            return try await transcribeWithParakeetCpp(
+                variant: .recommended06B,
+                audioURL: audioURL,
+                context: context,
+                startedAt: startedAt,
+                status: status
+            )
+        }
+        await status("Transcribing with resident Parakeet.")
+        let result = try await ParakeetResidentTranscriber().transcribe(audioURL: audioURL, context: context)
+        let elapsed = Date().timeIntervalSince(startedAt)
+        NSLog("%@ transcription finished in %.2fs.", result.engineName, elapsed)
+        await status(String(format: "Parakeet transcript ready in %.1fs.", elapsed))
+        return result
+    }
+
+    /// Option B: the transcript streamed live during recording; finalize only
+    /// flushes the tail (~30 ms). Any streaming failure falls back to the
+    /// one-shot recommended model over the recorded file.
+    private func transcribeWithParakeetStreaming(
+        _ request: TranscriptionServiceRequest,
+        context: TranscriptionContext,
+        startedAt: Date,
+        status: @escaping (String) async -> Void
+    ) async throws -> TranscriptionResult {
+        if let session = request.parakeetStreamSession {
+            do {
+                let text = try await session.finalize()
+                if !text.isEmpty {
+                    let elapsed = Date().timeIntervalSince(startedAt)
+                    NSLog("%@ transcription finished in %.2fs.", ParakeetLiveStreamSession.engineName, elapsed)
+                    await status(String(format: "Live transcript ready in %.1fs.", elapsed))
+                    return TranscriptionResult(text: text, engineName: ParakeetLiveStreamSession.engineName)
+                }
+                NSLog("parakeet streaming returned an empty transcript; falling back to offline Parakeet.")
+            } catch {
+                NSLog("parakeet streaming finalize failed; falling back to offline Parakeet: \(error.localizedDescription)")
+            }
+        }
+        await status("Live streaming unavailable; using Parakeet.cpp Recommended.")
         return try await transcribeWithParakeetCpp(
             variant: .recommended06B,
             audioURL: request.audioURL,

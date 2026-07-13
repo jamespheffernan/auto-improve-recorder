@@ -2,6 +2,7 @@ import Foundation
 
 enum LocalModelID: String, CaseIterable, Codable, Hashable, Identifiable, Sendable {
     case parakeetCppRecommended
+    case parakeetCppResident
     case parakeetCppFast
     case allLocal
     case appleSpeech
@@ -129,6 +130,7 @@ struct LocalModelStatus: Codable, Equatable, Identifiable, Sendable {
 
 enum LocalModelPreset: String, CaseIterable, Codable, Identifiable, Sendable {
     case recommended
+    case resident
     case fast
     case allLocal
     case appleSpeech
@@ -140,6 +142,8 @@ enum LocalModelPreset: String, CaseIterable, Codable, Identifiable, Sendable {
         switch self {
         case .recommended:
             return "localParakeetCppRecommended"
+        case .resident:
+            return "localParakeetCppResident"
         case .fast:
             return "localParakeetCppFast"
         case .allLocal:
@@ -155,7 +159,7 @@ enum LocalModelPreset: String, CaseIterable, Codable, Identifiable, Sendable {
         switch self {
         case .allLocal:
             return "ollamaLocal"
-        case .recommended, .fast, .appleSpeech, .cloudRealtime:
+        case .recommended, .resident, .fast, .appleSpeech, .cloudRealtime:
             return nil
         }
     }
@@ -164,7 +168,7 @@ enum LocalModelPreset: String, CaseIterable, Codable, Identifiable, Sendable {
         switch self {
         case .allLocal:
             return LocalModelInventory.qwenOllamaModel
-        case .recommended, .fast, .appleSpeech, .cloudRealtime:
+        case .recommended, .resident, .fast, .appleSpeech, .cloudRealtime:
             return nil
         }
     }

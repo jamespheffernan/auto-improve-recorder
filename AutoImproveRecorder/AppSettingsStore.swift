@@ -148,9 +148,9 @@ final class UserDefaultsSettingsStore: SettingsStore {
         case "localParakeet":
             return .localParakeetCppRecommended
         case let rawValue?:
-            return TranscriptionMode(rawValue: rawValue) ?? .localWhisper
+            return TranscriptionMode(rawValue: rawValue) ?? .localParakeetCppRecommended
         case nil:
-            return .localWhisper
+            return .localParakeetCppRecommended
         }
     }
 

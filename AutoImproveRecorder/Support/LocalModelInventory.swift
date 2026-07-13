@@ -37,6 +37,7 @@ struct LocalModelInventory: Sendable {
             modelFilename: Self.recommendedModelFilename,
             modelName: "Parakeet.cpp 0.6B Recommended"
         )
+        let resident = parakeetResidentStatus(input: input)
         let fast = parakeetStatus(
             descriptor: Self.descriptor(for: .parakeetCppFast),
             input: input,
@@ -48,7 +49,7 @@ struct LocalModelInventory: Sendable {
         let qwen = await ollamaStatus
         let allLocal = allLocalStatus(recommended: recommended, qwen: qwen)
 
-        return [recommended, fast, allLocal, apple, cloud, qwen]
+        return [recommended, resident, fast, allLocal, apple, cloud, qwen]
     }
 
     static func descriptor(for id: LocalModelID) -> LocalModelDescriptor {
@@ -57,7 +58,16 @@ struct LocalModelInventory: Sendable {
             return LocalModelDescriptor(
                 id: id,
                 title: "Recommended local transcription",
-                subtitle: "Parakeet.cpp 0.6B for best local accuracy.",
+                subtitle: "Parakeet.cpp 0.6B one-shot mode; warmed without keeping the model resident.",
+                kind: .transcription,
+                ownership: .airOwned,
+                capabilities: .localTranscription
+            )
+        case .parakeetCppResident:
+            return LocalModelDescriptor(
+                id: id,
+                title: "Resident local transcription",
+                subtitle: "Parakeet.cpp 0.6B C API mode; fastest local stop-to-text, higher memory.",
                 kind: .transcription,
                 ownership: .airOwned,
                 capabilities: .localTranscription
@@ -151,6 +161,47 @@ struct LocalModelInventory: Sendable {
             descriptor,
             state: .installed,
             detail: "\(modelName) is installed. AIR has not loaded it in Settings.",
+            issues: []
+        )
+    }
+
+    private func parakeetResidentStatus(input: LocalModelInventoryInput) -> LocalModelStatus {
+        let descriptor = Self.descriptor(for: .parakeetCppResident)
+        let basePath = expandedPath(input.parakeetCppBasePath)
+        let capiPath = "\(basePath)/capi/libparakeet.dylib"
+        let capiDylibPattern = "\(basePath)/capi/libggml*.dylib"
+        let modelPath = "\(basePath)/models/\(Self.recommendedModelFilename)"
+
+        let hasCAPI = probe.fileExists(atPath: capiPath)
+        let hasCapiRuntimeLibraries = !probe.paths(matching: capiDylibPattern).isEmpty
+        let hasModel = probe.fileExists(atPath: modelPath)
+
+        guard hasCAPI, hasCapiRuntimeLibraries else {
+            return status(
+                descriptor,
+                state: .needsRuntime,
+                detail: "Resident mode needs the optional Parakeet C API runtime.",
+                issues: [
+                    .warning("Missing C API runtime under \(basePath)/capi. Recommended mode still works without this.")
+                ]
+            )
+        }
+
+        guard hasModel else {
+            return status(
+                descriptor,
+                state: .needsModel,
+                detail: "Resident mode runtime is present, but the 0.6B model file is missing.",
+                issues: [
+                    .warning("Missing model file: \(Self.recommendedModelFilename).")
+                ]
+            )
+        }
+
+        return status(
+            descriptor,
+            state: .installed,
+            detail: "Resident mode is installed. AIR only loads it when Resident or Live mode is selected.",
             issues: []
         )
     }

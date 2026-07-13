@@ -130,6 +130,7 @@ final class AppState: ObservableObject {
     private var activeSpaceLatchRegistrationFailed = false
     private let realtimeAudioSink = OpenAIRealtimeAudioSink()
     private var activeStreamingTranscriber: OpenAIRealtimeTranscriber?
+    private var activeParakeetStreamSession: ParakeetLiveStreamSession?
     private var activeRealtimeStartupTask: Task<Void, Never>?
     private var activeRecordingID: UUID?
     private var activeProcessingRecordingID: UUID?
@@ -392,6 +393,10 @@ final class AppState: ObservableObject {
         applyLocalModelPreset(.recommended)
     }
 
+    func useResidentLocalTranscription() {
+        applyLocalModelPreset(.resident)
+    }
+
     func useFastLocalTranscription() {
         applyLocalModelPreset(.fast)
     }
@@ -425,6 +430,8 @@ final class AppState: ObservableObject {
         switch preset {
         case .recommended:
             statusMessage = "Using Parakeet.cpp Recommended for local transcription."
+        case .resident:
+            statusMessage = "Using resident Parakeet.cpp for local transcription."
         case .fast:
             statusMessage = "Using Parakeet.cpp Fast for local transcription."
         case .allLocal:
@@ -565,32 +572,77 @@ final class AppState: ObservableObject {
     }
 
     func prewarmLocalModels() {
+        prewarmRecordingStartResources()
+        prewarmEnginesForActiveModes()
+    }
+
+    /// Warm the engines the current modes will need, off the hot path. Called
+    /// at launch and again when each recording starts, so the post-stop work
+    /// never pays a cold start: parakeet.cpp weight/Metal caches stay hot,
+    /// Ollama reloads the model if its keep-alive evicted it, and cloud TLS
+    /// handshakes are paid while the user is still speaking.
+    /// ParakeetCppWarmKeeper throttles repeat warms internally.
+    private func prewarmEnginesForActiveModes() {
         let selectedTranscriptionMode = transcriptionMode
         let selectedImprovementMode = improvementMode
         let selectedOllamaBaseURL = ollamaBaseURL
         let selectedOllamaModel = ollamaModel
-        let selectedAPIKey = apiKey
-
-        prewarmRecordingStartResources()
+        let hasOpenAIKey = !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 
         Task.detached(priority: .utility) {
-            if selectedTranscriptionMode == .localWhisper {
+            switch selectedTranscriptionMode {
+            case .localWhisper:
                 await WhisperCppTranscriber().warmUp()
+            case .localParakeetCppFast:
+                await ParakeetCppWarmKeeper.shared.warmIfStale(variant: .fast110M)
+            case .localParakeetCppRecommended:
+                await Self.warmParakeetCppRecommended()
+            case .localParakeetCppResident:
+                await Self.warmParakeetResidentRecommended()
+            case .localParakeetStreaming:
+                // Live mode is explicitly resident. Its offline fallback uses
+                // the one-shot CLI path, warmed through page/shader caches.
+                await ParakeetLiveStreamSession.warmUp()
+                await Self.warmParakeetCppRecommended()
+            case .fastest:
+                // Realtime is primary when a key exists, but failures fall back
+                // to one-shot Parakeet Recommended, so warm its caches only.
+                await Self.warmParakeetCppRecommended()
+            case .appleLocal, .openAIAPI:
+                break
             }
-            if selectedTranscriptionMode == .localParakeetCppFast {
-                await ParakeetCppTranscriber(variant: .fast110M).warmUp()
+        }
+
+        Task.detached(priority: .utility) {
+            if selectedTranscriptionMode == .openAIAPI ||
+                (selectedTranscriptionMode == .fastest && hasOpenAIKey) ||
+                selectedImprovementMode == .openAI {
+                await SharedNetworkClient.prewarm(host: URL(string: "https://api.openai.com")!)
             }
-            if selectedTranscriptionMode == .localParakeetCppRecommended ||
-                (selectedTranscriptionMode == .fastest && selectedAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) {
-                await ParakeetCppTranscriber(variant: .recommended06B).warmUp()
-            }
-            if selectedImprovementMode == .ollamaLocal {
+            switch selectedImprovementMode {
+            case .geminiFlash:
+                await SharedNetworkClient.prewarm(host: URL(string: "https://generativelanguage.googleapis.com")!)
+            case .claudeHaiku:
+                await SharedNetworkClient.prewarm(host: URL(string: "https://api.anthropic.com")!)
+            case .ollamaLocal:
                 await OllamaImproveEngine(
                     baseURL: selectedOllamaBaseURL,
                     model: selectedOllamaModel
                 ).warmUp()
+            case .openAI, .appleLocal:
+                break
             }
         }
+    }
+
+    /// One-shot CLI path warmed via OS page cache and Metal shader cache.
+    nonisolated private static func warmParakeetCppRecommended() async {
+        await ParakeetCppWarmKeeper.shared.warmIfStale(variant: .recommended06B)
+    }
+
+    /// Explicit resident mode only. This keeps the 0.6B model in process.
+    nonisolated private static func warmParakeetResidentRecommended() async {
+        await ParakeetResidentTranscriber().warmUp()
     }
 
     private func prewarmRecordingStartResources() {
@@ -801,6 +853,8 @@ final class AppState: ObservableObject {
         let stoppedRecordingID = activeRecordingID
         let streamingTranscriber = activeStreamingTranscriber
         activeStreamingTranscriber = nil
+        let parakeetStream = activeParakeetStreamSession
+        activeParakeetStreamSession = nil
         guard let audioURL = environment.recording.stopRecording() else {
             activeRecordingID = nil
             activeMicrophoneResolution = nil
@@ -810,6 +864,7 @@ final class AppState: ObservableObject {
             if let streamingTranscriber {
                 Task { await streamingTranscriber.cancel() }
             }
+            parakeetStream?.cancel()
             failWithMessage("Recording stopped before an audio file was created.")
             return
         }
@@ -822,6 +877,7 @@ final class AppState: ObservableObject {
             if let streamingTranscriber {
                 Task { await streamingTranscriber.cancel() }
             }
+            parakeetStream?.cancel()
             try? FileManager.default.removeItem(at: audioURL)
             discardActiveArchiveDraftIfNeeded()
             activeMicrophoneResolution = nil
@@ -845,7 +901,13 @@ final class AppState: ObservableObject {
         statusMessage = transcriptionStatusMessage(streamingTranscriber: streamingTranscriber)
         showProcessingSignal?(.transcribing)
         handleRecordingTriggerEvent(.processingBegan(recordingID: stoppedRecordingID, at: Date()))
-        Task { await processRecording(audioURL: audioURL, streamingTranscriber: streamingTranscriber) }
+        Task {
+            await processRecording(
+                audioURL: audioURL,
+                streamingTranscriber: streamingTranscriber,
+                parakeetStream: parakeetStream
+            )
+        }
     }
 
     func cancelRecording() {
@@ -868,6 +930,8 @@ final class AppState: ObservableObject {
         let audioURL = environment.recording.stopRecording()
         endMicrophoneUseLock()
         realtimeAudioSink.clear()
+        activeParakeetStreamSession?.cancel()
+        activeParakeetStreamSession = nil
         if let audioURL {
             try? FileManager.default.removeItem(at: audioURL)
         }
@@ -897,6 +961,8 @@ final class AppState: ObservableObject {
         activeMicrophoneHealthMonitor = nil
         let streamingTranscriber = activeStreamingTranscriber
         activeStreamingTranscriber = nil
+        activeParakeetStreamSession?.cancel()
+        activeParakeetStreamSession = nil
         let audioURL = environment.recording.stopRecording()
         endMicrophoneUseLock()
         realtimeAudioSink.clear()
@@ -1001,6 +1067,8 @@ final class AppState: ObservableObject {
             let shouldBufferRealtimeAudio = shouldPrepareRealtime &&
                 !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             realtimeAudioSink.reset(bufferPendingAudio: shouldBufferRealtimeAudio)
+            let parakeetStream = makeParakeetStreamSessionIfNeeded()
+            activeParakeetStreamSession = parakeetStream
             let audioURL: URL
             let audioSink = realtimeAudioSink
             do {
@@ -1009,10 +1077,13 @@ final class AppState: ObservableObject {
                     at: archiveDraft.audioURL,
                     initialResolution: microphoneResolution,
                     audioSink: audioSink,
+                    parakeetStream: parakeetStream,
                     requestedAt: requestedAt
                 )
             } catch {
                 realtimeAudioSink.clear()
+                parakeetStream?.cancel()
+                activeParakeetStreamSession = nil
                 throw error
             }
             guard activeStartID == startID, case .starting = phase else { return }
@@ -1055,6 +1126,7 @@ final class AppState: ObservableObject {
             }
             showProcessingSignal?(.recording)
             logRecordingStartup("audio engine started and recording UI shown", requestedAt: requestedAt)
+            prewarmEnginesForActiveModes()
 
             if shouldPrepareRealtime {
                 activeRealtimeStartupTask = Task { [weak self] in
@@ -1079,6 +1151,8 @@ final class AppState: ObservableObject {
             activeMicrophoneHealthMonitor = nil
             activeRealtimeStartupTask = nil
             realtimeAudioSink.clear()
+            activeParakeetStreamSession?.cancel()
+            activeParakeetStreamSession = nil
             handleRecordingTriggerEvent(.startFailed(startID: startID, error: error.localizedDescription, at: Date()))
             failWithMessage(error.localizedDescription)
         }
@@ -1105,6 +1179,7 @@ final class AppState: ObservableObject {
         at audioURL: URL,
         initialResolution: MicrophoneResolution,
         audioSink: OpenAIRealtimeAudioSink,
+        parakeetStream: ParakeetLiveStreamSession?,
         requestedAt: Date
     ) throws -> URL {
         do {
@@ -1113,6 +1188,7 @@ final class AppState: ObservableObject {
                 at: audioURL,
                 resolution: initialResolution,
                 audioSink: audioSink,
+                parakeetStream: parakeetStream,
                 requestedAt: requestedAt
             )
         } catch {
@@ -1132,6 +1208,7 @@ final class AppState: ObservableObject {
                 at: audioURL,
                 resolution: fallbackResolution,
                 audioSink: audioSink,
+                parakeetStream: parakeetStream,
                 requestedAt: requestedAt
             )
         }
@@ -1141,6 +1218,7 @@ final class AppState: ObservableObject {
         at audioURL: URL,
         resolution: MicrophoneResolution,
         audioSink: OpenAIRealtimeAudioSink,
+        parakeetStream: ParakeetLiveStreamSession?,
         requestedAt: Date
     ) throws -> URL {
         let healthMonitor = shouldMonitorForPreferredMicrophoneHealth(resolution)
@@ -1164,6 +1242,7 @@ final class AppState: ObservableObject {
                     }
                 }
                 audioSink.appendAudioBuffer(buffer)
+                parakeetStream?.append(buffer)
             },
             onFirstBuffer: {
                 NSLog(
@@ -1172,6 +1251,12 @@ final class AppState: ObservableObject {
                 )
             }
         )
+    }
+
+    private func makeParakeetStreamSessionIfNeeded() -> ParakeetLiveStreamSession? {
+        guard transcriptionMode == .localParakeetStreaming,
+              ParakeetLiveStreamSession.isAvailable else { return nil }
+        return ParakeetLiveStreamSession.begin()
     }
 
     private func shouldMonitorForPreferredMicrophoneHealth(_ resolution: MicrophoneResolution) -> Bool {
@@ -1240,12 +1325,19 @@ final class AppState: ObservableObject {
                 !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             audioSink.reset(bufferPendingAudio: shouldBufferRealtimeAudio)
 
+            // The old stream only heard digital silence; restart it cleanly
+            // alongside the fallback microphone.
+            activeParakeetStreamSession?.cancel()
+            let parakeetStream = makeParakeetStreamSessionIfNeeded()
+            activeParakeetStreamSession = parakeetStream
+
             statusMessage = "Could not hear \(resolution.device.name); using \(fallbackResolution.device.name)."
             activeMicrophoneResolution = fallbackResolution
             _ = try startAudioRecorderOnce(
                 at: audioURL,
                 resolution: fallbackResolution,
                 audioSink: audioSink,
+                parakeetStream: parakeetStream,
                 requestedAt: requestedAt
             )
             microphoneDeviceLogger.info(
@@ -1336,12 +1428,17 @@ final class AppState: ObservableObject {
         )
     }
 
-    private func processRecording(audioURL: URL, streamingTranscriber: OpenAIRealtimeTranscriber?) async {
+    private func processRecording(
+        audioURL: URL,
+        streamingTranscriber: OpenAIRealtimeTranscriber?,
+        parakeetStream: ParakeetLiveStreamSession? = nil
+    ) async {
         do {
             let dictionarySnapshot = session.dictionarySnapshot
             let result = try await transcribe(
                 audioURL: audioURL,
                 streamingTranscriber: streamingTranscriber,
+                parakeetStream: parakeetStream,
                 dictionarySnapshot: dictionarySnapshot
             )
             let transcript = TranscriptTextNormalizer.normalizeSpokenNumbers(
@@ -1395,6 +1492,7 @@ final class AppState: ObservableObject {
     private func transcribe(
         audioURL: URL,
         streamingTranscriber: OpenAIRealtimeTranscriber?,
+        parakeetStream: ParakeetLiveStreamSession?,
         dictionarySnapshot: String
     ) async throws -> TranscriptionResult {
         let request = TranscriptionServiceRequest(
@@ -1402,7 +1500,8 @@ final class AppState: ObservableObject {
             mode: transcriptionMode,
             apiKey: apiKey,
             dictionarySnapshot: dictionarySnapshot,
-            streamingTranscriber: streamingTranscriber
+            streamingTranscriber: streamingTranscriber,
+            parakeetStreamSession: parakeetStream
         )
         return try await environment.transcription.transcribe(
             request,
@@ -1564,6 +1663,10 @@ final class AppState: ObservableObject {
             return "Transcribing with Parakeet.cpp Fast."
         case .localParakeetCppRecommended, .fastest:
             return "Transcribing with Parakeet.cpp Recommended."
+        case .localParakeetCppResident:
+            return "Transcribing with resident Parakeet."
+        case .localParakeetStreaming:
+            return "Finalizing live Parakeet transcript."
         case .appleLocal:
             return "Transcribing with Apple Speech."
         case .openAIAPI:

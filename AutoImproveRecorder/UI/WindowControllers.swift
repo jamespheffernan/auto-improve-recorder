@@ -12,7 +12,7 @@ final class FloatingPillWindowController {
                     .environmentObject(AppState.shared)
             )
             let panel = NSPanel(
-                contentRect: NSRect(x: 0, y: 0, width: 416, height: 78),
+                contentRect: NSRect(x: 0, y: 0, width: 344, height: 72),
                 styleMask: [.borderless, .nonactivatingPanel],
                 backing: .buffered,
                 defer: false
@@ -20,7 +20,7 @@ final class FloatingPillWindowController {
             panel.contentViewController = hosting
             panel.backgroundColor = .clear
             panel.isOpaque = false
-            panel.hasShadow = true
+            panel.hasShadow = false
             panel.level = .floating
             panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
             self.panel = panel
@@ -86,14 +86,14 @@ final class SettingsWindowController {
                     .environmentObject(AppState.shared)
             )
             let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 620, height: 580),
+                contentRect: NSRect(x: 0, y: 0, width: 900, height: 680),
                 styleMask: [.titled, .closable, .miniaturizable, .resizable],
                 backing: .buffered,
                 defer: false
             )
             window.title = "Auto Improve Settings"
             window.contentViewController = hosting
-            window.contentMinSize = NSSize(width: 560, height: 460)
+            window.contentMinSize = NSSize(width: 820, height: 560)
             window.isReleasedWhenClosed = false
             window.center()
             self.window = window

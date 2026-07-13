@@ -92,3 +92,106 @@ The script emits a ready JSON line, then accepts newline-delimited commands:
 ```
 
 That should become the production `ParakeetTranscriber` implementation once the app shell is stable.
+
+## parakeet.cpp server-mode investigation (2026-06-11)
+
+`parakeet-cli` (the AIR-owned parakeet.cpp runtime in
+`~/Library/Application Support/AutoImproveRecorder/ParakeetCpp`) cannot be made
+persistent as shipped:
+
+- No server subcommand. Only `info`, `transcribe`, `quantize`, and the bench modes.
+- `--input` requires a seekable file. A FIFO fails with `failed to load audio`;
+  stdin (`--input -`) fails the same way.
+- `--stream` exists but requires a cache-aware streaming model
+  (for example `parakeet_realtime_eou_120m-v1`), not the installed TDT GGUFs,
+  and it rejects `--json`.
+- The binary statically links the parakeet code; only `libggml*.dylib` is
+  external, so there is no library to call in-process via FFI.
+
+Measured per-invocation cost on M4 (0.6B Q4_K, Metal):
+
+- Cold start (first run since boot / cache eviction): 7-8 s.
+- Warm run: ~1.2 s on 5 s audio, ~1.4 s on 30 s audio. The fixed ~1.1 s is
+  per-process model load plus Metal setup; inference itself scales mildly.
+
+Conclusion: warm state lives in the OS page cache and Metal shader cache, not
+in a process. `ParakeetCppWarmKeeper` therefore runs a real tiny transcription
+(0.32 s generated silence WAV) at launch and at each recording start, throttled
+to once per 5 minutes, so user-facing transcriptions always hit the ~1.2 s
+floor. A true persistent server needs either an upstream server mode or a
+custom build from parakeet.cpp source, and switching to the streaming EOU model
+would enable transcribe-while-recording but is a quality/product decision.
+
+## Server-mode options tested (2026-06-11)
+
+Upstream is `mudler/parakeet.cpp` (binary matches its CLI surface). It ships a
+dlopen-friendly C API (`include/parakeet_capi.h`) with offline and cache-aware
+streaming entry points, which removes the need for any broker process: the app
+can hold the model resident in-process. Built at `/tmp/parakeet.cpp` with
+`-DPARAKEET_SHARED=ON -DPARAKEET_GGML_METAL=ON -DPARAKEET_GGML_BLAS=ON
+-DGGML_METAL_EMBED_LIBRARY=ON` (the embed flag is required when the Xcode
+`metallib` tool is unavailable; parakeet's CMake force-overrides plain
+`GGML_METAL`, so the `PARAKEET_GGML_METAL` switch must be used).
+
+Measured on M4, 13.4 s spoken test clip, harnesses in `/tmp/parakeet.cpp/`
+(`capi_bench.c`, `stream_bench.c`):
+
+| Path | Stop-to-transcript | Model load | Output quality |
+|---|---|---|---|
+| Today: one-shot `parakeet-cli`, warm | ~1.4 s | per-run (inside the 1.4 s) | capitalized + punctuated |
+| A: resident 0.6B TDT via C API | 0.27-0.33 s | 0.78 s warm, ~15 s cold shaders (once, at launch) | identical to today (same model) |
+| B: streaming `realtime_eou_120m-v1` q8_0 via C API | 0.04 s | 0.25 s | accurate but lowercase, no punctuation |
+
+Option B details: 80 ms chunks fed at realtime pace cost at most 44.6 ms of
+compute each (~13% duty cycle), so it transcribes live during recording with
+full headroom; finalize after the last chunk took 41-43 ms. The model also
+emits `<EOU>` end-of-utterance events, usable later for auto-stop. GGUF source:
+`huggingface.co/mudler/parakeet-cpp-gguf` (`realtime_eou_120m-v1-q8_0.gguf`,
+176 MB, copy at `/tmp/realtime_eou_120m-v1-q8_0.gguf`).
+
+Caveats for in-process adoption: `parakeet_capi_free` trips a ggml-metal
+residency-set assert at teardown (`ggml-metal-device.m:618`) - hold the context
+for the app's lifetime and never free it at quit; bundle `libparakeet.dylib`
+plus the `libggml*` dylibs; the EOU model's unpunctuated output needs the
+improve stage (or the 0.6B pass) when raw-transcript mode must look finished.
+
+## Nemotron streaming + in-process adoption (2026-06-11, later session)
+
+The EOU 120M is not the only cache-aware streaming GGUF on
+`huggingface.co/mudler/parakeet-cpp-gguf`: `nemotron-3.5-asr-streaming-0.6b`
+(q8_0, 984 MB) streams through the same C API at the same duty cycle and emits
+capitalized, punctuated text. Measured on M4, same 11.8 s real clip
+(48 kHz stereo Float32 source, downmixed/resampled to 16 kHz mono):
+
+| Streaming model | avg/max feed (80 ms chunks) | finalize | output |
+|---|---|---|---|
+| `realtime_eou_120m-v1` q8_0 | 9.9 / 27.4 ms (12% duty) | 20 ms | lowercase, unpunctuated |
+| `nemotron-3.5-asr-streaming-0.6b` q8_0 | 8.7 / 115 ms (11% duty) | 28 ms | capitalized + punctuated, verbatim (keeps "uh"), trailing `<en-US>` tag |
+
+So the "bigger streaming model" question resolves better than hoped: nemotron
+0.6B gives streaming latency *and* finished-looking text. Its output is
+verbatim-style (disfluencies kept, numbers spelled out) where offline TDT 0.6B
+writes "FM26"; the improve stage and the spoken-number normalizer cover that.
+
+Adopted in the app (both options implemented):
+
+- Runtime: `~/Library/Application Support/AutoImproveRecorder/ParakeetCpp/capi/`
+  holds `libparakeet.dylib` + matching `libggml*` dylibs (rpaths rewritten to
+  `@loader_path`, ad-hoc resigned). The streaming model lives in `models/`
+  alongside the TDT GGUFs.
+- `ParakeetCAPI.swift` dlopens the dylib; `ParakeetResidentRuntime` loads a
+  GGUF once and never frees it, because free trips a residency assert.
+- `Parakeet.cpp Recommended` stays on the one-shot CLI path. `ParakeetCppWarmKeeper`
+  warms OS page cache and Metal shader cache without keeping a model in process.
+- Option A (`ParakeetResidentTranscriber`) backs the explicit
+  "Parakeet.cpp Resident" mode. It uses the same 0.6B TDT model as Recommended
+  but keeps it resident for lower stop-to-text latency.
+- Option B (`ParakeetLiveStreamSession`) backs "Parakeet Live (resident)" mode:
+  mic-tap buffers are converted to 16 kHz mono float off the audio thread and
+  fed in 80 ms chunks during recording; finalize flushes the tail and strips
+  `<...>` tags. Failures fall back to one-shot Recommended over the recorded WAV.
+- Rebuild recipe (shallow clone needs `git submodule update --init --recursive`):
+  `cmake -B build -DPARAKEET_SHARED=ON -DPARAKEET_GGML_METAL=ON
+  -DPARAKEET_GGML_BLAS=ON -DGGML_METAL_EMBED_LIBRARY=ON
+  -DCMAKE_BUILD_TYPE=Release`. Bench harness: `/tmp/parakeet.cpp/air_bench.c`
+  (offline + stream modes; `_exit(0)` after flush to dodge the teardown assert).
