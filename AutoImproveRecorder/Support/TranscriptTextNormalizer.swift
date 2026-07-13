@@ -60,11 +60,24 @@ private enum SpokenNumberRewriter {
         let words = collectNumberWords(startingAt: index, in: tokens)
         guard !words.isEmpty else { return nil }
 
+        if let preserveWordCount = ordinalModifierPreserveWordCount(words) {
+            let endTokenIndex = words[preserveWordCount - 1].tokenIndex + 1
+            return TokenRewrite(
+                text: tokens[index..<endTokenIndex].map(\.text).joined(),
+                endTokenIndex: endTokenIndex
+            )
+        }
+
+        let previousDateMonth = previousMonthInOrdinalDatePhrase(startingAt: index, in: tokens)
         let nextWord = nextWordAfterCollectedPhrase(words, in: tokens)
         for count in stride(from: words.count, through: 1, by: -1) {
             let candidate = Array(words.prefix(count).map(\.word))
             let contextNextWord = count == words.count ? nextWord : words[count].word
-            guard let rewrite = rewriteWords(candidate, nextWord: contextNextWord) else {
+            guard let rewrite = rewriteWords(
+                candidate,
+                previousDateMonth: previousDateMonth,
+                nextWord: contextNextWord
+            ) else {
                 continue
             }
 
@@ -101,6 +114,52 @@ private enum SpokenNumberRewriter {
         return words
     }
 
+    private static func ordinalModifierPreserveWordCount(_ words: [WordToken]) -> Int? {
+        guard words.count > 1,
+              isOrdinalWord(words[0].word),
+              words[1].word != "and" else {
+            return nil
+        }
+        if isOrdinalWord(words[1].word) {
+            return 2
+        }
+        if cardinalScaleWords.contains(words[1].word) {
+            return 2
+        }
+
+        let followingWords = Array(words.dropFirst().map(\.word))
+        for count in stride(from: followingWords.count, through: 1, by: -1) {
+            let candidate = Array(followingWords.prefix(count))
+            if parseIntegerText(candidate, allowSingleOh: false, nextWord: nil) != nil {
+                return count + 1
+            }
+        }
+        return nil
+    }
+
+    private static func previousMonthInOrdinalDatePhrase(startingAt index: Int, in tokens: [Token]) -> String? {
+        var cursor = index - 1
+        while cursor >= 0 {
+            switch tokens[cursor].kind {
+            case .word:
+                let word = normalizedWord(tokens[cursor].text)
+                if monthNames.contains(word) {
+                    return word
+                }
+                guard word == "and" || isNumberPhraseWord(word) else {
+                    return nil
+                }
+                cursor -= 1
+            case .separator:
+                guard canJoinAcrossSeparator(tokens[cursor].text) else {
+                    return nil
+                }
+                cursor -= 1
+            }
+        }
+        return nil
+    }
+
     private static func nextWordAfterCollectedPhrase(_ words: [WordToken], in tokens: [Token]) -> String? {
         guard let last = words.last else { return nil }
         var cursor = last.tokenIndex + 1
@@ -116,7 +175,11 @@ private enum SpokenNumberRewriter {
         return nil
     }
 
-    private static func rewriteWords(_ words: [String], nextWord: String?) -> Rewrite? {
+    private static func rewriteWords(
+        _ words: [String],
+        previousDateMonth: String?,
+        nextWord: String?
+    ) -> Rewrite? {
         guard !words.isEmpty else { return nil }
 
         let sign: String
@@ -139,6 +202,14 @@ private enum SpokenNumberRewriter {
                 return Rewrite(text: "-\(integer)", consumedWordCount: words.count)
             }
             return nil
+        }
+
+        if let ordinal = parseOrdinal(unsignedWords) {
+            let text = shouldUseBareOrdinalDateNumber(
+                previousDateMonth: previousDateMonth,
+                nextWord: nextWord
+            ) ? "\(ordinal)" : ordinalText(for: ordinal)
+            return Rewrite(text: text, consumedWordCount: words.count)
         }
 
         if let year = parseYear(unsignedWords) {
@@ -271,6 +342,18 @@ private enum SpokenNumberRewriter {
     }
 
     private static func parseCardinal(_ words: [String]) -> Int? {
+        parseNumberPhrase(words, allowOrdinals: false)
+    }
+
+    private static func parseOrdinal(_ words: [String]) -> Int? {
+        guard words.contains(where: isOrdinalWord),
+              words.last.map(isOrdinalWord) == true else {
+            return nil
+        }
+        return parseNumberPhrase(words, allowOrdinals: true)
+    }
+
+    private static func parseNumberPhrase(_ words: [String], allowOrdinals: Bool) -> Int? {
         var total = 0
         var current = 0
         var usedAny = false
@@ -287,7 +370,7 @@ private enum SpokenNumberRewriter {
 
             previousWasAnd = false
 
-            if let value = smallValues[word] ?? ordinalSmallValues[word] {
+            if let value = smallValues[word] ?? (allowOrdinals ? ordinalSmallValues[word] : nil) {
                 guard !groupHasUnitOrTeen else { return nil }
                 if groupHasTens, value == 0 || value >= 10 {
                     return nil
@@ -298,7 +381,7 @@ private enum SpokenNumberRewriter {
                 continue
             }
 
-            if let value = tensValues[word] ?? ordinalTensValues[word] {
+            if let value = tensValues[word] ?? (allowOrdinals ? ordinalTensValues[word] : nil) {
                 guard !groupHasTens, !groupHasUnitOrTeen else { return nil }
                 current += value
                 groupHasTens = true
@@ -307,20 +390,42 @@ private enum SpokenNumberRewriter {
             }
 
             switch word {
-            case "hundred", "hundredth":
+            case "hundred":
                 guard current > 0 else { return nil }
                 current *= 100
                 groupHasTens = false
                 groupHasUnitOrTeen = false
                 usedAny = true
-            case "thousand", "thousandth":
+            case "hundredth":
+                guard allowOrdinals, current > 0 else { return nil }
+                current *= 100
+                groupHasTens = false
+                groupHasUnitOrTeen = false
+                usedAny = true
+            case "thousand":
                 let group = current == 0 ? 1 : current
                 total += group * 1_000
                 current = 0
                 groupHasTens = false
                 groupHasUnitOrTeen = false
                 usedAny = true
-            case "million", "millionth":
+            case "thousandth":
+                guard allowOrdinals else { return nil }
+                let group = current == 0 ? 1 : current
+                total += group * 1_000
+                current = 0
+                groupHasTens = false
+                groupHasUnitOrTeen = false
+                usedAny = true
+            case "million":
+                let group = current == 0 ? 1 : current
+                total += group * 1_000_000
+                current = 0
+                groupHasTens = false
+                groupHasUnitOrTeen = false
+                usedAny = true
+            case "millionth":
+                guard allowOrdinals else { return nil }
                 let group = current == 0 ? 1 : current
                 total += group * 1_000_000
                 current = 0
@@ -334,6 +439,30 @@ private enum SpokenNumberRewriter {
 
         guard usedAny, !previousWasAnd else { return nil }
         return total + current
+    }
+
+    private static func shouldUseBareOrdinalDateNumber(previousDateMonth: String?, nextWord: String?) -> Bool {
+        previousDateMonth != nil || nextWord.map { monthNames.contains($0) } == true
+    }
+
+    private static func ordinalText(for value: Int) -> String {
+        let suffix: String
+        let lastTwoDigits = value % 100
+        if (11...13).contains(lastTwoDigits) {
+            suffix = "th"
+        } else {
+            switch value % 10 {
+            case 1:
+                suffix = "st"
+            case 2:
+                suffix = "nd"
+            case 3:
+                suffix = "rd"
+            default:
+                suffix = "th"
+            }
+        }
+        return "\(value)\(suffix)"
     }
 
     private static func wordsAfterOptionalAnd(_ words: [String]) -> [String] {
@@ -391,6 +520,12 @@ private enum SpokenNumberRewriter {
             ordinalTensValues[word] != nil ||
             scaleWords.contains(word) ||
             isOhWord(word)
+    }
+
+    private static func isOrdinalWord(_ word: String) -> Bool {
+        ordinalSmallValues[word] != nil ||
+            ordinalTensValues[word] != nil ||
+            ordinalScaleWords.contains(word)
     }
 
     private static func digitValue(_ word: String) -> Int? {
@@ -485,5 +620,32 @@ private enum SpokenNumberRewriter {
         "thousandth",
         "million",
         "millionth"
+    ]
+
+    private static let ordinalScaleWords: Set<String> = [
+        "hundredth",
+        "thousandth",
+        "millionth"
+    ]
+
+    private static let cardinalScaleWords: Set<String> = [
+        "hundred",
+        "thousand",
+        "million"
+    ]
+
+    private static let monthNames: Set<String> = [
+        "january",
+        "february",
+        "march",
+        "april",
+        "may",
+        "june",
+        "july",
+        "august",
+        "september",
+        "october",
+        "november",
+        "december"
     ]
 }
