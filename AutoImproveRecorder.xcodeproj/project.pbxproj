@@ -86,6 +86,9 @@
 		AIRTRIG0000000000000003 /* RecordingTrigger/RecordingTriggerController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRTRIG0000000000000002 /* RecordingTrigger/RecordingTriggerController.swift */; };
 		AIRTS0000000000000000001 /* TranscriptionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRTS0000000000000000000 /* TranscriptionService.swift */; };
 		AIRTXTNUM00000000000001 /* TranscriptTextNormalizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRTXTNUM00000000000000 /* TranscriptTextNormalizer.swift */; };
+		AIRLEX000000000000000001 /* DictionaryLexicon.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRLEX000000000000000000 /* DictionaryLexicon.swift */; };
+		ASRLEX000000000000000001 /* DictionaryLexicon.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRLEX000000000000000000 /* DictionaryLexicon.swift */; };
+		ASRLEX000000000000000002 /* TranscriptArchiveStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRAR0000000000000000000 /* TranscriptArchiveStore.swift */; };
 		ASR0000000000000000000010 /* AutoSendRecorderApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = ASR0000000000000000000001 /* AutoSendRecorderApp.swift */; };
 		ASR0000000000000000000011 /* AutoSendAppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = ASR0000000000000000000002 /* AutoSendAppDelegate.swift */; };
 		ASR0000000000000000000012 /* AutoSendCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = ASR0000000000000000000003 /* AutoSendCore.swift */; };
@@ -186,6 +189,7 @@
 		AIRTRIG0000000000000002 /* RecordingTrigger/RecordingTriggerController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingTrigger/RecordingTriggerController.swift; sourceTree = "<group>"; };
 		AIRTS0000000000000000000 /* TranscriptionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptionService.swift; sourceTree = "<group>"; };
 		AIRTXTNUM00000000000000 /* TranscriptTextNormalizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptTextNormalizer.swift; sourceTree = "<group>"; };
+		AIRLEX000000000000000000 /* DictionaryLexicon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DictionaryLexicon.swift; sourceTree = "<group>"; };
 		ASR0000000000000000000001 /* AutoSendRecorderApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoSendRecorderApp.swift; sourceTree = "<group>"; };
 		ASR0000000000000000000002 /* AutoSendAppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoSendAppDelegate.swift; sourceTree = "<group>"; };
 		ASR0000000000000000000003 /* AutoSendCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoSendCore.swift; sourceTree = "<group>"; };
@@ -343,6 +347,7 @@
 				AIRRTRED000000000000000 /* RealtimeDiagnosticsRedactor.swift */,
 				AIREDITGATE000000000000 /* TranscriptEditValueGate.swift */,
 				AIRTXTNUM00000000000000 /* TranscriptTextNormalizer.swift */,
+				AIRLEX000000000000000000 /* DictionaryLexicon.swift */,
 				AIRAR0000000000000000000 /* TranscriptArchiveStore.swift */,
 				AIRARCHC000000000000000 /* TranscriptArchiveClient.swift */,
 			);
@@ -573,6 +578,7 @@
 				AIRRTRED000000000000001 /* RealtimeDiagnosticsRedactor.swift in Sources */,
 				AIREDITGATE000000000001 /* TranscriptEditValueGate.swift in Sources */,
 				AIRTXTNUM00000000000001 /* TranscriptTextNormalizer.swift in Sources */,
+				AIRLEX000000000000000001 /* DictionaryLexicon.swift in Sources */,
 				AIRAR0000000000000000001 /* TranscriptArchiveStore.swift in Sources */,
 				AIRARCHC000000000000001 /* TranscriptArchiveClient.swift in Sources */,
 				AIR000000000000000000001D /* RecorderPillView.swift in Sources */,
@@ -637,6 +643,8 @@
 				ASRDELOPT000000000000001 /* DeliveryOptimization.swift in Sources */,
 				ASR0000000000000000000021 /* DeliveryService.swift in Sources */,
 				ASR0000000000000000000022 /* TranscriptTextNormalizer.swift in Sources */,
+				ASRLEX000000000000000001 /* DictionaryLexicon.swift in Sources */,
+				ASRLEX000000000000000002 /* TranscriptArchiveStore.swift in Sources */,
 				ASR0000000000000000000023 /* AudioInputDeviceDiscovery.swift in Sources */,
 				ASR0000000000000000000024 /* MicrophoneDevice.swift in Sources */,
 				ASRMICHEALTH00000000001 /* MicrophoneHealthMonitor.swift in Sources */,

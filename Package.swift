@@ -24,6 +24,7 @@ let package = Package(
                 "DeliveryOptimization.swift",
                 "DeliveryService.swift",
                 "DiagnosticsStore.swift",
+                "DictionaryLexicon.swift",
                 "DictionaryStore.swift",
                 "FastestTranscriptionFallbackSelector.swift",
                 "LocalModelInventory.swift",
@@ -106,7 +107,7 @@ let package = Package(
         ),
         .testTarget(
             name: "AutoSendRecorderCoreTests",
-            dependencies: ["AutoSendRecorderCore"],
+            dependencies: ["AutoSendRecorderCore", "AutoImproveRecorderDictionaryCore"],
             path: "Tests/AutoSendRecorderCoreTests"
         )
     ]

@@ -561,6 +561,17 @@ enum TranscriptionMode: String, CaseIterable, Identifiable, Codable {
             return "Cloud Realtime"
         }
     }
+
+    /// Whether the recogniser accepts dictionary terms as a prompt. Only the OpenAI modes do.
+    var takesVocabulary: Bool {
+        switch self {
+        case .openAIAPI, .fastest:
+            return true
+        case .localWhisper, .localParakeetCppFast, .localParakeetCppRecommended,
+             .localParakeetCppResident, .localParakeetStreaming, .appleLocal:
+            return false
+        }
+    }
 }
 
 enum ImprovementMode: String, CaseIterable, Identifiable, Codable {
@@ -658,6 +669,14 @@ struct TranscriptSession: Equatable {
     var message: String?
     var improveFailed: Bool
     var dictionarySnapshot: String
+    /// Capped term list for recognisers that take vocabulary (OpenAI modes).
+    var transcriptionVocabulary: String = ""
+    /// The recogniser's output before rules and normalisation, and after rules only.
+    var recognizerTranscript: String = ""
+    var postRulesTranscript: String = ""
+    /// What AIR pasted or copied, including any preview edit. Empty until delivered.
+    var deliveredText: String = ""
+    var deliveredVia: String = ""
 
     static let empty = TranscriptSession(
         audioURL: nil,

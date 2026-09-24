@@ -6,6 +6,7 @@ struct AutoSendSettingsView: View {
     @ObservedObject var state: AutoSendState
     @ObservedObject private var settings: AutoSendSettingsStore
     @State private var shortcutError: String?
+    @State private var dictionaryRules: [DictionaryReplacementRule] = []
 
     init(state: AutoSendState) {
         self.state = state
@@ -208,12 +209,26 @@ struct AutoSendSettingsView: View {
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
+
+                GroupBox("Dictionary") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Replacement rules run on every recording before it is sent: \(dictionaryRules.count) now, from Auto Improve Recorder's Dictionary settings and the lexicon at ~/.config/lexicon/terms.json. Edit rules in Auto Improve Recorder.")
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("Dictionary terms are not used here. Parakeet takes no vocabulary, and Auto Send has no cleanup pass, so a name is corrected only when a rule covers it.")
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .font(.caption)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 2)
+                }
             }
             .padding(18)
         }
         .frame(width: 560)
         .onAppear {
             state.refreshMicrophones()
+            dictionaryRules = state.replacementRules.currentRules()
         }
     }
 

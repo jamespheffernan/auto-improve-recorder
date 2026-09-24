@@ -107,7 +107,7 @@ final class AppState: ObservableObject {
     @Published private(set) var deliveryRuleCandidateApps: [FocusedApp] = []
     @Published var availableMicrophones: [AudioInputDevice] = [.systemDefault]
     @Published private(set) var resolvedMicrophoneSummary = "Using system default."
-    let dictionaryStore = UserDictionaryStore()
+    let dictionaryStore = UserDictionaryStore(lexiconReader: LexiconReader())
 
     var showPreview: (() -> Void)?
     var showSettings: (() -> Void)?
@@ -1021,8 +1021,10 @@ final class AppState: ObservableObject {
     }
 
     func copyDisplayText() {
-        copyToPasteboard(displayText)
+        let text = displayText
+        copyToPasteboard(text)
         statusMessage = "Copied."
+        recordDelivery(text, via: "manual-copy")
     }
 
     func pasteDisplayText() {
@@ -1032,9 +1034,11 @@ final class AppState: ObservableObject {
             do {
                 try await environment.delivery.pasteManually(text)
                 statusMessage = "Pasted."
+                recordDelivery(text, via: "manual-paste")
             } catch {
                 copyToPasteboard(text)
                 statusMessage = "Copied. Enable Accessibility for Auto Improve Recorder in System Settings to paste automatically."
+                recordDelivery(text, via: "manual-copy")
             }
         }
     }
@@ -1100,7 +1104,9 @@ final class AppState: ObservableObject {
 
             let recordingID = UUID()
             let archiveDraft = try consumePreparedArchiveDraft(createdAt: requestedAt)
+            dictionaryStore.reloadLexicon()
             let dictionarySnapshot = dictionaryStore.currentSnapshotString
+            let transcriptionVocabulary = dictionaryStore.transcriptionVocabularyString
             activeArchiveDraft = archiveDraft
             let shouldPrepareRealtime = transcriptionMode == .fastest
             let shouldBufferRealtimeAudio = shouldPrepareRealtime &&
@@ -1134,7 +1140,8 @@ final class AppState: ObservableObject {
                 improvedText: "",
                 message: nil,
                 improveFailed: false,
-                dictionarySnapshot: dictionarySnapshot
+                dictionarySnapshot: dictionarySnapshot,
+                transcriptionVocabulary: transcriptionVocabulary
             )
             showRawTranscript = false
             if shouldPrepareRealtime {
@@ -1171,7 +1178,7 @@ final class AppState: ObservableObject {
                 activeRealtimeStartupTask = Task { [weak self] in
                     await self?.prepareRealtimeTranscriberForActiveRecording(
                         recordingID: recordingID,
-                        dictionarySnapshot: dictionarySnapshot,
+                        dictionarySnapshot: transcriptionVocabulary,
                         requestedAt: requestedAt
                     )
                 }
@@ -1394,7 +1401,7 @@ final class AppState: ObservableObject {
             )
 
             if shouldPrepareRealtime, let recordingID = activeRecordingID {
-                let dictionarySnapshot = session.dictionarySnapshot
+                let dictionarySnapshot = session.transcriptionVocabulary
                 activeRealtimeStartupTask = Task { [weak self] in
                     await self?.prepareRealtimeTranscriberForActiveRecording(
                         recordingID: recordingID,
@@ -1492,12 +1499,16 @@ final class AppState: ObservableObject {
                 audioURL: audioURL,
                 streamingTranscriber: streamingTranscriber,
                 parakeetStream: parakeetStream,
-                dictionarySnapshot: dictionarySnapshot
+                dictionarySnapshot: session.transcriptionVocabulary
             )
-            let transcript = TranscriptTextNormalizer.normalizeSpokenNumbers(
-                in: dictionaryStore.applyReplacementRules(to: result.text)
+            let outcome = TranscriptPostProcessor.process(
+                result.text,
+                rules: dictionaryStore.effectiveReplacementRules
             )
+            let transcript = outcome.final
             session.rawTranscript = transcript
+            session.recognizerTranscript = outcome.recognizer
+            session.postRulesTranscript = outcome.afterRules
             session.improvedText = ""
             session.message = nil
             session.improveFailed = false
@@ -1663,7 +1674,11 @@ final class AppState: ObservableObject {
             finalTranscript: session.preferredText,
             improveFailed: session.improveFailed,
             message: session.message ?? statusMessage,
-            dictionarySnapshot: session.dictionarySnapshot
+            dictionarySnapshot: session.dictionarySnapshot,
+            recognizerTranscript: session.recognizerTranscript.isEmpty ? nil : session.recognizerTranscript,
+            postRulesTranscript: session.postRulesTranscript.isEmpty ? nil : session.postRulesTranscript,
+            deliveredText: session.deliveredText.isEmpty ? nil : session.deliveredText,
+            deliveredVia: session.deliveredVia.isEmpty ? nil : session.deliveredVia
         )
         let metadata = TranscriptArchiveMetadata(
             updatedAt: Date(),
@@ -1767,7 +1782,30 @@ final class AppState: ObservableObject {
             )
         )
         statusMessage = result.statusMessage
+        if let via = Self.deliveredVia(for: result.outcome) {
+            recordDelivery(text, via: via)
+        }
         return processingVisualState(for: result.outcome)
+    }
+
+    private static func deliveredVia(for outcome: DeliveryOutcome) -> String? {
+        switch outcome {
+        case .pasted:
+            return "auto-paste"
+        case .submitted:
+            return "auto-submit"
+        case .copied:
+            return "auto-copy"
+        case .ready:
+            return nil
+        }
+    }
+
+    /// Records what reached the destination so the archive can compare it with the recogniser's output.
+    private func recordDelivery(_ text: String, via: String) {
+        session.deliveredText = text
+        session.deliveredVia = via
+        persistTranscriptArchive(transcriptionEngineName: nil)
     }
 
     private func processingVisualState(for outcome: DeliveryOutcome) -> ProcessingVisualState {

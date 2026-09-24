@@ -159,6 +159,29 @@ enum AutoSendDeliveryDisposition: Equatable, Sendable {
     case noPasteTarget(String)
     case permissionRequired(String)
     case pasteFailed(String)
+
+    /// Whether the text reached a destination: a text field or the clipboard.
+    var delivered: Bool {
+        switch self {
+        case .sent, .pastedWithoutSending, .sendSuppressed, .copied, .permissionRequired:
+            return true
+        case .noPasteTarget, .pasteFailed:
+            return false
+        }
+    }
+
+    /// Short label for the archive's `deliveredVia`.
+    var archiveLabel: String {
+        switch self {
+        case .sent: return "sent"
+        case .pastedWithoutSending: return "pasted"
+        case .sendSuppressed: return "pasted-send-suppressed"
+        case .copied: return "copied"
+        case .noPasteTarget: return "no-paste-target"
+        case .permissionRequired: return "copied-permission-required"
+        case .pasteFailed: return "paste-failed"
+        }
+    }
 }
 
 enum AutoSendClipboardFallback {
@@ -202,24 +225,43 @@ protocol AutoSendDeliveryService {
     func deliver(text: String) async throws -> AutoSendDeliveryDisposition
 }
 
+/// One recording's texts for the transcript archive: what the recogniser heard, what the replacement
+/// rules made of it, and what was sent (nil when delivery failed).
+struct AutoSendTranscriptEvidence: Equatable, Sendable {
+    var audioURL: URL
+    var recognizerText: String
+    var afterRulesText: String
+    var finalText: String
+    var deliveredText: String?
+    var disposition: AutoSendDeliveryDisposition?
+    var failure: String?
+}
+
 struct AutoSendWorkflowEnvironment: @unchecked Sendable {
     let capture: any AutoSendCaptureService
     let transcription: any AutoSendTranscriptService
     let delivery: any AutoSendDeliveryService
+    /// Replacement rules, applied to the recogniser's output before `normalize`.
+    let applyRules: @Sendable (String) -> String
     let normalize: @Sendable (String) -> String
+    let archive: @Sendable (AutoSendTranscriptEvidence) -> Void
     let phaseDidChange: @Sendable (AutoSendPhaseUpdate) -> Void
 
     init(
         capture: any AutoSendCaptureService,
         transcription: any AutoSendTranscriptService,
         delivery: any AutoSendDeliveryService,
+        applyRules: @escaping @Sendable (String) -> String = { $0 },
         normalize: @escaping @Sendable (String) -> String,
+        archive: @escaping @Sendable (AutoSendTranscriptEvidence) -> Void = { _ in },
         phaseDidChange: @escaping @Sendable (AutoSendPhaseUpdate) -> Void = { _ in }
     ) {
         self.capture = capture
         self.transcription = transcription
         self.delivery = delivery
+        self.applyRules = applyRules
         self.normalize = normalize
+        self.archive = archive
         self.phaseDidChange = phaseDidChange
     }
 }
@@ -280,6 +322,7 @@ actor AutoSendWorkflow {
     func stop() async -> Bool {
         guard phase == .recording, let operationID = activeOperationID else { return false }
         publish(.transcribing)
+        var evidence: AutoSendTranscriptEvidence?
 
         do {
             let audioURL = try await environment.capture.stop(operationID: operationID)
@@ -298,8 +341,15 @@ actor AutoSendWorkflow {
                 return false
             }
 
-            let normalized = environment.normalize(transcript)
+            let afterRules = environment.applyRules(transcript)
+            let normalized = environment.normalize(afterRules)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
+            evidence = AutoSendTranscriptEvidence(
+                audioURL: audioURL,
+                recognizerText: transcript,
+                afterRulesText: afterRules,
+                finalText: normalized
+            )
             guard !normalized.isEmpty else {
                 throw AutoSendWorkflowError.emptyTranscript
             }
@@ -311,6 +361,11 @@ actor AutoSendWorkflow {
             deliveryTask = (operationID, task)
             let disposition = try await task.value
             clearDeliveryTask(operationID: operationID)
+            if var record = evidence {
+                record.deliveredText = disposition.delivered ? normalized : nil
+                record.disposition = disposition
+                environment.archive(record)
+            }
             guard isActive(operationID) else { return false }
             lastDeliveryDisposition = disposition
             activeOperationID = nil
@@ -318,6 +373,10 @@ actor AutoSendWorkflow {
             return true
         } catch {
             clearDeliveryTask(operationID: operationID)
+            if var record = evidence {
+                record.failure = error.localizedDescription
+                environment.archive(record)
+            }
             guard isActive(operationID) else {
                 await environment.transcription.cancel(operationID: operationID)
                 return false

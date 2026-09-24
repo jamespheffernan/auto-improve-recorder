@@ -189,6 +189,7 @@ final class AutoSendState: ObservableObject {
     var registerSpaceLatch: (() -> Bool)?
     var unregisterSpaceLatch: (() -> Void)?
 
+    let replacementRules: SharedReplacementRules
     private let transcription: AutoSendParakeetService
     private let workflow: AutoSendWorkflow
     private let phaseRelay: AutoSendPhaseRelay
@@ -228,11 +229,18 @@ final class AutoSendState: ObservableObject {
             recording?.updatePreferredMicrophoneID(id)
         }
         let delivery = AutoSendDeliveryAdapter(settings: settings)
+        // AIR's manual rules (read only) and the lexicon's rules, re-read for every recording.
+        let replacementRules = SharedReplacementRules()
+        self.replacementRules = replacementRules
         workflow = AutoSendWorkflow(environment: AutoSendWorkflowEnvironment(
             capture: recording,
             transcription: transcription,
             delivery: delivery,
+            applyRules: { [replacementRules] in
+                ReplacementRuleEngine.apply($0, rules: replacementRules.currentRules())
+            },
             normalize: { TranscriptTextNormalizer.normalizeSpokenNumbers(in: $0) },
+            archive: { AutoSendTranscriptArchive.save($0) },
             phaseDidChange: { [weak phaseRelay] update in
                 Task { @MainActor in
                     phaseRelay?.publish(update)
@@ -600,5 +608,22 @@ final class AutoSendState: ObservableObject {
         case .toggle:
             return "Recording. Press \(settings.recordingShortcut.displayName) again to send."
         }
+    }
+}
+
+/// Writes one archive record per ASR recording under Auto Send Recorder/TranscriptTruth.
+enum AutoSendTranscriptArchive {
+    static func save(_ evidence: AutoSendTranscriptEvidence) {
+        TranscriptArchiveStore.saveAutoSend(
+            audioURL: evidence.audioURL,
+            outcome: TranscriptRuleOutcome(
+                recognizer: evidence.recognizerText,
+                afterRules: evidence.afterRulesText,
+                final: evidence.finalText
+            ),
+            deliveredText: evidence.deliveredText,
+            deliveredVia: evidence.disposition?.archiveLabel,
+            message: evidence.failure
+        )
     }
 }

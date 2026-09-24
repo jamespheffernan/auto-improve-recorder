@@ -10,14 +10,6 @@ struct UserDictionaryEntry: Codable, Equatable, Identifiable {
     var createdAt: Date
 }
 
-struct DictionaryReplacementRule: Codable, Equatable, Identifiable {
-    var id: UUID
-    var phrase: String
-    var replacement: String
-    var source: String
-    var createdAt: Date
-}
-
 struct DictionaryImportResult: Equatable {
     var sourceURL: URL?
     var addedEntries: Int
@@ -55,13 +47,22 @@ final class UserDictionaryStore: ObservableObject {
     @Published private(set) var entries: [UserDictionaryEntry]
     @Published private(set) var replacementRules: [DictionaryReplacementRule]
     @Published private(set) var lastLoadError: String?
+    /// Generated terms and rules from ~/.config/lexicon/terms.json, held in memory only.
+    @Published private(set) var lexicon: LexiconSnapshot = .empty
+    @Published private(set) var lexiconLoadError: String?
 
+    private let lexiconReader: LexiconReader?
     private let directoryURL: URL
     private let entriesURL: URL
     private let replacementRulesURL: URL
     private let fileManager: FileManager
 
-    init(directoryURL: URL = UserDictionaryStore.defaultDirectoryURL(), fileManager: FileManager = .default) {
+    init(
+        directoryURL: URL = UserDictionaryStore.defaultDirectoryURL(),
+        fileManager: FileManager = .default,
+        lexiconReader: LexiconReader? = nil
+    ) {
+        self.lexiconReader = lexiconReader
         self.directoryURL = directoryURL
         self.entriesURL = directoryURL.appendingPathComponent("dictionary.json")
         self.replacementRulesURL = directoryURL.appendingPathComponent("replacement-rules.json")
@@ -69,10 +70,31 @@ final class UserDictionaryStore: ObservableObject {
         self.entries = []
         self.replacementRules = []
         load()
+        reloadLexicon()
     }
 
+    /// Terms for the cleanup prompt: manual entries first, then the top 50 lexicon terms.
     var currentSnapshotString: String {
-        entries.map(\.text).joined(separator: ",")
+        DictionaryMerge.cleanupTerms(manual: entries.map(\.text), lexicon: lexicon.terms).joined(separator: ",")
+    }
+
+    /// Terms for a recogniser that takes vocabulary: at most 20 terms or about 150 tokens.
+    var transcriptionVocabularyString: String {
+        DictionaryMerge.transcriptionTerms(manual: entries.map(\.text), lexicon: lexicon.terms).joined(separator: ",")
+    }
+
+    /// Manual rules plus lexicon rules; a manual rule for the same phrase wins.
+    var effectiveReplacementRules: [DictionaryReplacementRule] {
+        DictionaryMerge.rules(manual: replacementRules, lexicon: lexicon.rules)
+    }
+
+    /// Re-reads terms.json. Call before taking a recording's snapshot.
+    func reloadLexicon() {
+        guard let lexiconReader else { return }
+        let snapshot = lexiconReader.reload()
+        if snapshot != lexicon { lexicon = snapshot }
+        let error = lexiconReader.lastError
+        if error != lexiconLoadError { lexiconLoadError = error }
     }
 
     @discardableResult
@@ -147,7 +169,7 @@ final class UserDictionaryStore: ObservableObject {
     }
 
     func applyReplacementRules(to text: String) -> String {
-        Self.applyReplacementRules(text, rules: replacementRules)
+        Self.applyReplacementRules(text, rules: effectiveReplacementRules)
     }
 
     @discardableResult
@@ -203,31 +225,7 @@ final class UserDictionaryStore: ObservableObject {
     }
 
     nonisolated static func applyReplacementRules(_ text: String, rules: [DictionaryReplacementRule]) -> String {
-        var result = text
-        let orderedRules = rules.sorted {
-            if $0.phrase.count == $1.phrase.count {
-                return $0.createdAt > $1.createdAt
-            }
-            return $0.phrase.count > $1.phrase.count
-        }
-
-        for rule in orderedRules {
-            let phrase = normalizedText(rule.phrase)
-            guard !phrase.isEmpty else { continue }
-            let pattern = replacementPattern(for: phrase)
-            guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
-                continue
-            }
-            let range = NSRange(result.startIndex..<result.endIndex, in: result)
-            result = regex.stringByReplacingMatches(
-                in: result,
-                options: [],
-                range: range,
-                withTemplate: replacementTemplate(for: rule.replacement)
-            )
-        }
-
-        return result
+        ReplacementRuleEngine.apply(text, rules: rules)
     }
 
     nonisolated static func defaultDirectoryURL() -> URL {
@@ -308,27 +306,6 @@ final class UserDictionaryStore: ObservableObject {
 
     nonisolated private static func dedupeKey(_ text: String) -> String {
         normalizedText(text).folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
-    }
-
-    nonisolated private static func replacementPattern(for phrase: String) -> String {
-        let escaped = NSRegularExpression.escapedPattern(for: phrase)
-        let prefix = isWordBoundaryCharacter(phrase.first) ? #"(?<![\p{L}\p{N}_])"# : ""
-        let suffix = isWordBoundaryCharacter(phrase.last) ? #"(?![\p{L}\p{N}_])"# : ""
-        return prefix + escaped + suffix
-    }
-
-    nonisolated private static func replacementTemplate(for replacement: String) -> String {
-        replacement
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "$", with: "\\$")
-    }
-
-    nonisolated private static func isWordBoundaryCharacter(_ character: Character?) -> Bool {
-        guard let character else { return false }
-        let underscore = UnicodeScalar("_")
-        return character.unicodeScalars.allSatisfy {
-            CharacterSet.alphanumerics.contains($0) || $0 == underscore
-        }
     }
 }
 

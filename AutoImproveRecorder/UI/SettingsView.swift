@@ -80,7 +80,7 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
         case .providers:
             return "Cloud keys and local Ollama settings."
         case .dictionary:
-            return "Words and phrase replacements to preserve."
+            return "Terms, replacement rules and the generated lexicon."
         case .readiness:
             return "Permissions, diagnostics, and current app status."
         }
@@ -1221,6 +1221,20 @@ private struct DictionarySettingsSection: View {
     var body: some View {
         VStack(spacing: 0) {
             SettingsGroup(
+                title: "In the current mode",
+                subtitle: "What the dictionary does with your settings as they are now."
+            ) {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(currentModeLines, id: \.self) { line in
+                        Text(line)
+                            .font(.system(size: 12))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            SettingsGroup(
                 title: "Terms",
                 subtitle: "Names and phrases AIR should recognize and preserve."
             ) {
@@ -1316,6 +1330,40 @@ private struct DictionarySettingsSection: View {
             }
 
             SettingsGroup(
+                title: "Lexicon",
+                subtitle: "Generated from your work in ~/.config/lexicon/terms.json. Read only here; your own terms and rules above take precedence."
+            ) {
+                Text("\(store.lexicon.terms.count) terms, \(store.lexicon.rules.count) rules")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                ForEach(store.lexicon.rules) { rule in
+                    HStack(spacing: 8) {
+                        Text(rule.phrase)
+                            .font(.system(size: 13, weight: .medium))
+                            .lineLimit(1)
+                        Image(systemName: "arrow.right")
+                            .foregroundStyle(.secondary)
+                        Text(rule.replacement)
+                            .font(.system(size: 13))
+                            .lineLimit(1)
+                        Spacer()
+                    }
+                }
+                if !store.lexicon.terms.isEmpty {
+                    Text("Top terms: " + store.lexicon.terms.prefix(12).joined(separator: ", "))
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if let lexiconError = store.lexiconLoadError {
+                    Text(lexiconError)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            SettingsGroup(
                 title: "Import",
                 subtitle: "Bring in terms and rules from Superwhisper."
             ) {
@@ -1339,6 +1387,25 @@ private struct DictionarySettingsSection: View {
                 }
             }
         }
+        .onAppear { store.reloadLexicon() }
+    }
+
+    private var currentModeLines: [String] {
+        let mode = state.transcriptionMode
+        let rules = "Replacement rules run on every recording, before anything else reads the text: \(store.replacementRules.count) of yours and \(store.lexicon.rules.count) from the lexicon."
+        let recogniser = mode.takesVocabulary
+            ? "\(mode.label) receives up to 20 terms as a spelling hint."
+            : "\(mode.label) takes no vocabulary, so terms do not reach the recogniser."
+        let cleanup: String
+        switch state.autoImproveMode {
+        case .off:
+            cleanup = "Auto Improve is off, so the cleanup prompt, and the terms in it, run only when you choose Improve."
+        case .manual:
+            cleanup = "Terms reach the cleanup prompt only when you choose Improve."
+        case .automatic:
+            cleanup = "Terms reach the cleanup prompt for recordings of \(state.thresholdWords) words or more; shorter recordings get the rules only."
+        }
+        return [rules, recogniser, cleanup]
     }
 
     private func addEntry() {
