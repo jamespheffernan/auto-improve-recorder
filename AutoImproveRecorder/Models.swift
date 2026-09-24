@@ -552,7 +552,7 @@ enum TranscriptionMode: String, CaseIterable, Identifiable, Codable {
         case .localParakeetCppResident:
             return "Parakeet.cpp Resident"
         case .localParakeetStreaming:
-            return "Parakeet Live (resident)"
+            return "Parakeet Live (Recommended)"
         case .appleLocal:
             return "Apple Speech"
         case .openAIAPI:

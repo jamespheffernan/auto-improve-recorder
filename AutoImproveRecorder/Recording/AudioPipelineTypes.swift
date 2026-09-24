@@ -14,13 +14,19 @@ enum RealtimeAudioFormat: String, Codable, Equatable {
     var bytesPerFrame: Int { MemoryLayout<Int16>.size }
 }
 
-struct CapturedAudioBuffer {
+/// One owned copy of a microphone callback shared by every active consumer.
+///
+/// `AVAudioPCMBuffer` is mutable, but AIR treats `buffer` as read-only after
+/// this object is published. The tap buffer is copied once so CoreAudio can
+/// reuse its storage while archive and realtime queues retain this block.
+final class CapturedAudioBuffer: @unchecked Sendable {
     let sequence: UInt64
     let capturedAtHostTime: UInt64
     let receivedAt: Date
     let format: AVAudioFormat
     let frameLength: AVAudioFrameCount
     let buffer: AVAudioPCMBuffer
+    let byteCount: Int
 
     init(
         sequence: UInt64,
@@ -34,6 +40,128 @@ struct CapturedAudioBuffer {
         self.format = buffer.format
         self.frameLength = buffer.frameLength
         self.buffer = buffer
+        self.byteCount = Self.byteCount(of: buffer)
+    }
+
+    static func copying(
+        sequence: UInt64,
+        capturedAtHostTime: UInt64 = 0,
+        receivedAt: Date = Date(),
+        buffer: AVAudioPCMBuffer
+    ) -> CapturedAudioBuffer? {
+        guard let copiedBuffer = AVAudioPCMBuffer(
+            pcmFormat: buffer.format,
+            frameCapacity: buffer.frameLength
+        ) else {
+            return nil
+        }
+        copiedBuffer.frameLength = buffer.frameLength
+
+        let sourceBuffers = UnsafeMutableAudioBufferListPointer(
+            UnsafeMutablePointer(mutating: buffer.audioBufferList)
+        )
+        let destinationBuffers = UnsafeMutableAudioBufferListPointer(
+            copiedBuffer.mutableAudioBufferList
+        )
+
+        for index in 0..<min(sourceBuffers.count, destinationBuffers.count) {
+            guard let sourceData = sourceBuffers[index].mData,
+                  let destinationData = destinationBuffers[index].mData else {
+                continue
+            }
+            let byteCount = Int(sourceBuffers[index].mDataByteSize)
+            memcpy(destinationData, sourceData, byteCount)
+            destinationBuffers[index].mDataByteSize = sourceBuffers[index].mDataByteSize
+        }
+
+        return CapturedAudioBuffer(
+            sequence: sequence,
+            capturedAtHostTime: capturedAtHostTime,
+            receivedAt: receivedAt,
+            buffer: copiedBuffer
+        )
+    }
+
+    private static func byteCount(of buffer: AVAudioPCMBuffer) -> Int {
+        UnsafeMutableAudioBufferListPointer(
+            UnsafeMutablePointer(mutating: buffer.audioBufferList)
+        ).reduce(0) { $0 + Int($1.mDataByteSize) }
+    }
+}
+
+enum AudioCaptureFailure: LocalizedError, Equatable, Sendable {
+    case sharedBufferAllocationFailed(sequence: UInt64)
+
+    var errorDescription: String? {
+        switch self {
+        case .sharedBufferAllocationFailed(let sequence):
+            return "Audio capture could not allocate shared buffer \(sequence). The recording contains a gap and cannot be transcribed safely."
+        }
+    }
+}
+
+enum AudioCaptureEvent: Sendable {
+    case captured(CapturedAudioBuffer)
+    case failure(AudioCaptureFailure)
+}
+
+/// Creates the one owned tap copy and turns allocation failure into data.
+/// The injected copier is the test seam; production still allocates exactly
+/// one shared block and does not retain a buffer pool.
+struct CapturedAudioBufferFactory {
+    typealias Copier = (_ sequence: UInt64, _ buffer: AVAudioPCMBuffer) -> CapturedAudioBuffer?
+
+    private let copier: Copier
+
+    init(_ copier: @escaping Copier = { sequence, buffer in
+        CapturedAudioBuffer.copying(sequence: sequence, buffer: buffer)
+    }) {
+        self.copier = copier
+    }
+
+    func capture(sequence: UInt64, buffer: AVAudioPCMBuffer) -> AudioCaptureEvent {
+        guard let captured = copier(sequence, buffer) else {
+            return .failure(.sharedBufferAllocationFailed(sequence: sequence))
+        }
+        return .captured(captured)
+    }
+}
+
+/// A bounded pool of one converter output buffer.
+///
+/// Both realtime conversion paths are serial. Their converted bytes are
+/// materialized before the next call, so one retained buffer can be reused
+/// until the format changes or a larger capacity is required.
+final class ReusableAudioPCMBuffer {
+    typealias Allocator = (_ format: AVAudioFormat, _ capacity: AVAudioFrameCount) -> AVAudioPCMBuffer?
+
+    private let allocator: Allocator
+    private var storage: AVAudioPCMBuffer?
+    private(set) var allocationCount = 0
+
+    init(_ allocator: @escaping Allocator = { format, capacity in
+        AVAudioPCMBuffer(pcmFormat: format, frameCapacity: capacity)
+    }) {
+        self.allocator = allocator
+    }
+
+    func buffer(
+        format: AVAudioFormat,
+        minimumFrameCapacity: AVAudioFrameCount
+    ) -> AVAudioPCMBuffer? {
+        if let storage,
+           storage.format.isEqual(format),
+           storage.frameCapacity >= minimumFrameCapacity {
+            storage.frameLength = 0
+            return storage
+        }
+
+        guard let replacement = allocator(format, minimumFrameCapacity) else {
+            return nil
+        }
+        storage = replacement
+        allocationCount += 1
+        return replacement
     }
 }
 
@@ -87,6 +215,29 @@ struct RecordingCaptureResult {
     var archiveStatus: ArchiveStatus
     var realtimeStatus: RealtimeCaptureStatus
     var diagnostics: AudioCaptureDiagnostics
+}
+
+/// The archive state captured after all queued writes and final validation.
+struct AudioRecordingStopResult {
+    var audioURL: URL?
+    var archiveStatus: ArchiveStatus
+    var diagnostics: AudioCaptureDiagnostics
+
+    var archiveFailureMessage: String? {
+        if let message = diagnostics.archiveFailure {
+            return message
+        }
+        switch archiveStatus {
+        case .finished:
+            return nil
+        case .failed(let message):
+            return message
+        case .writing:
+            return "The audio archive did not finish."
+        case .unavailable:
+            return audioURL == nil ? nil : "The audio archive was unavailable."
+        }
+    }
 }
 
 enum ArchiveStatus: Equatable {

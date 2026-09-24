@@ -1173,6 +1173,9 @@ private struct LocalModelStatusRow: View {
             }
             return "Next: open the required local app or service, then check again."
         case .unavailable:
+            if descriptor.id == .parakeetCppRecommended {
+                return "This Mac will use one-shot Parakeet.cpp Recommended instead."
+            }
             return "No AIR action is available for this Mac right now."
         case .failed:
             return "Next: check again or copy diagnostics if this keeps failing."

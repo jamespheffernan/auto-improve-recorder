@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Auto Send Recorder: AIR's rounded tile and A, with speech becoming motion. -->
+  <rect x="100" y="100" width="824" height="824" rx="184" ry="184" fill="#1B1714"/>
+  <g fill="none" stroke="#F2ECDD" stroke-width="84" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M 342 742 L 494 296 L 646 742"/>
+  </g>
+  <g fill="none" stroke="#FF7A33" stroke-width="48" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M 344 576 L 398 540 L 438 606 L 488 510 L 538 604 L 578 550 L 684 550"/>
+    <path d="M 626 492 L 684 550 L 626 608"/>
+  </g>
+</svg>

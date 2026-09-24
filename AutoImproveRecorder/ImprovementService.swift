@@ -23,18 +23,27 @@ protocol ImprovementService {
 
 struct LiveImprovementService: ImprovementService {
     func improve(_ request: ImprovementServiceRequest) async throws -> String {
-        let engine = makeImproveEngine(
-            mode: request.mode,
-            credentials: request.credentials,
-            ollama: request.ollama
-        )
-        return try await engine.improveStreaming(
-            rawTranscript: request.rawTranscript,
-            outputMode: request.outputMode,
-            modificationStrength: request.modificationStrength,
+        let gateMode = TranscriptEditValueGate.Mode(rawValue: request.outputMode.rawValue)
+            ?? .promptCleanup
+        return try await TranscriptEditValueGate.route(
+            transcript: request.rawTranscript,
+            mode: gateMode,
             dictionarySnapshot: request.dictionarySnapshot,
-            onDelta: request.onDelta
-        )
+            onBypass: request.onDelta
+        ) {
+            let engine = makeImproveEngine(
+                mode: request.mode,
+                credentials: request.credentials,
+                ollama: request.ollama
+            )
+            return try await engine.improveStreaming(
+                rawTranscript: request.rawTranscript,
+                outputMode: request.outputMode,
+                modificationStrength: request.modificationStrength,
+                dictionarySnapshot: request.dictionarySnapshot,
+                onDelta: request.onDelta
+            )
+        }
     }
 
     private func makeImproveEngine(

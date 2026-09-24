@@ -15,8 +15,8 @@ Native macOS menu bar app for:
 - Optional preview window with explicit cleaned/raw transcript switch, copy, paste, and re-run improve from the menu bar.
 - Settings window for OpenAI, Gemini, and Anthropic API keys, transcription mode, improvement provider, auto-improve mode, word threshold, cleanup level, completion clipboard behavior, microphone preference, and Parakeet runtime paths.
 - Transcription modes:
-  - `Local Whisper`: local Field Theory `whisper-server` with `ggml-small.en.bin` and low-latency decoding flags.
-  - `Local Parakeet`: local Field Theory Parakeet server mode only.
+  - `Local Whisper`: legacy local `whisper-server` with `ggml-small.en.bin` and low-latency decoding flags.
+  - `Local Parakeet`: legacy local Python Parakeet server mode only (AIR compatibility).
   - `Apple Speech`: Apple on-device speech transcription where supported.
   - `OpenAI API`: OpenAI file transcription after recording.
   - `Fastest`: OpenAI Realtime streaming transcription while recording, with Parakeet fallback from the saved WAV.
@@ -28,9 +28,23 @@ Native macOS menu bar app for:
   - `Ollama local`: local Ollama cleanup using model `qwen3:4b-instruct`.
     `qwen3.5:0.8b-mlx` or `qwen3.5:0.8b` can be typed into the model field as
     faster experimental modes, but they are less conservative than the default.
-- Local Parakeet adapter backed by Field Theory's persistent `parakeet-transcribe.py --server` mode.
+- Local live transcription contract with the measured parakeet.cpp C-API and Nemotron model as the current provider.
 - OpenAI Realtime transcription adapter using native `URLSessionWebSocketTask`, PCM16 mono 24 kHz audio chunks, and `gpt-4o-transcribe`.
 - Shared Apple local adapter using `SpeechAnalyzer`/`SpeechTranscriber` for transcription and Foundation Models for cleanup.
+
+## Auto Send Recorder
+
+The `AutoSendRecorder` target builds the separate **Auto Send Recorder** menu bar app with identity `com.turfterrace.autosendrecorder`. See [runtime wiring](Docs/PARAKEET_DISCOVERY.md) and [current verification status](Docs/AUTO_SEND_RECORDER_INSTALLED_VERIFICATION.md). The new identity starts a new preferences domain; existing settings and privacy grants do not migrate automatically. On first launch, its three-step setup guide:
+
+1. checks the shared local Parakeet runtime;
+2. explains and requests Microphone and Accessibility access; and
+3. provides a local practice field for the first dictation.
+
+The guide is skippable and can be reopened from **Setup Guide…** in the menu bar. Bluetooth stays off until the user enables **Wireless recorder** in the guide or Settings.
+
+Open **Settings…** to change the global **Record and send** and **Cancel** shortcuts. Both require Control, Option, or Command, cannot be identical, and persist across launches. Existing installs keep `Hyper-R` and `Hyper-Escape` until changed.
+
+The website release includes a universal speech engine. On a fresh Mac, choose **Install speech models** in setup to download and SHA-256 verify the three pinned models (1.75 GB). Setup needs 4 GB of free space. Quit and reopen the app when installation finishes, then complete the permission steps. The installed runtime lives at `~/Library/Application Support/AutoSendRecorder/Runtime/20260918`; the existing shared AIR runtime remains a fallback and is never overwritten. Source builds need the `SpeechRuntime` resource supplied by `Tools/AutoSendRelease/build-runtime.sh` and `package-archive.sh` to offer model installation.
 
 ## Build
 
@@ -67,11 +81,13 @@ The iOS target is configured for iOS 17.0+. It starts with a touch-first record/
 
 1. Launch the app from Xcode or from the built `.app`.
 2. Open Settings from the menu bar item.
-3. Add an OpenAI API key. It is stored in Keychain under service `com.fieldtheory.autoimproverecorder`.
+3. Add an OpenAI API key. AIR stores it in its existing Keychain service, defined in `AutoImproveRecorder/Support/KeychainStore.swift`. ASR does not use this credential store.
 4. Choose a transcription mode:
-   - `Local Whisper` is the default and keeps audio transcription local.
+   - New installs select `Parakeet Live (Recommended)` when its runtime, saved-WAV fallback, and 16 GiB memory gate pass. Otherwise they select one-shot `Parakeet.cpp Recommended`.
+   - `Local Whisper` is an explicit compatibility mode and keeps audio transcription local.
    - `Parakeet.cpp Fast` keeps audio transcription local through AIR's 110M Parakeet.cpp runtime.
-   - `Parakeet.cpp Recommended` keeps audio transcription local through AIR's 0.6B Parakeet.cpp runtime.
+   - `Parakeet Live (Recommended)` keeps Nemotron 0.6B resident and transcribes during recording when the runtime, fallback, and memory gates pass.
+   - `Parakeet.cpp Recommended` remains the explicit one-shot local mode and the saved-WAV fallback for live failures.
    - `Apple Speech` keeps audio transcription local through Apple's Speech framework when supported on this Mac.
    - `OpenAI API` sends the saved recording to OpenAI after recording.
    - `Fastest` streams microphone audio to OpenAI while recording, then finalizes the streaming transcript on stop. If OpenAI streaming cannot start, fails mid-recording, or no API key is saved, the app falls back to Parakeet.cpp Recommended using the temporary WAV.
@@ -108,7 +124,7 @@ The iOS target is configured for iOS 17.0+. It starts with a touch-first record/
 
 ## Transcription behavior
 
-`Parakeet.cpp Fast` and `Parakeet.cpp Recommended` keep transcription local. The app runs AIR's installed `parakeet-cli` against model files under `~/Library/Application Support/AutoImproveRecorder/ParakeetCpp`:
+`Parakeet Live (Recommended)`, `Parakeet.cpp Fast`, and `Parakeet.cpp Recommended` keep transcription local. Live mode uses the resident C API and Nemotron streaming model. The one-shot modes run AIR's installed `parakeet-cli` against model files under `~/Library/Application Support/AutoImproveRecorder/ParakeetCpp`:
 
 ```bash
 "~/Library/Application Support/AutoImproveRecorder/ParakeetCpp/bin/parakeet-cli" \
@@ -139,4 +155,4 @@ See [Docs/MANUAL_TEST_CHECKLIST.md](Docs/MANUAL_TEST_CHECKLIST.md).
 
 ## Discovery notes
 
-See [Docs/PARAKEET_DISCOVERY.md](Docs/PARAKEET_DISCOVERY.md) for exact Field Theory and Parakeet paths found on this Mac.
+See [Docs/PARAKEET_DISCOVERY.md](Docs/PARAKEET_DISCOVERY.md) for current ASR runtime wiring and a separate link to historical discovery evidence. AIR/iOS sections above describe those targets, not ASR requirements.

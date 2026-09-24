@@ -12,24 +12,22 @@ struct AppEnvironment {
     var transcription: any TranscriptionService
     var improvement: any ImprovementService
 
+    @MainActor
     static var live: AppEnvironment {
         AppEnvironment(
             delivery: ClosureDeliveryService(
                 contextProvider: { promptForPermission in
                     AccessibilityPasteController.currentDeliveryContext(promptForPermission: promptForPermission)
                 },
-                pasteAction: { text, leaveClipboardChanged, submitAfterPaste in
-                    try AccessibilityPasteController.paste(
-                        text: text,
-                        leaveClipboardChanged: leaveClipboardChanged,
-                        submitAfterPaste: submitAfterPaste
-                    )
+                pasteAction: { request in
+                    try await AccessibilityPasteController.paste(request)
                 },
                 copyAction: { text in
                     let pasteboard = NSPasteboard.general
                     pasteboard.clearContents()
                     pasteboard.setString(text, forType: .string)
-                }
+                },
+                productDisplayName: "Auto Improve Recorder"
             ),
             settings: UserDefaultsSettingsStore(),
             secrets: KeychainSecretsStore(),

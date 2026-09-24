@@ -1,0 +1,20 @@
+[
+  {
+    "filename": "tdt-0.6b-v2-q4_k.gguf",
+    "url": "https://huggingface.co/mudler/parakeet-cpp-gguf/resolve/bf0af9f425fa01809cadec671b3cb672709d13e9/tdt-0.6b-v2-q4_k.gguf",
+    "sha256": "417e8a8e994ec4bcce7010ab1e205f8b88291a4535ddd3152d24d0e19517bfc8",
+    "bytes": 638373152
+  },
+  {
+    "filename": "tdt_ctc-110m-q4_k.gguf",
+    "url": "https://huggingface.co/mudler/parakeet-cpp-gguf/resolve/bf0af9f425fa01809cadec671b3cb672709d13e9/tdt_ctc-110m-q4_k.gguf",
+    "sha256": "2d1d90edac07326b20a896440628c50323530cf28c7e7ca99d439bad1dee9abf",
+    "bytes": 131387520
+  },
+  {
+    "filename": "nemotron-3.5-asr-streaming-0.6b-q8_0.gguf",
+    "url": "https://huggingface.co/mudler/parakeet-cpp-gguf/resolve/bf0af9f425fa01809cadec671b3cb672709d13e9/nemotron-3.5-asr-streaming-0.6b-q8_0.gguf",
+    "sha256": "ba2f13eccd4a5245be728f77e6149bd6a4fdcdd133ff2e08ac6005bcef7a99f1",
+    "bytes": 983696512
+  }
+]

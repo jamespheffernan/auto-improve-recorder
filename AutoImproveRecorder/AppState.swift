@@ -130,7 +130,7 @@ final class AppState: ObservableObject {
     private var activeSpaceLatchRegistrationFailed = false
     private let realtimeAudioSink = OpenAIRealtimeAudioSink()
     private var activeStreamingTranscriber: OpenAIRealtimeTranscriber?
-    private var activeParakeetStreamSession: ParakeetLiveStreamSession?
+    private var activeParakeetStreamSession: (any LocalLiveTranscriptionSession)?
     private var activeRealtimeStartupTask: Task<Void, Never>?
     private var activeRecordingID: UUID?
     private var activeProcessingRecordingID: UUID?
@@ -176,7 +176,7 @@ final class AppState: ObservableObject {
         static let lastOpenAIRealtimeErrorDetails = "lastOpenAIRealtimeErrorDetails"
     }
 
-    init(environment: AppEnvironment = .live) {
+    init(environment: AppEnvironment) {
         self.environment = environment
         let credentials = environment.secrets.loadCredentials()
         apiKey = credentials.openAIAPIKey
@@ -351,7 +351,11 @@ final class AppState: ObservableObject {
                 return nil
             }
 
-            return FocusedApp(bundleIdentifier: bundleIdentifier, displayName: app.localizedName)
+            return FocusedApp(
+                bundleIdentifier: bundleIdentifier,
+                displayName: app.localizedName,
+                processIdentifier: app.processIdentifier
+            )
         }
         .sorted { lhs, rhs in
             lhs.displayName.localizedCaseInsensitiveCompare(rhs.displayName) == .orderedAscending
@@ -414,8 +418,16 @@ final class AppState: ObservableObject {
     }
 
     private func applyLocalModelPreset(_ preset: LocalModelPreset) {
-        if let transcriptionMode = TranscriptionMode(rawValue: preset.transcriptionModeRawValue) {
-            self.transcriptionMode = transcriptionMode
+        if let requestedMode = TranscriptionMode(rawValue: preset.transcriptionModeRawValue) {
+            let wantsLiveRecommendation = preset == .recommended || preset == .allLocal
+            let canUseLiveRecommendation = ParakeetLiveSafetyPolicy.shouldSelectByDefault(
+                physicalMemoryBytes: ProcessInfo.processInfo.physicalMemory,
+                liveRuntimeInstalled: RecommendedLiveTranscription.isAvailable,
+                offlineFallbackInstalled: ParakeetCppTranscriber.isInstalled(variant: .recommended06B)
+            )
+            self.transcriptionMode = wantsLiveRecommendation && !canUseLiveRecommendation
+                ? .localParakeetCppRecommended
+                : requestedMode
         }
 
         if let improvementModeRawValue = preset.improvementModeRawValue,
@@ -429,13 +441,17 @@ final class AppState: ObservableObject {
 
         switch preset {
         case .recommended:
-            statusMessage = "Using Parakeet.cpp Recommended for local transcription."
+            statusMessage = transcriptionMode == .localParakeetStreaming
+                ? "Using recommended live Parakeet transcription."
+                : "Live Parakeet does not meet this Mac's runtime gates; using one-shot Parakeet.cpp Recommended."
         case .resident:
             statusMessage = "Using resident Parakeet.cpp for local transcription."
         case .fast:
             statusMessage = "Using Parakeet.cpp Fast for local transcription."
         case .allLocal:
-            statusMessage = "Using Parakeet.cpp Recommended with Ollama qwen3.5 local cleanup."
+            statusMessage = transcriptionMode == .localParakeetStreaming
+                ? "Using recommended live Parakeet with Ollama qwen3.5 local cleanup."
+                : "Using one-shot Parakeet.cpp Recommended with Ollama qwen3.5 local cleanup."
         case .appleSpeech:
             statusMessage = "Using Apple Speech for local transcription when available."
         case .cloudRealtime:
@@ -588,26 +604,31 @@ final class AppState: ObservableObject {
         let selectedOllamaBaseURL = ollamaBaseURL
         let selectedOllamaModel = ollamaModel
         let hasOpenAIKey = !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let parakeetWarmupTargets = ParakeetWarmupPolicy.targets(
+            transcriptionModeRawValue: selectedTranscriptionMode.rawValue
+        )
 
         Task.detached(priority: .utility) {
             switch selectedTranscriptionMode {
             case .localWhisper:
                 await WhisperCppTranscriber().warmUp()
-            case .localParakeetCppFast:
-                await ParakeetCppWarmKeeper.shared.warmIfStale(variant: .fast110M)
-            case .localParakeetCppRecommended:
-                await Self.warmParakeetCppRecommended()
-            case .localParakeetCppResident:
-                await Self.warmParakeetResidentRecommended()
-            case .localParakeetStreaming:
-                // Live mode is explicitly resident. Its offline fallback uses
-                // the one-shot CLI path, warmed through page/shader caches.
-                await ParakeetLiveStreamSession.warmUp()
-                await Self.warmParakeetCppRecommended()
-            case .fastest:
-                // Realtime is primary when a key exists, but failures fall back
-                // to one-shot Parakeet Recommended, so warm its caches only.
-                await Self.warmParakeetCppRecommended()
+            case .localParakeetCppFast,
+                 .localParakeetCppRecommended,
+                 .localParakeetCppResident,
+                 .localParakeetStreaming,
+                 .fastest:
+                for target in parakeetWarmupTargets {
+                    switch target {
+                    case .fastOneShot:
+                        await ParakeetCppWarmKeeper.shared.warmIfStale(variant: .fast110M)
+                    case .recommendedOneShot:
+                        await Self.warmParakeetCppRecommended()
+                    case .residentRecommended:
+                        await Self.warmParakeetResidentRecommended()
+                    case .liveRecommended:
+                        await RecommendedLiveTranscription.warmUp()
+                    }
+                }
             case .appleLocal, .openAIAPI:
                 break
             }
@@ -870,6 +891,7 @@ final class AppState: ObservableObject {
         }
         endMicrophoneUseLock()
         activeMicrophoneHealthMonitor = nil
+        let captureFailure = realtimeAudioSink.captureFailureSnapshot()
         realtimeAudioSink.clear()
         activeRecordingID = nil
 
@@ -891,6 +913,20 @@ final class AppState: ObservableObject {
             statusMessage = "Recording discarded."
             hideProcessingSignal?()
             prewarmRecordingStartResources()
+            return
+        }
+
+        if let captureFailure {
+            if let streamingTranscriber {
+                Task { await streamingTranscriber.cancel() }
+            }
+            parakeetStream?.cancel()
+            activeProcessingRecordingID = nil
+            recordingStartedAt = nil
+            let message = captureFailure.localizedDescription
+            failWithMessage(message)
+            persistTranscriptArchive(transcriptionEngineName: nil)
+            activeMicrophoneResolution = nil
             return
         }
 
@@ -991,12 +1027,15 @@ final class AppState: ObservableObject {
 
     func pasteDisplayText() {
         let text = displayText
-        do {
-            try environment.delivery.pasteManually(text)
-            statusMessage = "Pasted."
-        } catch {
-            copyToPasteboard(text)
-            statusMessage = "Copied. Enable Accessibility for AutoImproveRecorder in System Settings to paste automatically."
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                try await environment.delivery.pasteManually(text)
+                statusMessage = "Pasted."
+            } catch {
+                copyToPasteboard(text)
+                statusMessage = "Copied. Enable Accessibility for Auto Improve Recorder in System Settings to paste automatically."
+            }
         }
     }
 
@@ -1179,7 +1218,7 @@ final class AppState: ObservableObject {
         at audioURL: URL,
         initialResolution: MicrophoneResolution,
         audioSink: OpenAIRealtimeAudioSink,
-        parakeetStream: ParakeetLiveStreamSession?,
+        parakeetStream: (any LocalLiveTranscriptionSession)?,
         requestedAt: Date
     ) throws -> URL {
         do {
@@ -1218,7 +1257,7 @@ final class AppState: ObservableObject {
         at audioURL: URL,
         resolution: MicrophoneResolution,
         audioSink: OpenAIRealtimeAudioSink,
-        parakeetStream: ParakeetLiveStreamSession?,
+        parakeetStream: (any LocalLiveTranscriptionSession)?,
         requestedAt: Date
     ) throws -> URL {
         let healthMonitor = shouldMonitorForPreferredMicrophoneHealth(resolution)
@@ -1229,20 +1268,30 @@ final class AppState: ObservableObject {
             at: audioURL,
             microphone: resolution.device,
             bufferSize: environment.recording.fastStartBufferSize,
-            streamHandler: { [weak self] buffer in
-                if let event = healthMonitor?.observe(buffer) {
+            streamHandler: { [weak self] captureEvent in
+                switch captureEvent {
+                case .captured(let captured):
+                    if let event = healthMonitor?.observe(captured.buffer) {
+                        Task { @MainActor [weak self] in
+                            self?.handleMicrophoneHealthEvent(
+                                event,
+                                resolution: resolution,
+                                audioURL: audioURL,
+                                audioSink: audioSink,
+                                requestedAt: requestedAt
+                            )
+                        }
+                    }
+                    audioSink.appendAudioBuffer(captured)
+                    parakeetStream?.append(captured)
+                case .failure(let failure):
+                    audioSink.recordCaptureFailure(failure)
+                    parakeetStream?.recordCaptureFailure(failure)
                     Task { @MainActor [weak self] in
-                        self?.handleMicrophoneHealthEvent(
-                            event,
-                            resolution: resolution,
-                            audioURL: audioURL,
-                            audioSink: audioSink,
-                            requestedAt: requestedAt
-                        )
+                        guard let self, case .recording = self.phase else { return }
+                        self.statusMessage = "Recording degraded. Stop and try again. \(failure.localizedDescription)"
                     }
                 }
-                audioSink.appendAudioBuffer(buffer)
-                parakeetStream?.append(buffer)
             },
             onFirstBuffer: {
                 NSLog(
@@ -1253,10 +1302,10 @@ final class AppState: ObservableObject {
         )
     }
 
-    private func makeParakeetStreamSessionIfNeeded() -> ParakeetLiveStreamSession? {
+    private func makeParakeetStreamSessionIfNeeded() -> (any LocalLiveTranscriptionSession)? {
         guard transcriptionMode == .localParakeetStreaming,
-              ParakeetLiveStreamSession.isAvailable else { return nil }
-        return ParakeetLiveStreamSession.begin()
+              RecommendedLiveTranscription.isAvailable else { return nil }
+        return RecommendedLiveTranscription.begin()
     }
 
     private func shouldMonitorForPreferredMicrophoneHealth(_ resolution: MicrophoneResolution) -> Bool {
@@ -1420,7 +1469,11 @@ final class AppState: ObservableObject {
 
         activeStreamingTranscriber = streamingTranscriber
         let replayedBufferCount = realtimeAudioSink.setTranscriber(streamingTranscriber)
-        statusMessage = "Recording with OpenAI realtime transcription."
+        if let captureFailure = realtimeAudioSink.captureFailureSnapshot() {
+            statusMessage = "Recording degraded. Stop and try again. \(captureFailure.localizedDescription)"
+        } else {
+            statusMessage = "Recording with OpenAI realtime transcription."
+        }
         NSLog(
             "Recording startup: OpenAI realtime ready after %.3fs; replayed %d buffered audio buffers.",
             Date().timeIntervalSince(requestedAt),
@@ -1431,7 +1484,7 @@ final class AppState: ObservableObject {
     private func processRecording(
         audioURL: URL,
         streamingTranscriber: OpenAIRealtimeTranscriber?,
-        parakeetStream: ParakeetLiveStreamSession? = nil
+        parakeetStream: (any LocalLiveTranscriptionSession)? = nil
     ) async {
         do {
             let dictionarySnapshot = session.dictionarySnapshot
@@ -1456,12 +1509,12 @@ final class AppState: ObservableObject {
                 phase = .ready
                 showRawTranscript = true
                 statusMessage = "Showing raw transcript."
-                finishProcessing()
+                await finishProcessing()
             case .manual:
                 phase = .ready
                 showRawTranscript = true
                 statusMessage = "Transcript ready."
-                finishProcessing()
+                await finishProcessing()
             case .automatic:
                 if wordCount(transcript) >= thresholdWords {
                     await improveCurrentTranscript(force: false)
@@ -1469,7 +1522,7 @@ final class AppState: ObservableObject {
                     phase = .ready
                     showRawTranscript = true
                     statusMessage = "Transcript ready."
-                    finishProcessing()
+                    await finishProcessing()
                 }
             }
         } catch {
@@ -1485,14 +1538,14 @@ final class AppState: ObservableObject {
             phase = .failed
             processingVisualState = .failed
             statusMessage = error.localizedDescription
-            finishProcessing()
+            await finishProcessing()
         }
     }
 
     private func transcribe(
         audioURL: URL,
         streamingTranscriber: OpenAIRealtimeTranscriber?,
-        parakeetStream: ParakeetLiveStreamSession?,
+        parakeetStream: (any LocalLiveTranscriptionSession)?,
         dictionarySnapshot: String
     ) async throws -> TranscriptionResult {
         let request = TranscriptionServiceRequest(
@@ -1585,7 +1638,7 @@ final class AppState: ObservableObject {
             persistTranscriptArchive(transcriptionEngineName: nil)
         }
 
-        finishProcessing()
+        await finishProcessing()
     }
 
     private var cleanupStrength: Int {
@@ -1674,7 +1727,7 @@ final class AppState: ObservableObject {
         }
     }
 
-    private func finishProcessing() {
+    private func finishProcessing() async {
         unregisterCancelHotKey?()
         defer {
             let processingRecordingID = activeProcessingRecordingID
@@ -1689,7 +1742,7 @@ final class AppState: ObservableObject {
             statusMessage = "Delivering text."
             showProcessingSignal?(.delivering)
 
-            let deliveryState = completeWithText(text)
+            let deliveryState = await completeWithText(text)
             processingVisualState = deliveryState
             phase = .ready
             flashReadySignal?(deliveryState)
@@ -1702,8 +1755,8 @@ final class AppState: ObservableObject {
     }
 
     @discardableResult
-    private func completeWithText(_ text: String) -> ProcessingVisualState {
-        let result = environment.delivery.deliver(
+    private func completeWithText(_ text: String) async -> ProcessingVisualState {
+        let result = await environment.delivery.deliver(
             DeliveryRequest(
                 text: text,
                 globalSettings: GlobalCompletionSettings(
@@ -1932,14 +1985,15 @@ private final class OpenAIRealtimeAudioSink {
     private var transcriber: OpenAIRealtimeTranscriber?
     private var shouldBufferPendingAudio = false
     private var isReplayingPendingAudio = false
-    private var pendingBuffers: BoundedAudioQueue<AVAudioPCMBuffer>
+    private var pendingBuffers: BoundedAudioQueue<CapturedAudioBuffer>
+    private var captureFailure: AudioCaptureFailure?
     private var firstPendingBufferAt: Date?
     private var maxReplayLagMs: Double = 0
 
     init() {
-        pendingBuffers = BoundedAudioQueue<AVAudioPCMBuffer>(
+        pendingBuffers = BoundedAudioQueue<CapturedAudioBuffer>(
             maxBytes: maxPendingAudioBytes,
-            byteCount: Self.byteCount
+            byteCount: \.byteCount
         )
     }
 
@@ -1949,6 +2003,7 @@ private final class OpenAIRealtimeAudioSink {
         shouldBufferPendingAudio = bufferPendingAudio
         isReplayingPendingAudio = false
         pendingBuffers.reset()
+        captureFailure = nil
         firstPendingBufferAt = nil
         maxReplayLagMs = 0
         lock.unlock()
@@ -1957,6 +2012,15 @@ private final class OpenAIRealtimeAudioSink {
     @discardableResult
     func setTranscriber(_ transcriber: OpenAIRealtimeTranscriber) -> Int {
         lock.lock()
+        if let captureFailure {
+            shouldBufferPendingAudio = false
+            isReplayingPendingAudio = false
+            pendingBuffers.reset()
+            firstPendingBufferAt = nil
+            lock.unlock()
+            transcriber.recordCaptureFailure(captureFailure)
+            return 0
+        }
         self.transcriber = transcriber
         shouldBufferPendingAudio = false
         isReplayingPendingAudio = true
@@ -1992,16 +2056,19 @@ private final class OpenAIRealtimeAudioSink {
         return replayedBufferCount
     }
 
-    func appendAudioBuffer(_ buffer: AVAudioPCMBuffer) {
+    func appendAudioBuffer(_ captured: CapturedAudioBuffer) {
         lock.lock()
+        guard captureFailure == nil else {
+            lock.unlock()
+            return
+        }
         if let transcriber, !isReplayingPendingAudio {
             lock.unlock()
-            transcriber.appendAudioBuffer(buffer)
+            transcriber.appendAudioBuffer(captured)
             return
         }
 
-        guard (shouldBufferPendingAudio || isReplayingPendingAudio),
-              let copiedBuffer = Self.copyBuffer(buffer) else {
+        guard shouldBufferPendingAudio || isReplayingPendingAudio else {
             lock.unlock()
             return
         }
@@ -2010,11 +2077,32 @@ private final class OpenAIRealtimeAudioSink {
             firstPendingBufferAt = Date()
         }
         let droppedBefore = pendingBuffers.droppedElements
-        pendingBuffers.append(copiedBuffer)
+        pendingBuffers.append(captured)
         if pendingBuffers.droppedElements > droppedBefore {
             firstPendingBufferAt = Date()
         }
         lock.unlock()
+    }
+
+    func recordCaptureFailure(_ failure: AudioCaptureFailure) {
+        lock.lock()
+        if captureFailure == nil {
+            captureFailure = failure
+        }
+        let activeTranscriber = transcriber
+        shouldBufferPendingAudio = false
+        isReplayingPendingAudio = false
+        pendingBuffers.reset()
+        firstPendingBufferAt = nil
+        lock.unlock()
+        activeTranscriber?.recordCaptureFailure(failure)
+    }
+
+    func captureFailureSnapshot() -> AudioCaptureFailure? {
+        lock.lock()
+        let failure = captureFailure
+        lock.unlock()
+        return failure
     }
 
     func discardPendingAudio() {
@@ -2033,15 +2121,16 @@ private final class OpenAIRealtimeAudioSink {
         shouldBufferPendingAudio = false
         isReplayingPendingAudio = false
         pendingBuffers.reset()
+        captureFailure = nil
         firstPendingBufferAt = nil
         maxReplayLagMs = 0
         lock.unlock()
     }
 
-    private func recordReplayLag(for buffer: AVAudioPCMBuffer, baseLagMs: Double) {
-        let sampleRate = buffer.format.sampleRate
+    private func recordReplayLag(for captured: CapturedAudioBuffer, baseLagMs: Double) {
+        let sampleRate = captured.format.sampleRate
         guard sampleRate > 0 else { return }
-        let durationMs = Double(buffer.frameLength) / sampleRate * 1000
+        let durationMs = Double(captured.frameLength) / sampleRate * 1000
         lock.lock()
         maxReplayLagMs = max(maxReplayLagMs, baseLagMs + durationMs)
         lock.unlock()
@@ -2057,38 +2146,6 @@ private final class OpenAIRealtimeAudioSink {
         return lines
     }
 
-    private static func byteCount(for buffer: AVAudioPCMBuffer) -> Int {
-        let buffers = UnsafeMutableAudioBufferListPointer(
-            UnsafeMutablePointer(mutating: buffer.audioBufferList)
-        )
-        return buffers.reduce(0) { total, audioBuffer in
-            total + Int(audioBuffer.mDataByteSize)
-        }
-    }
-
-    private static func copyBuffer(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
-        guard let copiedBuffer = AVAudioPCMBuffer(pcmFormat: buffer.format, frameCapacity: buffer.frameLength) else {
-            return nil
-        }
-        copiedBuffer.frameLength = buffer.frameLength
-
-        let sourceBuffers = UnsafeMutableAudioBufferListPointer(
-            UnsafeMutablePointer(mutating: buffer.audioBufferList)
-        )
-        let destinationBuffers = UnsafeMutableAudioBufferListPointer(copiedBuffer.mutableAudioBufferList)
-
-        for index in 0..<min(sourceBuffers.count, destinationBuffers.count) {
-            guard let sourceData = sourceBuffers[index].mData,
-                  let destinationData = destinationBuffers[index].mData else {
-                continue
-            }
-            let byteCount = Int(sourceBuffers[index].mDataByteSize)
-            memcpy(destinationData, sourceData, byteCount)
-            destinationBuffers[index].mDataByteSize = sourceBuffers[index].mDataByteSize
-        }
-
-        return copiedBuffer
-    }
 }
 
 private enum MicrophoneUseLock {

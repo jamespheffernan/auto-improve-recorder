@@ -49,6 +49,68 @@ final class LocalModelInventoryTests: XCTestCase {
         XCTAssertEqual(statuses[.parakeetCppFast]?.state, .installed)
     }
 
+    func testFullLiveRecommendationReportsReady() async {
+        let statuses = await statuses(
+            files: [
+                "/air/bin/parakeet-cli",
+                "/air/capi/libparakeet.dylib",
+                "/air/models/\(LocalModelInventory.recommendedModelFilename)",
+                "/air/models/\(LocalModelInventory.liveRecommendedModelFilename)"
+            ],
+            executables: ["/air/bin/parakeet-cli"],
+            dylibs: ["/air/lib/libggml.dylib", "/air/capi/libggml.dylib"]
+        )
+
+        XCTAssertEqual(statuses[.parakeetCppRecommended]?.state, .ready)
+        XCTAssertTrue(statuses[.parakeetCppRecommended]?.descriptor.capabilities.supportsRealtime == true)
+    }
+
+    func testMissingLiveModelKeepsOneShotRecommendationUsable() async {
+        let statuses = await statuses(
+            files: [
+                "/air/bin/parakeet-cli",
+                "/air/capi/libparakeet.dylib",
+                "/air/models/\(LocalModelInventory.recommendedModelFilename)"
+            ],
+            executables: ["/air/bin/parakeet-cli"],
+            dylibs: ["/air/lib/libggml.dylib", "/air/capi/libggml.dylib"]
+        )
+
+        XCTAssertEqual(statuses[.parakeetCppRecommended]?.state, .installed)
+        XCTAssertTrue(statuses[.parakeetCppRecommended]?.detail.contains("One-shot") == true)
+    }
+
+    func testMissingLiveSymbolsKeepsOneShotRecommendationUsable() async {
+        let status = await fullLiveRecommendationStatus(runtimeCapability: .missingSymbols)
+
+        XCTAssertEqual(status?.state, .installed)
+        XCTAssertTrue(status?.detail.contains("incompatible") == true)
+    }
+
+    func testUnloadableLiveRuntimeKeepsOneShotRecommendationUsable() async {
+        let status = await fullLiveRecommendationStatus(runtimeCapability: .loadFailed)
+
+        XCTAssertEqual(status?.state, .installed)
+        XCTAssertTrue(status?.detail.contains("could not load") == true)
+    }
+
+    func testLiveRecommendationNeedsSixteenGiB() async {
+        let statuses = await statuses(
+            files: [
+                "/air/bin/parakeet-cli",
+                "/air/capi/libparakeet.dylib",
+                "/air/models/\(LocalModelInventory.recommendedModelFilename)",
+                "/air/models/\(LocalModelInventory.liveRecommendedModelFilename)"
+            ],
+            executables: ["/air/bin/parakeet-cli"],
+            dylibs: ["/air/lib/libggml.dylib", "/air/capi/libggml.dylib"],
+            physicalMemoryBytes: 8 * 1_024 * 1_024 * 1_024
+        )
+
+        XCTAssertEqual(statuses[.parakeetCppRecommended]?.state, .installed)
+        XCTAssertTrue(statuses[.parakeetCppRecommended]?.detail.contains("One-shot") == true)
+    }
+
     func testResidentRuntimeReportsInstalledOnlyWhenCAPIIsPresent() async {
         let statuses = await statuses(
             files: [
@@ -65,10 +127,12 @@ final class LocalModelInventoryTests: XCTestCase {
         let statuses = await statuses(
             files: [
                 "/air/bin/parakeet-cli",
-                "/air/models/\(LocalModelInventory.recommendedModelFilename)"
+                "/air/capi/libparakeet.dylib",
+                "/air/models/\(LocalModelInventory.recommendedModelFilename)",
+                "/air/models/\(LocalModelInventory.liveRecommendedModelFilename)"
             ],
             executables: ["/air/bin/parakeet-cli"],
-            dylibs: ["/air/lib/libggml.dylib"],
+            dylibs: ["/air/lib/libggml.dylib", "/air/capi/libggml.dylib"],
             ollamaTags: [LocalModelInventory.qwenOllamaModel]
         )
 
@@ -80,10 +144,12 @@ final class LocalModelInventoryTests: XCTestCase {
         let statuses = await statuses(
             files: [
                 "/air/bin/parakeet-cli",
-                "/air/models/\(LocalModelInventory.recommendedModelFilename)"
+                "/air/capi/libparakeet.dylib",
+                "/air/models/\(LocalModelInventory.recommendedModelFilename)",
+                "/air/models/\(LocalModelInventory.liveRecommendedModelFilename)"
             ],
             executables: ["/air/bin/parakeet-cli"],
-            dylibs: ["/air/lib/libggml.dylib"],
+            dylibs: ["/air/lib/libggml.dylib", "/air/capi/libggml.dylib"],
             ollamaTags: ["llama3.2"]
         )
 
@@ -125,7 +191,9 @@ final class LocalModelInventoryTests: XCTestCase {
         ollamaTags: [String] = [],
         ollamaError: Error? = nil,
         hasOpenAIAPIKey: Bool = false,
-        osVersion: OperatingSystemVersion = OperatingSystemVersion(majorVersion: 26, minorVersion: 0, patchVersion: 0)
+        osVersion: OperatingSystemVersion = OperatingSystemVersion(majorVersion: 26, minorVersion: 0, patchVersion: 0),
+        physicalMemoryBytes: UInt64 = 24 * 1_024 * 1_024 * 1_024,
+        runtimeCapability: ParakeetLiveRuntimeCapability = .ready
     ) async -> [LocalModelID: LocalModelStatus] {
         let probe = FakeLocalRuntimeProbe(
             files: files,
@@ -133,7 +201,9 @@ final class LocalModelInventoryTests: XCTestCase {
             dylibs: dylibs,
             ollamaTags: ollamaTags,
             ollamaError: ollamaError,
-            osVersion: osVersion
+            osVersion: osVersion,
+            physicalMemory: physicalMemoryBytes,
+            runtimeCapability: runtimeCapability
         )
         let inventory = LocalModelInventory(
             probe: probe,
@@ -148,6 +218,23 @@ final class LocalModelInventoryTests: XCTestCase {
 
         return await Dictionary(uniqueKeysWithValues: inventory.statuses(input: input).map { ($0.id, $0) })
     }
+
+    private func fullLiveRecommendationStatus(
+        runtimeCapability: ParakeetLiveRuntimeCapability
+    ) async -> LocalModelStatus? {
+        let statuses = await statuses(
+            files: [
+                "/air/bin/parakeet-cli",
+                "/air/capi/libparakeet.dylib",
+                "/air/models/\(LocalModelInventory.recommendedModelFilename)",
+                "/air/models/\(LocalModelInventory.liveRecommendedModelFilename)"
+            ],
+            executables: ["/air/bin/parakeet-cli"],
+            dylibs: ["/air/lib/libggml.dylib", "/air/capi/libggml.dylib"],
+            runtimeCapability: runtimeCapability
+        )
+        return statuses[.parakeetCppRecommended]
+    }
 }
 
 private struct FakeLocalRuntimeProbe: LocalRuntimeProbe {
@@ -157,6 +244,8 @@ private struct FakeLocalRuntimeProbe: LocalRuntimeProbe {
     var ollamaTags: [String]
     var ollamaError: Error?
     var osVersion: OperatingSystemVersion
+    var physicalMemory: UInt64
+    var runtimeCapability: ParakeetLiveRuntimeCapability
 
     func fileExists(atPath path: String) -> Bool {
         files.contains(path)
@@ -186,5 +275,13 @@ private struct FakeLocalRuntimeProbe: LocalRuntimeProbe {
 
     func operatingSystemVersion() -> OperatingSystemVersion {
         osVersion
+    }
+
+    func physicalMemoryBytes() -> UInt64 {
+        physicalMemory
+    }
+
+    func parakeetLiveRuntimeCapability(libraryPath: String) -> ParakeetLiveRuntimeCapability {
+        runtimeCapability
     }
 }

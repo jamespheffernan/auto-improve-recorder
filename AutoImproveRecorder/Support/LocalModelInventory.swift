@@ -19,6 +19,7 @@ struct LocalModelInventory: Sendable {
     static let defaultParakeetCppBasePath = "~/Library/Application Support/AutoImproveRecorder/ParakeetCpp"
     static let recommendedModelFilename = "tdt-0.6b-v2-q4_k.gguf"
     static let fastModelFilename = "tdt_ctc-110m-q4_k.gguf"
+    static let liveRecommendedModelFilename = "nemotron-3.5-asr-streaming-0.6b-q8_0.gguf"
 
     private let probe: any LocalRuntimeProbe
     private let now: @Sendable () -> Date
@@ -31,12 +32,7 @@ struct LocalModelInventory: Sendable {
     func statuses(input: LocalModelInventoryInput) async -> [LocalModelStatus] {
         async let ollamaStatus = ollamaQwenStatus(input: input)
 
-        let recommended = parakeetStatus(
-            descriptor: Self.descriptor(for: .parakeetCppRecommended),
-            input: input,
-            modelFilename: Self.recommendedModelFilename,
-            modelName: "Parakeet.cpp 0.6B Recommended"
-        )
+        let recommended = parakeetLiveRecommendedStatus(input: input)
         let resident = parakeetResidentStatus(input: input)
         let fast = parakeetStatus(
             descriptor: Self.descriptor(for: .parakeetCppFast),
@@ -58,10 +54,10 @@ struct LocalModelInventory: Sendable {
             return LocalModelDescriptor(
                 id: id,
                 title: "Recommended local transcription",
-                subtitle: "Parakeet.cpp 0.6B one-shot mode; warmed without keeping the model resident.",
+                subtitle: "Nemotron 0.6B transcribes during recording; one-shot Parakeet is the fallback.",
                 kind: .transcription,
                 ownership: .airOwned,
-                capabilities: .localTranscription
+                capabilities: .localRealtimeTranscription
             )
         case .parakeetCppResident:
             return LocalModelDescriptor(
@@ -161,6 +157,85 @@ struct LocalModelInventory: Sendable {
             descriptor,
             state: .installed,
             detail: "\(modelName) is installed. AIR has not loaded it in Settings.",
+            issues: []
+        )
+    }
+
+    private func parakeetLiveRecommendedStatus(input: LocalModelInventoryInput) -> LocalModelStatus {
+        let descriptor = Self.descriptor(for: .parakeetCppRecommended)
+        let basePath = expandedPath(input.parakeetCppBasePath)
+        let cliPath = "\(basePath)/bin/parakeet-cli"
+        let cliDylibPattern = "\(basePath)/lib/libggml*.dylib"
+        let offlineModelPath = "\(basePath)/models/\(Self.recommendedModelFilename)"
+        let capiPath = "\(basePath)/capi/libparakeet.dylib"
+        let capiDylibPattern = "\(basePath)/capi/libggml*.dylib"
+        let liveModelPath = "\(basePath)/models/\(Self.liveRecommendedModelFilename)"
+
+        guard probe.isExecutableFile(atPath: cliPath),
+              !probe.paths(matching: cliDylibPattern).isEmpty else {
+            return status(
+                descriptor,
+                state: .needsRuntime,
+                detail: "Recommended live transcription needs the one-shot fallback runtime.",
+                issues: [.error("Missing fallback parakeet-cli or its runtime libraries under \(basePath).")]
+            )
+        }
+        guard probe.fileExists(atPath: offlineModelPath) else {
+            return status(
+                descriptor,
+                state: .needsModel,
+                detail: "The one-shot fallback model is missing.",
+                issues: [.warning("Missing fallback model file: \(Self.recommendedModelFilename).")]
+            )
+        }
+        guard probe.fileExists(atPath: capiPath),
+              !probe.paths(matching: capiDylibPattern).isEmpty else {
+            return status(
+                descriptor,
+                state: .installed,
+                detail: "One-shot recommended transcription is installed; the live C API runtime is not.",
+                issues: [.info("This preset uses the one-shot fallback until the C API runtime is installed under \(basePath)/capi.")]
+            )
+        }
+        switch probe.parakeetLiveRuntimeCapability(libraryPath: capiPath) {
+        case .ready:
+            break
+        case .loadFailed:
+            return status(
+                descriptor,
+                state: .installed,
+                detail: "One-shot recommended transcription is installed; the live runtime could not load.",
+                issues: [.info("This preset uses the one-shot fallback until the C API runtime can be loaded.")]
+            )
+        case .missingSymbols:
+            return status(
+                descriptor,
+                state: .installed,
+                detail: "One-shot recommended transcription is installed; the live runtime is incompatible.",
+                issues: [.info("This preset uses the one-shot fallback until the C API runtime supplies the required streaming symbols.")]
+            )
+        }
+        guard probe.fileExists(atPath: liveModelPath) else {
+            return status(
+                descriptor,
+                state: .installed,
+                detail: "One-shot recommended transcription is installed; the live model is not.",
+                issues: [.info("This preset uses the one-shot fallback until \(Self.liveRecommendedModelFilename) is installed.")]
+            )
+        }
+        guard ParakeetLiveSafetyPolicy.passesMemoryGate(physicalMemoryBytes: probe.physicalMemoryBytes()) else {
+            return status(
+                descriptor,
+                state: .installed,
+                detail: "One-shot recommended transcription is installed; the live resident path needs more memory.",
+                issues: [.info("AIR requires at least 16 GiB physical memory for live mode, so this preset uses the one-shot fallback.")]
+            )
+        }
+
+        return status(
+            descriptor,
+            state: .ready,
+            detail: "Recommended live transcription and its one-shot fallback are ready.",
             issues: []
         )
     }

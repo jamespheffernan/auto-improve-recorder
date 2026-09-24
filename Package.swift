@@ -11,7 +11,6 @@ let package = Package(
             name: "AutoImproveRecorderDictionaryCore",
             path: "AutoImproveRecorder/Support",
             exclude: [
-                "AccessibilityPasteController.swift",
                 "AudioInputDeviceDiscovery.swift",
                 "HotKeyCenter.swift",
                 "KeychainStore.swift",
@@ -20,7 +19,9 @@ let package = Package(
                 "SecretsStore.swift"
             ],
             sources: [
+                "AccessibilityPasteController.swift",
                 "AppDeliveryRules.swift",
+                "DeliveryOptimization.swift",
                 "DeliveryService.swift",
                 "DiagnosticsStore.swift",
                 "DictionaryStore.swift",
@@ -31,6 +32,7 @@ let package = Package(
                 "MicrophoneDevice.swift",
                 "MicrophoneHealthMonitor.swift",
                 "RealtimeDiagnosticsRedactor.swift",
+                "TranscriptEditValueGate.swift",
                 "TranscriptTextNormalizer.swift",
                 "TranscriptArchiveStore.swift",
                 "TranscriptArchiveClient.swift"
@@ -59,6 +61,29 @@ let package = Package(
                 "RecordingTriggerController.swift"
             ]
         ),
+        .target(
+            name: "AutoSendRecorderCore",
+            path: "AutoSendRecorder",
+            exclude: [
+                "UI",
+                "Info.plist",
+                "AutoSendAppDelegate.swift",
+                "AutoSendDeliveryAdapter.swift",
+                "AutoSendHotKeyCenter.swift",
+                "AutoSendParakeetCompatibility.swift",
+                "AutoSendParakeetService.swift",
+                "AutoSendRecorderApp.swift",
+                "AutoSendRecordingService.swift",
+                "AutoSendSettingsView.swift",
+                "AutoSendState.swift"
+            ],
+            sources: [
+                "AutoSendCore.swift",
+                "AutoSendRuntimeInstaller.swift",
+                "AutoSendPasteboardWriter.swift",
+                "AutoSendSettingsStore.swift"
+            ]
+        ),
         .testTarget(
             name: "AutoImproveRecorderDictionaryCoreTests",
             dependencies: ["AutoImproveRecorderDictionaryCore"],
@@ -78,6 +103,11 @@ let package = Package(
             name: "AutoImproveRecorderTriggerCoreTests",
             dependencies: ["AutoImproveRecorderTriggerCore"],
             path: "Tests/AutoImproveRecorderTriggerCoreTests"
+        ),
+        .testTarget(
+            name: "AutoSendRecorderCoreTests",
+            dependencies: ["AutoSendRecorderCore"],
+            path: "Tests/AutoSendRecorderCoreTests"
         )
     ]
 )

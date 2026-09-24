@@ -6,7 +6,7 @@ struct TranscriptionServiceRequest {
     var apiKey: String
     var dictionarySnapshot: String
     var streamingTranscriber: OpenAIRealtimeTranscriber?
-    var parakeetStreamSession: ParakeetLiveStreamSession?
+    var parakeetStreamSession: (any LocalLiveTranscriptionSession)?
 }
 
 protocol TranscriptionService {
@@ -229,9 +229,9 @@ struct LiveTranscriptionService: TranscriptionService {
                 let text = try await session.finalize()
                 if !text.isEmpty {
                     let elapsed = Date().timeIntervalSince(startedAt)
-                    NSLog("%@ transcription finished in %.2fs.", ParakeetLiveStreamSession.engineName, elapsed)
+                    NSLog("%@ transcription finished in %.2fs.", session.engineName, elapsed)
                     await status(String(format: "Live transcript ready in %.1fs.", elapsed))
-                    return TranscriptionResult(text: text, engineName: ParakeetLiveStreamSession.engineName)
+                    return TranscriptionResult(text: text, engineName: session.engineName)
                 }
                 NSLog("parakeet streaming returned an empty transcript; falling back to offline Parakeet.")
             } catch {

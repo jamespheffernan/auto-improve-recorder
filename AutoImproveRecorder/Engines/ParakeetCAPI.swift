@@ -2,6 +2,23 @@ import AVFoundation
 import Darwin
 import Foundation
 
+/// The capture and transcription layers depend on this small contract, not on
+/// a specific model library. A future measured winner can replace the factory
+/// choice without changing AppState or TranscriptionService again.
+protocol LocalLiveTranscriptionSession: AnyObject, Sendable {
+    var engineName: String { get }
+    func append(_ captured: CapturedAudioBuffer)
+    func recordCaptureFailure(_ failure: AudioCaptureFailure)
+    func finalize() async throws -> String
+    func cancel()
+}
+
+enum RecommendedLiveTranscription {
+    static var isAvailable: Bool { ParakeetLiveStreamSession.isAvailable }
+    static func warmUp() async { await ParakeetLiveStreamSession.warmUp() }
+    static func begin() -> any LocalLiveTranscriptionSession { ParakeetLiveStreamSession.begin() }
+}
+
 /// In-process bindings to parakeet.cpp's C API (libparakeet.dylib), loaded
 /// with dlopen so the app builds and runs when the runtime is not installed.
 ///
@@ -162,10 +179,14 @@ final class ParakeetResidentContext: @unchecked Sendable {
         return stream
     }
 
-    fileprivate func feedLocked(stream: OpaquePointer, samples: [Float]) throws -> String {
+    fileprivate func feedLocked(
+        stream: OpaquePointer,
+        samples: UnsafeBufferPointer<Float>
+    ) throws -> String {
         lock.lock()
         defer { lock.unlock() }
-        guard let raw = symbols.streamFeed(stream, samples, Int32(samples.count), nil) else {
+        guard let baseAddress = samples.baseAddress,
+              let raw = symbols.streamFeed(stream, baseAddress, Int32(samples.count), nil) else {
             throw ParakeetCAPIError.transcriptionFailed(
                 provider: "parakeet.cpp streaming",
                 message: lastErrorMessage()
@@ -287,13 +308,13 @@ struct ParakeetResidentTranscriber: TranscriptionEngine {
     }
 }
 
-/// Option B: live streaming transcription for one dictation. Mic-tap buffers
-/// are copied off the audio thread, converted to 16 kHz mono float and fed to
-/// a cache-aware streaming model (nemotron 0.6B: capitalized + punctuated
-/// output) on a serial queue, so the transcript is already complete ~30 ms
-/// after the last chunk when the user stops recording.
-final class ParakeetLiveStreamSession: @unchecked Sendable {
-    static let modelFilename = "nemotron-3.5-asr-streaming-0.6b-q8_0.gguf"
+/// Option B: live streaming transcription for one dictation. The shared tap
+/// copy is converted to 16 kHz mono float and fed to a cache-aware streaming
+/// model (nemotron 0.6B: capitalized + punctuated output) on a serial queue, so
+/// the transcript is already complete ~30 ms after the last chunk when the
+/// user stops recording.
+final class ParakeetLiveStreamSession: LocalLiveTranscriptionSession, @unchecked Sendable {
+    static let modelFilename = LocalModelInventory.liveRecommendedModelFilename
     static let engineName = "parakeet.cpp nemotron 0.6B streaming Q8_0 Metal"
     static let providerName = "parakeet.cpp nemotron streaming"
 
@@ -319,7 +340,8 @@ final class ParakeetLiveStreamSession: @unchecked Sendable {
     /// and keeps per-feed compute around 10 ms on M-series.
     private static let feedChunkSamples = 1_280
 
-    private let queue = DispatchQueue(label: "com.fieldtheory.air.parakeet-stream", qos: .userInitiated)
+    private let queue = DispatchQueue(label: "recorder.parakeet-stream", qos: .userInitiated)
+    private let inputAdmission = ParakeetLiveInputAdmission()
     private let outputFormat = AVAudioFormat(
         commonFormat: .pcmFormatFloat32,
         sampleRate: 16_000,
@@ -332,12 +354,15 @@ final class ParakeetLiveStreamSession: @unchecked Sendable {
     private var stream: OpaquePointer?
     private var converter: AVAudioConverter?
     private var converterInputFormat: AVAudioFormat?
+    private let outputBufferPool = ReusableAudioPCMBuffer()
     private var pendingSamples: [Float] = []
     private var transcript = ""
     private var failureMessage: String?
     private var finished = false
 
     private init() {}
+
+    var engineName: String { Self.engineName }
 
     /// Begins a session immediately; the model load + stream begin run on the
     /// session queue, and buffers appended meanwhile queue up behind them.
@@ -356,17 +381,34 @@ final class ParakeetLiveStreamSession: @unchecked Sendable {
         return session
     }
 
-    /// Safe to call from the audio tap thread: copies the buffer and returns.
-    func append(_ buffer: AVAudioPCMBuffer) {
-        guard let copy = Self.copyBuffer(buffer) else { return }
+    /// Safe to call from the audio tap thread: retains the immutable capture
+    /// block, reserves bounded queue capacity, and returns.
+    func append(_ captured: CapturedAudioBuffer) {
+        let byteCount = captured.byteCount
+        guard inputAdmission.reserve(byteCount: byteCount) else { return }
+        let admission = inputAdmission
         queue.async { [weak self] in
-            self?.convertAndFeed(copy)
+            defer { admission.complete(byteCount: byteCount) }
+            guard admission.shouldProcessQueuedInput else { return }
+            self?.convertAndFeed(captured.buffer)
+        }
+    }
+
+    func recordCaptureFailure(_ failure: AudioCaptureFailure) {
+        // Close admission on the tap thread without waiting for inference.
+        // Queue the terminal cause so finalize can never accept a transcript
+        // that crossed a missing capture block.
+        inputAdmission.cancel()
+        queue.async {
+            guard !self.finished, self.failureMessage == nil else { return }
+            self.failureMessage = failure.localizedDescription
         }
     }
 
     /// Flushes the stream tail and returns the full cleaned transcript.
     func finalize() async throws -> String {
-        try await withCheckedThrowingContinuation { continuation in
+        inputAdmission.closeForFinalize()
+        return try await withCheckedThrowingContinuation { continuation in
             queue.async {
                 continuation.resume(with: Result { try self.finalizeOnQueue() })
             }
@@ -374,6 +416,9 @@ final class ParakeetLiveStreamSession: @unchecked Sendable {
     }
 
     func cancel() {
+        // Close admission synchronously. Buffers already queued behind a cold
+        // model load see the cancelled gate and are discarded without inference.
+        inputAdmission.cancel()
         queue.async {
             guard !self.finished else { return }
             self.finished = true
@@ -386,14 +431,18 @@ final class ParakeetLiveStreamSession: @unchecked Sendable {
 
     private func convertAndFeed(_ buffer: AVAudioPCMBuffer) {
         guard !finished, failureMessage == nil, let context, let stream else { return }
-        guard let converted = convert(buffer) else { return }
-        pendingSamples.append(contentsOf: converted)
+        guard appendConvertedSamples(from: buffer) else { return }
 
         while pendingSamples.count >= Self.feedChunkSamples {
-            let chunk = Array(pendingSamples.prefix(Self.feedChunkSamples))
-            pendingSamples.removeFirst(Self.feedChunkSamples)
             do {
-                transcript += try context.feedLocked(stream: stream, samples: chunk)
+                let text = try pendingSamples.withUnsafeBufferPointer { samples in
+                    try context.feedLocked(
+                        stream: stream,
+                        samples: UnsafeBufferPointer(rebasing: samples.prefix(Self.feedChunkSamples))
+                    )
+                }
+                transcript += text
+                pendingSamples.removeFirst(Self.feedChunkSamples)
             } catch {
                 failureMessage = error.localizedDescription
                 NSLog("parakeet streaming: feed failed: \(error.localizedDescription)")
@@ -403,39 +452,65 @@ final class ParakeetLiveStreamSession: @unchecked Sendable {
     }
 
     private func finalizeOnQueue() throws -> String {
+        if let admissionFailure = inputAdmission.failureMessage {
+            discardStreamOnQueue()
+            throw ParakeetCAPIError.streamUnavailable(admissionFailure)
+        }
         if let failureMessage {
+            discardStreamOnQueue()
             throw ParakeetCAPIError.streamUnavailable(failureMessage)
         }
         guard !finished, let context, let stream else {
             throw ParakeetCAPIError.streamUnavailable("The streaming session did not start in time.")
         }
         finished = true
-        self.stream = nil
 
         if !pendingSamples.isEmpty {
-            transcript += try context.feedLocked(stream: stream, samples: pendingSamples)
+            do {
+                transcript += try pendingSamples.withUnsafeBufferPointer { samples in
+                    try context.feedLocked(stream: stream, samples: samples)
+                }
+            } catch {
+                self.stream = nil
+                context.freeStreamLocked(stream: stream)
+                throw error
+            }
             pendingSamples = []
         }
+        self.stream = nil
         transcript += try context.finalizeLocked(stream: stream)
         return Self.cleanTranscript(transcript)
     }
 
-    private func convert(_ buffer: AVAudioPCMBuffer) -> [Float]? {
+    private func discardStreamOnQueue() {
+        if let stream, let context {
+            context.freeStreamLocked(stream: stream)
+        }
+        stream = nil
+        finished = true
+    }
+
+    private func appendConvertedSamples(from buffer: AVAudioPCMBuffer) -> Bool {
         if converter == nil || converterInputFormat?.isEqual(buffer.format) != true {
             guard let newConverter = AVAudioConverter(from: buffer.format, to: outputFormat) else {
                 failureMessage = "Could not create the 16 kHz mono audio converter."
-                return nil
+                return false
             }
             newConverter.primeMethod = .none
             converter = newConverter
             converterInputFormat = buffer.format
         }
-        guard let converter else { return nil }
+        guard let converter else { return false }
 
         let ratio = outputFormat.sampleRate / buffer.format.sampleRate
         let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 512
-        guard let outputBuffer = AVAudioPCMBuffer(pcmFormat: outputFormat, frameCapacity: capacity) else {
-            return nil
+        guard let outputBuffer = outputBufferPool.buffer(
+            format: outputFormat,
+            minimumFrameCapacity: capacity
+        ) else {
+            failureMessage = "Live transcription could not allocate its conversion output. Using the intact saved recording instead."
+            inputAdmission.cancel()
+            return false
         }
 
         var didProvideInput = false
@@ -451,12 +526,13 @@ final class ParakeetLiveStreamSession: @unchecked Sendable {
         }
         if let conversionError {
             failureMessage = "Audio conversion failed: \(conversionError.localizedDescription)"
-            return nil
+            return false
         }
 
         let frames = Int(outputBuffer.frameLength)
-        guard frames > 0, let channelData = outputBuffer.floatChannelData else { return [] }
-        return Array(UnsafeBufferPointer(start: channelData[0], count: frames))
+        guard frames > 0, let channelData = outputBuffer.floatChannelData else { return true }
+        pendingSamples.append(contentsOf: UnsafeBufferPointer(start: channelData[0], count: frames))
+        return true
     }
 
     /// The nemotron model appends language tags (`<en-US>`) and the API can
@@ -472,27 +548,4 @@ final class ParakeetLiveStreamSession: @unchecked Sendable {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private static func copyBuffer(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
-        guard let copiedBuffer = AVAudioPCMBuffer(pcmFormat: buffer.format, frameCapacity: buffer.frameLength) else {
-            return nil
-        }
-        copiedBuffer.frameLength = buffer.frameLength
-
-        let sourceBuffers = UnsafeMutableAudioBufferListPointer(
-            UnsafeMutablePointer(mutating: buffer.audioBufferList)
-        )
-        let destinationBuffers = UnsafeMutableAudioBufferListPointer(copiedBuffer.mutableAudioBufferList)
-
-        for index in 0..<min(sourceBuffers.count, destinationBuffers.count) {
-            guard let sourceData = sourceBuffers[index].mData,
-                  let destinationData = destinationBuffers[index].mData else {
-                continue
-            }
-            let byteCount = Int(sourceBuffers[index].mDataByteSize)
-            memcpy(destinationData, sourceData, byteCount)
-            destinationBuffers[index].mDataByteSize = sourceBuffers[index].mDataByteSize
-        }
-
-        return copiedBuffer
-    }
 }

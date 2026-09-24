@@ -4,6 +4,25 @@ struct DeliveryRequest: Equatable {
     var text: String
     var globalSettings: GlobalCompletionSettings
     var rules: [AppDeliveryRule]
+    var unknownDestinationPolicy: UnknownDestinationPolicy
+    var sendSettlementDelayNanoseconds: UInt64
+    var optimizationMode: DeliveryOptimizationMode
+
+    init(
+        text: String,
+        globalSettings: GlobalCompletionSettings,
+        rules: [AppDeliveryRule],
+        unknownDestinationPolicy: UnknownDestinationPolicy = .allowSend,
+        sendSettlementDelayNanoseconds: UInt64 = 80_000_000,
+        optimizationMode: DeliveryOptimizationMode = .legacyOnly
+    ) {
+        self.text = text
+        self.globalSettings = globalSettings
+        self.rules = rules
+        self.unknownDestinationPolicy = unknownDestinationPolicy
+        self.sendSettlementDelayNanoseconds = sendSettlementDelayNanoseconds
+        self.optimizationMode = optimizationMode
+    }
 }
 
 enum DeliveryOutcome: Equatable {
@@ -21,30 +40,35 @@ struct DeliveryResult: Equatable {
     var errorSummary: String?
 }
 
+@MainActor
 protocol DeliveryService {
     func focusedContext(promptForPermission: Bool) -> DeliveryContext
     func copy(_ text: String)
-    func pasteManually(_ text: String) throws
-    func deliver(_ request: DeliveryRequest) -> DeliveryResult
+    func pasteManually(_ text: String) async throws
+    func deliver(_ request: DeliveryRequest) async -> DeliveryResult
 }
 
+@MainActor
 struct ClosureDeliveryService: DeliveryService {
     typealias ContextProvider = (_ promptForPermission: Bool) -> DeliveryContext
-    typealias PasteAction = (_ text: String, _ leaveClipboardChanged: Bool, _ submitAfterPaste: Bool) throws -> Void
+    typealias PasteAction = (PasteExecutionRequest) async throws -> PasteExecutionResult
     typealias CopyAction = (_ text: String) -> Void
 
     private let contextProvider: ContextProvider
     private let pasteAction: PasteAction
     private let copyAction: CopyAction
+    private let productDisplayName: String
 
     init(
         contextProvider: @escaping ContextProvider,
         pasteAction: @escaping PasteAction,
-        copyAction: @escaping CopyAction
+        copyAction: @escaping CopyAction,
+        productDisplayName: String = "AutoImproveRecorder"
     ) {
         self.contextProvider = contextProvider
         self.pasteAction = pasteAction
         self.copyAction = copyAction
+        self.productDisplayName = productDisplayName
     }
 
     func focusedContext(promptForPermission: Bool) -> DeliveryContext {
@@ -55,11 +79,20 @@ struct ClosureDeliveryService: DeliveryService {
         copyAction(text)
     }
 
-    func pasteManually(_ text: String) throws {
-        try pasteAction(text, true, false)
+    func pasteManually(_ text: String) async throws {
+        _ = try await pasteAction(
+            PasteExecutionRequest(
+                text: text,
+                leaveClipboardChanged: true,
+                sendCommand: nil,
+                expectedDestination: nil,
+                unknownDestinationPolicy: .allowSend,
+                settlementDelayNanoseconds: 0
+            )
+        )
     }
 
-    func deliver(_ request: DeliveryRequest) -> DeliveryResult {
+    func deliver(_ request: DeliveryRequest) async -> DeliveryResult {
         let initialContext = focusedContext(promptForPermission: false)
         let initialPolicy = DeliveryPolicyResolver.resolve(
             context: initialContext,
@@ -83,14 +116,23 @@ struct ClosureDeliveryService: DeliveryService {
 
         if policy.shouldPaste {
             do {
-                try pasteAction(
-                    request.text,
-                    policy.shouldCopyToClipboard,
-                    policy.shouldSubmit
+                let pasteResult = try await pasteAction(
+                    PasteExecutionRequest(
+                        text: request.text,
+                        leaveClipboardChanged: policy.shouldCopyToClipboard,
+                        sendCommand: policy.sendCommand,
+                        expectedDestination: DeliveryDestination(context: context),
+                        unknownDestinationPolicy: request.unknownDestinationPolicy,
+                        settlementDelayNanoseconds: request.sendSettlementDelayNanoseconds,
+                        optimizationMode: request.optimizationMode
+                    )
                 )
                 return DeliveryResult(
-                    outcome: policy.shouldSubmit ? .submitted : .pasted,
-                    statusMessage: Self.deliveryStatusMessage(for: policy),
+                    outcome: pasteResult.sendExecution == .sent ? .submitted : .pasted,
+                    statusMessage: Self.deliveryStatusMessage(
+                        for: policy,
+                        sendExecution: pasteResult.sendExecution
+                    ),
                     context: context,
                     policy: policy,
                     errorSummary: nil
@@ -102,7 +144,8 @@ struct ClosureDeliveryService: DeliveryService {
                         outcome: .copied,
                         statusMessage: Self.pasteFailureStatusMessage(
                             copied: true,
-                            accessibilityTrusted: context.accessibilityTrusted
+                            accessibilityTrusted: context.accessibilityTrusted,
+                            productDisplayName: productDisplayName
                         ),
                         context: context,
                         policy: policy,
@@ -114,7 +157,8 @@ struct ClosureDeliveryService: DeliveryService {
                     outcome: .ready,
                     statusMessage: Self.pasteFailureStatusMessage(
                         copied: false,
-                        accessibilityTrusted: context.accessibilityTrusted
+                        accessibilityTrusted: context.accessibilityTrusted,
+                        productDisplayName: productDisplayName
                     ),
                     context: context,
                     policy: policy,
@@ -143,14 +187,34 @@ struct ClosureDeliveryService: DeliveryService {
         )
     }
 
-    private static func deliveryStatusMessage(for policy: ResolvedDeliveryPolicy) -> String {
-        if policy.shouldSubmit {
+    private static func deliveryStatusMessage(
+        for policy: ResolvedDeliveryPolicy,
+        sendExecution: SendCommandExecution
+    ) -> String {
+        if sendExecution == .sent {
             return policy.shouldCopyToClipboard
                 ? "Pasted, submitted, and copied to clipboard."
                 : "Pasted and submitted."
         }
 
-        if policy.submitWasSuppressedByRule, let appName = policy.matchedRule?.appName {
+        if case let .suppressed(reason) = sendExecution {
+            let reasonText: String
+            switch reason {
+            case .destinationUnavailable:
+                reasonText = "the destination could not be verified"
+            case .destinationChanged, .focusChanged, .focusIsNotEditable:
+                reasonText = "the destination changed"
+            case .deliveryCancelled:
+                reasonText = "delivery was cancelled"
+            case .sendEventFailed:
+                reasonText = "the send key could not be posted"
+            }
+            return policy.shouldCopyToClipboard
+                ? "Pasted and copied. Send was suppressed because \(reasonText)."
+                : "Pasted. Send was suppressed because \(reasonText)."
+        }
+
+        if policy.sendWasSuppressedByRule, let appName = policy.matchedRule?.appName {
             return policy.shouldCopyToClipboard
                 ? "Pasted and copied. Auto-submit is off for \(appName)."
                 : "Pasted. Auto-submit is off for \(appName)."
@@ -161,13 +225,17 @@ struct ClosureDeliveryService: DeliveryService {
             : "Pasted."
     }
 
-    private static func pasteFailureStatusMessage(copied: Bool, accessibilityTrusted: Bool) -> String {
+    private static func pasteFailureStatusMessage(
+        copied: Bool,
+        accessibilityTrusted: Bool,
+        productDisplayName: String
+    ) -> String {
         let prefix = copied ? "Copied." : "Text ready."
         if accessibilityTrusted {
             return "\(prefix) Could not paste automatically."
         }
 
-        return "\(prefix) Enable Accessibility for AutoImproveRecorder in System Settings to paste automatically."
+        return "\(prefix) Enable Accessibility for \(productDisplayName) in System Settings to paste automatically."
     }
 
     private static func copyOnlyStatusMessage(for policy: ResolvedDeliveryPolicy) -> String {
