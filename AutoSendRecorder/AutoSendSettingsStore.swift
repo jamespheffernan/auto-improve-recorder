@@ -1,6 +1,19 @@
 import Combine
 import Foundation
 
+enum AutoSendTranscriptionModel: String, CaseIterable, Identifiable, Sendable {
+    case phonon2
+    case parakeet
+
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .phonon2: return "Phonon-2 (Default)"
+        case .parakeet: return "Parakeet"
+        }
+    }
+}
+
 struct AutoSendShortcutModifiers: OptionSet, Codable, Equatable, Sendable {
     let rawValue: UInt8
 
@@ -143,6 +156,13 @@ final class AutoSendSettingsStore: ObservableObject {
     private static let cancelShortcutKey = "cancelShortcut"
     private static let onboardingCompletedKey = "onboardingCompleted"
     private static let wirelessRecorderEnabledKey = "wirelessRecorderEnabled"
+    private static let transcriptionModelKey = "transcriptionModel"
+    @Published var transcriptionModel: AutoSendTranscriptionModel {
+        didSet {
+            defaults.set(transcriptionModel.rawValue, forKey: Self.transcriptionModelKey)
+            transcriptionModelDidChange?(transcriptionModel)
+        }
+    }
     @Published var triggerMode: AutoSendTriggerMode {
         didSet { defaults.set(triggerMode.rawValue, forKey: Self.triggerModeKey) }
     }
@@ -180,11 +200,16 @@ final class AutoSendSettingsStore: ObservableObject {
     var microphoneDidChange: ((String) -> Void)?
     var shortcutsDidChange: (() -> Void)?
     var wirelessRecorderDidChange: ((Bool) -> Void)?
+    var transcriptionModelDidChange: ((AutoSendTranscriptionModel) -> Void)?
 
     private let defaults: UserDefaults
 
-    init(defaults: UserDefaults? = UserDefaults(suiteName: AutoSendSettingsStore.defaultsSuiteName)) {
-        self.defaults = defaults ?? .standard
+    init(defaults: UserDefaults? = nil) {
+        // The app's own domain is already in .standard. Adding it as a suite
+        // causes macOS to reject the duplicate domain. Tests use a named suite.
+        self.defaults = defaults ?? Self.applicationDefaults
+        transcriptionModel = self.defaults.string(forKey: Self.transcriptionModelKey)
+            .flatMap(AutoSendTranscriptionModel.init(rawValue:)) ?? .phonon2
         triggerMode = self.defaults.string(forKey: Self.triggerModeKey)
             .flatMap(AutoSendTriggerMode.init(rawValue:)) ?? .walkieTalkie
         menuBarIconStyle = self.defaults.string(forKey: Self.menuBarIconStyleKey)
@@ -214,6 +239,11 @@ final class AutoSendSettingsStore: ObservableObject {
 
     var hasSavedMicrophonePreference: Bool {
         defaults.object(forKey: Self.preferredMicrophoneIDKey) != nil
+    }
+
+    private static var applicationDefaults: UserDefaults {
+        if Bundle.main.bundleIdentifier == defaultsSuiteName { return .standard }
+        return UserDefaults(suiteName: AutoSendSettingsStore.defaultsSuiteName) ?? .standard
     }
 
     func action(for bundleIdentifier: String) -> AutoSendAction {

@@ -119,6 +119,8 @@
 		ASRMICHEALTH00000000001 /* MicrophoneHealthMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRMICHEALTH0000000000 /* MicrophoneHealthMonitor.swift */; };
 		ASRWIRELESS00000000000001 /* AutoSendWirelessBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = ASRWIRELESS00000000000000 /* AutoSendWirelessBridge.swift */; };
 		ASRSETUP0000000000000001 /* AutoSendRuntimeInstaller.swift in Sources */ = {isa = PBXBuildFile; fileRef = ASRSETUP0000000000000002 /* AutoSendRuntimeInstaller.swift */; };
+		PHONON000000000000000001 /* PhononTranscriber.swift in Sources */ = {isa = PBXBuildFile; fileRef = PHONON000000000000000000 /* PhononTranscriber.swift */; };
+		PHONON000000000000000002 /* PhononTranscriber.swift in Sources */ = {isa = PBXBuildFile; fileRef = PHONON000000000000000000 /* PhononTranscriber.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -209,6 +211,7 @@
 		ASRICON0000000000000001 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		ASRWIRELESS00000000000000 /* AutoSendWirelessBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoSendWirelessBridge.swift; sourceTree = "<group>"; };
 		ASRSETUP0000000000000002 /* AutoSendRuntimeInstaller.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoSendRuntimeInstaller.swift; sourceTree = "<group>"; };
+		PHONON000000000000000000 /* PhononTranscriber.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhononTranscriber.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -325,6 +328,7 @@
 		AIR0000000000000000000046 /* Support */ = {
 			isa = PBXGroup;
 			children = (
+				PHONON000000000000000000 /* PhononTranscriber.swift */,
 				AIR000000000000000000000A /* KeychainStore.swift */,
 				AIRSEC000000000000000000 /* SecretsStore.swift */,
 				AIR000000000000000000000B /* AccessibilityPasteController.swift */,
@@ -529,6 +533,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				PHONON000000000000000001 /* PhononTranscriber.swift in Sources */,
 				AIR0000000000000000000010 /* AutoImproveRecorderApp.swift in Sources */,
 				AIR0000000000000000000011 /* AppDelegate.swift in Sources */,
 				AIR0000000000000000000012 /* AppState.swift in Sources */,
@@ -620,6 +625,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				PHONON000000000000000002 /* PhononTranscriber.swift in Sources */,
 				ASR0000000000000000000010 /* AutoSendRecorderApp.swift in Sources */,
 				ASR0000000000000000000011 /* AutoSendAppDelegate.swift in Sources */,
 				ASR0000000000000000000012 /* AutoSendCore.swift in Sources */,

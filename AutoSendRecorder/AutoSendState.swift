@@ -215,7 +215,11 @@ final class AutoSendState: ObservableObject {
                 settings.preferredMicrophoneID = boyaDevices[0].id
             }
         }
-        let transcription = AutoSendParakeetService()
+        let transcription = AutoSendParakeetService(model: settings.transcriptionModel)
+        settings.transcriptionModelDidChange = { [weak transcription] model in
+            transcription?.selectModel(model)
+            Task { await transcription?.warmUp() }
+        }
         let phaseRelay = AutoSendPhaseRelay()
         self.settings = settings
         availableMicrophones = microphones

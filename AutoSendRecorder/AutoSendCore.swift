@@ -437,7 +437,7 @@ enum AutoSendWorkflowError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .emptyTranscript:
-            return "Parakeet did not detect speech. The recording was kept."
+            return "No speech was detected. The recording was kept."
         }
     }
 }

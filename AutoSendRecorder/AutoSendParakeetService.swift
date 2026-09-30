@@ -133,6 +133,24 @@ final class AutoSendParakeetService: AutoSendTranscriptService, @unchecked Senda
     private var liveSession: (any LocalLiveTranscriptionSession)?
     private var liveOperationID: AutoSendOperationID?
     private var liveSource: AutoSendRecordingSource?
+    private var selectedModel: AutoSendTranscriptionModel
+    private var operationModel: AutoSendTranscriptionModel?
+
+    init(model: AutoSendTranscriptionModel = .phonon2) {
+        selectedModel = model
+    }
+
+    func selectModel(_ model: AutoSendTranscriptionModel) {
+        lock.lock()
+        selectedModel = model
+        lock.unlock()
+    }
+
+    private var currentModel: AutoSendTranscriptionModel {
+        lock.lock()
+        defer { lock.unlock() }
+        return selectedModel
+    }
 
     var liveModeIsSafe: Bool {
         let baseURL = ParakeetCppTranscriber.installBaseURL
@@ -149,7 +167,8 @@ final class AutoSendParakeetService: AutoSendTranscriptService, @unchecked Senda
         operationID: AutoSendOperationID,
         source: AutoSendRecordingSource
     ) {
-        let session = liveModeIsSafe && source != .esp32Button
+        let model = currentModel
+        let session = model == .parakeet && liveModeIsSafe && source != .esp32Button
             ? RecommendedLiveTranscription.begin()
             : nil
         lock.lock()
@@ -157,6 +176,7 @@ final class AutoSendParakeetService: AutoSendTranscriptService, @unchecked Senda
         liveSession = session
         liveOperationID = operationID
         liveSource = source
+        operationModel = model
         lock.unlock()
     }
 
@@ -174,6 +194,9 @@ final class AutoSendParakeetService: AutoSendTranscriptService, @unchecked Senda
 
     func transcribe(audioURL: URL, operationID: AutoSendOperationID) async throws -> String {
         let state = takeTranscriptionState(operationID: operationID)
+        if (state?.model ?? currentModel) == .phonon2 {
+            return try await PhononTranscriber.shared.transcribe(audioURL: audioURL)
+        }
         let pipeline = AutoSendSourceAwareTranscriptionPipeline(
             fastWireless: fastResident,
             fallback: fallback
@@ -191,6 +214,10 @@ final class AutoSendParakeetService: AutoSendTranscriptService, @unchecked Senda
     }
 
     func warmUp() async {
+        if currentModel == .phonon2 {
+            await PhononTranscriber.shared.warmUp()
+            return
+        }
         await fastResident.warmUp()
         if liveModeIsSafe {
             await RecommendedLiveTranscription.warmUp()
@@ -210,16 +237,18 @@ final class AutoSendParakeetService: AutoSendTranscriptService, @unchecked Senda
 
     private func takeTranscriptionState(
         operationID: AutoSendOperationID
-    ) -> (session: (any LocalLiveTranscriptionSession)?, source: AutoSendRecordingSource)? {
+    ) -> (session: (any LocalLiveTranscriptionSession)?, source: AutoSendRecordingSource, model: AutoSendTranscriptionModel)? {
         lock.lock()
         defer { lock.unlock() }
         guard liveOperationID == operationID else { return nil }
         let session = liveSession
         let source = liveSource ?? .macHotKey
+        let model = operationModel ?? selectedModel
         liveSession = nil
         liveOperationID = nil
         liveSource = nil
-        return (session, source)
+        operationModel = nil
+        return (session, source, model)
     }
 }
 

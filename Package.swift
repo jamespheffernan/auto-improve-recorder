@@ -30,6 +30,7 @@ let package = Package(
                 "LocalModelInventory.swift",
                 "LocalRuntimeHealth.swift",
                 "LocalRuntimeProbe.swift",
+                "PhononTranscriber.swift",
                 "MicrophoneDevice.swift",
                 "MicrophoneHealthMonitor.swift",
                 "RealtimeDiagnosticsRedactor.swift",

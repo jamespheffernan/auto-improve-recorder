@@ -66,6 +66,11 @@ struct LiveTranscriptionService: TranscriptionService {
         let context = TranscriptionContext(dictionarySnapshot: request.dictionarySnapshot)
 
         switch request.mode {
+        case .localPhonon2:
+            await status("Transcribing with Phonon-2.")
+            let text = try await PhononTranscriber.shared.transcribe(audioURL: request.audioURL)
+            await status(String(format: "Phonon-2 transcript ready in %.1fs.", Date().timeIntervalSince(startedAt)))
+            return TranscriptionResult(text: text, engineName: "Phonon-2")
         case .openAIAPI:
             return try await transcribeWithOpenAIAPI(
                 audioURL: request.audioURL,

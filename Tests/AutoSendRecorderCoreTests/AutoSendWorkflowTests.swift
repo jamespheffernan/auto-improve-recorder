@@ -5,6 +5,22 @@ import XCTest
 
 final class AutoSendWorkflowTests: XCTestCase {
     @MainActor
+    func testPhononDefaultAndExplicitParakeetPreferencePersist() {
+        let suiteName = "AutoSendRecorderTests-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let settings = AutoSendSettingsStore(defaults: defaults)
+        XCTAssertEqual(settings.transcriptionModel, .phonon2)
+        var observed: AutoSendTranscriptionModel?
+        settings.transcriptionModelDidChange = { observed = $0 }
+        settings.transcriptionModel = .parakeet
+        XCTAssertEqual(observed, .parakeet)
+        XCTAssertEqual(AutoSendSettingsStore(defaults: defaults).transcriptionModel, .parakeet)
+        settings.transcriptionModel = .phonon2
+        XCTAssertEqual(AutoSendSettingsStore(defaults: defaults).transcriptionModel, .phonon2)
+    }
+
+    @MainActor
     func testClipboardFallbackReplacesExistingPasteboardText() throws {
         let pasteboard = NSPasteboard(
             name: NSPasteboard.Name("autosend-clipboard-\(UUID().uuidString)")

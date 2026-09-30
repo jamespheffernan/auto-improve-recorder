@@ -66,7 +66,7 @@ final class AppState: ObservableObject {
             applyRecordingHotKey(previous: oldValue)
         }
     }
-    @Published var transcriptionMode: TranscriptionMode = .localWhisper {
+    @Published var transcriptionMode: TranscriptionMode = .localPhonon2 {
         didSet { saveSettings(reason: .general) }
     }
     @Published var improvementMode: ImprovementMode = .ollamaLocal {
@@ -610,6 +610,8 @@ final class AppState: ObservableObject {
 
         Task.detached(priority: .utility) {
             switch selectedTranscriptionMode {
+            case .localPhonon2:
+                await PhononTranscriber.shared.warmUp()
             case .localWhisper:
                 await WhisperCppTranscriber().warmUp()
             case .localParakeetCppFast,
@@ -1725,6 +1727,8 @@ final class AppState: ObservableObject {
         }
 
         switch transcriptionMode {
+        case .localPhonon2:
+            return "Transcribing with Phonon-2."
         case .localWhisper:
             return "Transcribing with local Whisper."
         case .localParakeetCppFast:

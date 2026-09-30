@@ -44,6 +44,28 @@ struct AutoSendSettingsView: View {
                 .padding(12)
                 .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
 
+                GroupBox("Transcription model") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Picker("Model", selection: $settings.transcriptionModel) {
+                            ForEach(AutoSendTranscriptionModel.allCases) { model in
+                                Text(model.label).tag(model)
+                            }
+                        }
+                        .disabled(state.phase.isBusy)
+                        Text(settings.transcriptionModel == .phonon2
+                             ? "English transcription on this Mac. Phonon-2 stays loaded between recordings."
+                             : "Local Parakeet transcription, with live processing when available.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        if settings.transcriptionModel == .phonon2 && !PhononTranscriber.isInstalled {
+                            Text("Phonon-2 is not installed or its drive is unavailable. Choose Parakeet until it is ready.")
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
                 GroupBox("Shortcuts") {
                     VStack(spacing: 12) {
                         AutoSendShortcutRow(
@@ -214,7 +236,7 @@ struct AutoSendSettingsView: View {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Replacement rules run on every recording before it is sent: \(dictionaryRules.count) now, from Auto Improve Recorder's Dictionary settings and the lexicon at ~/.config/lexicon/terms.json. Edit rules in Auto Improve Recorder.")
                             .fixedSize(horizontal: false, vertical: true)
-                        Text("Dictionary terms are not used here. Parakeet takes no vocabulary, and Auto Send has no cleanup pass, so a name is corrected only when a rule covers it.")
+                        Text("Dictionary terms are not used here. These local models take no vocabulary, and Auto Send has no cleanup pass, so a name is corrected only when a rule covers it.")
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -547,9 +569,19 @@ struct AutoSendOnboardingView: View {
                 .foregroundStyle(runtimeStatus.isReady ? .green : .orange)
                 .accessibilityLabel("Local transcription: \(runtimeStatus.message)")
 
+            Picker("Transcription model", selection: $settings.transcriptionModel) {
+                ForEach(AutoSendTranscriptionModel.allCases) { model in
+                    Text(model.label).tag(model)
+                }
+            }
+
             if installedRuntime {
                 Text("Speech models are installed. Quit and reopen Auto Send Recorder to finish setup.")
                 Button("Quit to finish setup") { NSApp.terminate(nil) }
+            } else if !runtimeStatus.isReady && settings.transcriptionModel == .phonon2 {
+                Text("Phonon-2 needs its local runtime. If it is stored on an external drive, connect that drive. You can also choose Parakeet above.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             } else if !runtimeStatus.isReady {
                 Text("Download 1.75 GB of speech models from Hugging Face. Setup needs 4 GB of free space. After setup, transcription works offline.")
                     .font(.caption)
@@ -716,6 +748,11 @@ struct AutoSendOnboardingView: View {
     }
 
     private var runtimeStatus: (isReady: Bool, message: String) {
+        if settings.transcriptionModel == .phonon2 {
+            return PhononTranscriber.isInstalled
+                ? (true, "Phonon-2 is ready.")
+                : (false, "Phonon-2 is not installed or its drive is unavailable.")
+        }
         let baseURL = ParakeetCppTranscriber.installBaseURL
         let executable = baseURL.appendingPathComponent("bin/parakeet-cli")
         let model = baseURL.appendingPathComponent("models/tdt-0.6b-v2-q4_k.gguf")

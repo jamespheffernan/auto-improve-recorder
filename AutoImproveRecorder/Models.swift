@@ -530,6 +530,7 @@ struct RecordingHotKey: Equatable, Identifiable, RawRepresentable, Codable {
 }
 
 enum TranscriptionMode: String, CaseIterable, Identifiable, Codable {
+    case localPhonon2
     case localWhisper
     case localParakeetCppFast
     case localParakeetCppRecommended
@@ -543,6 +544,8 @@ enum TranscriptionMode: String, CaseIterable, Identifiable, Codable {
 
     var label: String {
         switch self {
+        case .localPhonon2:
+            return "Phonon-2 (Default)"
         case .localWhisper:
             return "Local Whisper"
         case .localParakeetCppFast:
@@ -552,7 +555,7 @@ enum TranscriptionMode: String, CaseIterable, Identifiable, Codable {
         case .localParakeetCppResident:
             return "Parakeet.cpp Resident"
         case .localParakeetStreaming:
-            return "Parakeet Live (Recommended)"
+            return "Parakeet Live"
         case .appleLocal:
             return "Apple Speech"
         case .openAIAPI:
@@ -567,7 +570,7 @@ enum TranscriptionMode: String, CaseIterable, Identifiable, Codable {
         switch self {
         case .openAIAPI, .fastest:
             return true
-        case .localWhisper, .localParakeetCppFast, .localParakeetCppRecommended,
+        case .localPhonon2, .localWhisper, .localParakeetCppFast, .localParakeetCppRecommended,
              .localParakeetCppResident, .localParakeetStreaming, .appleLocal:
             return false
         }

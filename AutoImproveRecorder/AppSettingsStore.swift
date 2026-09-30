@@ -146,24 +146,17 @@ final class UserDefaultsSettingsStore: SettingsStore {
     private func transcriptionMode(forKey key: String) -> TranscriptionMode {
         switch defaults.string(forKey: key) {
         case "localParakeet":
-            // Keep the historical alias on its original one-shot path. Only a
-            // missing setting opts into the new measured live recommendation.
+            // Preserve a user's explicit historical Parakeet selection.
             return .localParakeetCppRecommended
         case let rawValue?:
-            return TranscriptionMode(rawValue: rawValue) ?? .localParakeetCppRecommended
+            return TranscriptionMode(rawValue: rawValue) ?? .localPhonon2
         case nil:
             return defaultTranscriptionMode()
         }
     }
 
     private func defaultTranscriptionMode() -> TranscriptionMode {
-        let liveRuntimeInstalled = RecommendedLiveTranscription.isAvailable
-        let offlineFallbackInstalled = ParakeetCppTranscriber.isInstalled(variant: .recommended06B)
-        return ParakeetLiveSafetyPolicy.shouldSelectByDefault(
-            physicalMemoryBytes: ProcessInfo.processInfo.physicalMemory,
-            liveRuntimeInstalled: liveRuntimeInstalled,
-            offlineFallbackInstalled: offlineFallbackInstalled
-        ) ? .localParakeetStreaming : .localParakeetCppRecommended
+        .localPhonon2
     }
 
     private enum Keys {

@@ -442,6 +442,10 @@ private struct ProcessingSettingsPane: View {
 
     private var transcriptionDetail: String {
         switch state.transcriptionMode {
+        case .localPhonon2:
+            return PhononTranscriber.isInstalled
+                ? "English transcription with Phonon-2. Audio stays on this Mac."
+                : "Phonon-2 is not installed or its drive is unavailable. Choose another model until it is ready."
         case .localWhisper, .localParakeetCppFast, .localParakeetCppRecommended, .localParakeetCppResident, .localParakeetStreaming, .appleLocal:
             return "Audio stays on this Mac."
         case .openAIAPI, .fastest:
@@ -555,6 +559,8 @@ private struct ProcessingPresetSummary: View {
         }
 
         switch state.transcriptionMode {
+        case .localPhonon2:
+            return "Phonon-2"
         case .localParakeetCppRecommended:
             return "Recommended local"
         case .localParakeetCppResident:
@@ -576,7 +582,7 @@ private struct ProcessingPresetSummary: View {
         switch state.transcriptionMode {
         case .fastest, .openAIAPI:
             return "cloud"
-        case .localParakeetCppResident, .localParakeetStreaming:
+        case .localPhonon2, .localParakeetCppResident, .localParakeetStreaming:
             return "bolt.horizontal"
         case .localWhisper, .localParakeetCppFast, .localParakeetCppRecommended, .appleLocal:
             return "cpu"
