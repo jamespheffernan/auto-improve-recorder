@@ -63,6 +63,8 @@ Each app starts a private worker, warms the model, and reuses it between recordi
 
 [Phonon-2](https://huggingface.co/FermionResearch/Phonon-2) is English-only. The weights use CC-BY-4.0 and derive from NVIDIA Parakeet TDT 0.6B v3. See [third-party notices](Tools/PhononRuntime/THIRD-PARTY-NOTICES.txt).
 
+For a portable Apple-silicon build, `Tools/PhononRuntime/bundle.py` copies a verified model, its dependencies, and an Astral standalone Python 3.12 distribution into an archived app. It checks runtime links and library dependencies, signs each native binary, then signs the app. Run it before Developer ID notarization. The app prefers this bundled runtime and keeps writable caches outside the signed bundle. A complete portable build needs no external drive, Homebrew, Python installation, or model download on the receiving Mac.
+
 ## Build
 
 Open the project:

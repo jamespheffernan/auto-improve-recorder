@@ -7,7 +7,11 @@ final class PhononTranscriber: @unchecked Sendable {
     static let shared = PhononTranscriber()
     static let modelID = "FermionResearch/Phonon-2"
     static var runtimeURL: URL {
-        FileManager.default.homeDirectoryForCurrentUser
+        if let bundled = Bundle.main.resourceURL?.appendingPathComponent("Phonon2"),
+           isInstalled(at: bundled) {
+            return bundled
+        }
+        return FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/AutoImproveRecorder/Phonon2")
     }
     static var isInstalled: Bool { isInstalled(at: runtimeURL) }
@@ -112,10 +116,16 @@ final class PhononTranscriber: @unchecked Sendable {
         // Stderr is inherited, so dependency diagnostics cannot fill an unread pipe.
         child.standardError = FileHandle.standardError
         var environment = ProcessInfo.processInfo.environment
+        environment.removeValue(forKey: "PYTHONPATH")
+        environment.removeValue(forKey: "PYTHONHOME")
         environment["PYTHONNOUSERSITE"] = "1"
+        environment["PYTHONDONTWRITEBYTECODE"] = "1"
         environment["HF_HUB_OFFLINE"] = "1"
-        environment["HF_HOME"] = root.appendingPathComponent("hf-cache").path
-        environment["FERMION_CACHE_DIR"] = root.appendingPathComponent("models").path
+        // Keep cache markers and bytecode out of a signed, bundled runtime.
+        let cache = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("com.turfterrace.phonon2")
+        environment["HF_HOME"] = cache.appendingPathComponent("huggingface").path
+        environment["FERMION_CACHE_DIR"] = cache.appendingPathComponent("fermion").path
         child.environment = environment
         try child.run()
         process = child
