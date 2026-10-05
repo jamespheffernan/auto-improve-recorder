@@ -7,8 +7,11 @@ for attempt in {1..20}; do
     /usr/bin/xcrun stapler validate "$output/notarized/Auto Send Recorder.app"
     /usr/bin/codesign --verify --deep --strict "$output/notarized/Auto Send Recorder.app"
     /usr/sbin/spctl --assess --type execute --verbose=2 "$output/notarized/Auto Send Recorder.app"
-    /usr/bin/ditto -c -k --sequesterRsrc --keepParent "$output/notarized/Auto Send Recorder.app" "$output/Auto-Send-Recorder-1.1-2.zip"
-    /usr/bin/shasum -a 256 "$output/Auto-Send-Recorder-1.1-2.zip" > "$output/SHA256SUMS.txt"
+    version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$output/notarized/Auto Send Recorder.app/Contents/Info.plist")
+    build=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$output/notarized/Auto Send Recorder.app/Contents/Info.plist")
+    zip="$output/Auto-Send-Recorder-${version}-build${build}.zip"
+    /usr/bin/ditto -c -k --sequesterRsrc --keepParent "$output/notarized/Auto Send Recorder.app" "$zip"
+    /usr/bin/shasum -a 256 "$zip" > "$output/SHA256SUMS.txt"
     echo 'NOTARIZED RELEASE READY'
     exit 0
   fi

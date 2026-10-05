@@ -53,12 +53,12 @@ struct AutoSendSettingsView: View {
                         }
                         .disabled(state.phase.isBusy)
                         Text(settings.transcriptionModel == .phonon2
-                             ? "English transcription on this Mac. Phonon-2 stays loaded between recordings."
+                             ? "English transcription using Apple’s Neural Engine. Phonon-2 stays loaded between recordings."
                              : "Local Parakeet transcription, with live processing when available.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         if settings.transcriptionModel == .phonon2 && !PhononTranscriber.isInstalled {
-                            Text("Phonon-2 is not installed or its drive is unavailable. Choose Parakeet until it is ready.")
+                            Text("Phonon-2 needs macOS 15 or newer and its bundled speech models. Reinstall this build or choose Parakeet.")
                                 .font(.caption)
                                 .foregroundStyle(.orange)
                         }
@@ -579,7 +579,7 @@ struct AutoSendOnboardingView: View {
                 Text("Speech models are installed. Quit and reopen Auto Send Recorder to finish setup.")
                 Button("Quit to finish setup") { NSApp.terminate(nil) }
             } else if !runtimeStatus.isReady && settings.transcriptionModel == .phonon2 {
-                Text("Phonon-2 needs its local runtime. If it is stored on an external drive, connect that drive. You can also choose Parakeet above.")
+                Text("Phonon-2 needs macOS 15 or newer and its bundled speech models. Reinstall this build or choose Parakeet above.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else if !runtimeStatus.isReady {
@@ -750,8 +750,8 @@ struct AutoSendOnboardingView: View {
     private var runtimeStatus: (isReady: Bool, message: String) {
         if settings.transcriptionModel == .phonon2 {
             return PhononTranscriber.isInstalled
-                ? (true, "Phonon-2 is ready.")
-                : (false, "Phonon-2 is not installed or its drive is unavailable.")
+                ? (true, "Phonon-2 Neural Engine is ready.")
+                : (false, "Phonon-2 needs macOS 15 or newer and its bundled speech models.")
         }
         let baseURL = ParakeetCppTranscriber.installBaseURL
         let executable = baseURL.appendingPathComponent("bin/parakeet-cli")

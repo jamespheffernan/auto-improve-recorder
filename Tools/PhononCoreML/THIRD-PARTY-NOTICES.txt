@@ -1,0 +1,17 @@
+Phonon-2 by Fermion Research, derived from NVIDIA Parakeet TDT 0.6B v3.
+Original model: https://huggingface.co/FermionResearch/Phonon-2
+Core ML conversion by Fluid Inference:
+https://huggingface.co/FluidInference/phonon-2-coreml
+Model revision: a812a0dfef205660787ef6234317ab79acf4d5d6
+Weights: Creative Commons Attribution 4.0 International.
+The bundled models/LICENSE and models/NOTICE contain the full terms,
+attribution, and changes. ASR uses the published Core ML weights unchanged.
+
+FluidAudio 0.17.5 by Fluid Inference:
+https://github.com/FluidInference/FluidAudio
+Source revision: 0b1f46289fe27d95b5e66ad8be46e64f5ee02ae7
+Apache License 2.0; see licenses/FluidAudio-Apache-2.0.txt.
+fastcluster: BSD 2-Clause; see licenses/fastcluster-BSD-2-Clause.md.
+
+The native worker uses Apple Core ML and AVFoundation. Speech models load
+from the app bundle; audio and transcripts remain on the Mac.

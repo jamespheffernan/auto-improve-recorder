@@ -545,7 +545,7 @@ enum TranscriptionMode: String, CaseIterable, Identifiable, Codable {
     var label: String {
         switch self {
         case .localPhonon2:
-            return "Phonon-2 (Default)"
+            return "Phonon-2 · Neural Engine (Default)"
         case .localWhisper:
             return "Local Whisper"
         case .localParakeetCppFast:

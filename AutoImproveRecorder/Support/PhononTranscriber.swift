@@ -1,40 +1,51 @@
 import Darwin
 import Foundation
 
-/// Each app owns one worker. A serial queue keeps MLX inference off the main
+/// Each app owns one worker. A serial queue keeps Core ML inference off the main
 /// thread and prevents requests from consuming each other's responses.
 final class PhononTranscriber: @unchecked Sendable {
     static let shared = PhononTranscriber()
-    static let modelID = "FermionResearch/Phonon-2"
+    static let modelID = "FluidInference/phonon-2-coreml"
     static var runtimeURL: URL {
-        if let bundled = Bundle.main.resourceURL?.appendingPathComponent("Phonon2"),
+        if let bundled = Bundle.main.resourceURL?.appendingPathComponent("PhononCoreML"),
            isInstalled(at: bundled) {
             return bundled
         }
         return FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/AutoImproveRecorder/Phonon2")
+            .appendingPathComponent("Library/Application Support/AutoImproveRecorder/PhononCoreML")
     }
-    static var isInstalled: Bool { isInstalled(at: runtimeURL) }
+    static var isInstalled: Bool {
+        guard #available(macOS 15, *) else { return false }
+        return isInstalled(at: runtimeURL)
+    }
 
     static func isInstalled(at root: URL) -> Bool {
         let fm = FileManager.default
-        return fm.isExecutableFile(atPath: root.appendingPathComponent("runtime/bin/python").path)
-            && ["worker.py", "complete.json", "models/speech/FermionResearch__Phonon-2/model_phonon2_c4c_int6/model.fermion"].allSatisfy {
+        let components = ["Preprocessor", "Encoder", "Decoder", "JointDecisionv3"]
+        let required = ["complete.json", "models/parakeet_vocab.json"] + components.flatMap {
+            ["models/\($0).mlmodelc/coremldata.bin", "models/\($0).mlmodelc/model.mil",
+             "models/\($0).mlmodelc/weights/weight.bin"]
+        }
+        return fm.isExecutableFile(atPath: root.appendingPathComponent("bin/phonon-coreml").path)
+            && required.allSatisfy {
                 fm.fileExists(atPath: root.appendingPathComponent($0).path)
             }
     }
 
     private let root: URL
     private let timeout: TimeInterval
+    private let startupTimeout: TimeInterval
     private let queue = DispatchQueue(label: "com.turfterrace.phonon2", qos: .userInitiated)
     private var process: Process?
     private var input: FileHandle?
     private var output: FileHandle?
     private var pendingOutput = Data()
 
-    init(root: URL = PhononTranscriber.runtimeURL, timeout: TimeInterval = 180) {
+    init(root: URL = PhononTranscriber.runtimeURL, timeout: TimeInterval = 180,
+         startupTimeout: TimeInterval = 600) {
         self.root = root
         self.timeout = timeout
+        self.startupTimeout = startupTimeout
     }
 
     func warmUp() async {
@@ -102,46 +113,38 @@ final class PhononTranscriber: @unchecked Sendable {
     private func startWorker(cancellation: PhononCancellation) throws {
         if process?.isRunning == true { return }
         stopWorker()
+        guard #available(macOS 15, *) else {
+            throw failure("Phonon-2 Neural Engine needs macOS 15 or newer. Choose Parakeet in Settings.")
+        }
         guard Self.isInstalled(at: root) else {
-            throw failure("Phonon-2 is not installed or its drive is unavailable. Install Phonon-2 or choose Parakeet in Settings.")
+            throw failure("Phonon-2 Neural Engine is not installed or its drive is unavailable. Reinstall this build or choose Parakeet in Settings.")
         }
         let child = Process()
         let stdin = Pipe()
         let stdout = Pipe()
-        child.executableURL = root.appendingPathComponent("runtime/bin/python")
-        child.arguments = ["-u", root.appendingPathComponent("worker.py").path,
-                           root.appendingPathComponent("models/speech/FermionResearch__Phonon-2/model_phonon2_c4c_int6").path]
+        child.executableURL = root.appendingPathComponent("bin/phonon-coreml")
+        child.arguments = [root.path]
         child.standardInput = stdin
         child.standardOutput = stdout
         // Stderr is inherited, so dependency diagnostics cannot fill an unread pipe.
         child.standardError = FileHandle.standardError
-        var environment = ProcessInfo.processInfo.environment
-        environment.removeValue(forKey: "PYTHONPATH")
-        environment.removeValue(forKey: "PYTHONHOME")
-        environment["PYTHONNOUSERSITE"] = "1"
-        environment["PYTHONDONTWRITEBYTECODE"] = "1"
-        environment["HF_HUB_OFFLINE"] = "1"
-        // Keep cache markers and bytecode out of a signed, bundled runtime.
-        let cache = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("com.turfterrace.phonon2")
-        environment["HF_HOME"] = cache.appendingPathComponent("huggingface").path
-        environment["FERMION_CACHE_DIR"] = cache.appendingPathComponent("fermion").path
-        child.environment = environment
         try child.run()
         process = child
         input = stdin.fileHandleForWriting
         _ = fcntl(stdin.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
         output = stdout.fileHandleForReading
-        let response = try readResponse(cancellation: cancellation)
+        // First load compiles the sparse encoder for this Mac; later loads use Core ML's cache.
+        let response = try readResponse(cancellation: cancellation, timeout: startupTimeout)
+        if let message = response["error"] as? String { throw failure(message) }
         guard response["ready"] as? Bool == true, response["model"] as? String == Self.modelID else {
             throw failure("Phonon-2 could not load. The recording was kept.")
         }
-        NSLog("Phonon-2 resident worker ready (pid %d).", child.processIdentifier)
+        NSLog("Phonon-2 Core ML / Neural Engine worker ready (pid %d).", child.processIdentifier)
     }
 
-    private func readResponse(cancellation: PhononCancellation) throws -> [String: Any] {
+    private func readResponse(cancellation: PhononCancellation, timeout: TimeInterval? = nil) throws -> [String: Any] {
         guard let output else { throw failure("Phonon-2 worker is unavailable.") }
-        let deadline = Date().addingTimeInterval(timeout)
+        let deadline = Date().addingTimeInterval(timeout ?? self.timeout)
         while Date() < deadline {
             try cancellation.check()
             if let newline = pendingOutput.firstIndex(of: 10) {

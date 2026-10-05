@@ -444,8 +444,8 @@ private struct ProcessingSettingsPane: View {
         switch state.transcriptionMode {
         case .localPhonon2:
             return PhononTranscriber.isInstalled
-                ? "English transcription with Phonon-2. Audio stays on this Mac."
-                : "Phonon-2 is not installed or its drive is unavailable. Choose another model until it is ready."
+                ? "English transcription with Phonon-2 on Apple’s Neural Engine. Audio stays on this Mac."
+                : "Phonon-2 needs macOS 15 or newer and its bundled speech models. Choose another model until it is ready."
         case .localWhisper, .localParakeetCppFast, .localParakeetCppRecommended, .localParakeetCppResident, .localParakeetStreaming, .appleLocal:
             return "Audio stays on this Mac."
         case .openAIAPI, .fastest:

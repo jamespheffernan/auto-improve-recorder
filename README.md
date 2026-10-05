@@ -45,11 +45,19 @@ The guide is skippable and can be reopened from **Setup Guide…** in the menu b
 
 Open **Settings…** to change the global **Record and send** and **Cancel** shortcuts. Both require Control, Option, or Command, cannot be identical, and persist across launches. Existing installs keep `Hyper-R` and `Hyper-Escape` until changed.
 
-ASR Settings now offers **Phonon-2 (Default)** and **Parakeet**. A recording keeps the model selected when it starts. Phonon-2 transcribes the saved recording after stop; Parakeet retains its existing live and wireless paths.
+ASR Settings offers **Phonon-2 · Neural Engine (Default)** and **Parakeet**. Version 1.3 replaces the MLX/Python Phonon-2 backend with FluidAudio 0.17.5 and the Core ML conversion of the same checkpoint. Phonon-2 requires Apple silicon and macOS 15 or newer. A recording keeps the model selected when it starts. Phonon-2 transcribes the saved recording after stop; Parakeet retains its existing live and wireless paths.
 
 The 1.1 website release includes the universal Parakeet speech engine. Its **Install speech models** action downloads and SHA-256 verifies three models (1.75 GB). Setup needs 4 GB of free space. That installer does not install Phonon-2. Its runtime lives at `~/Library/Application Support/AutoSendRecorder/Runtime/20260918`; the shared AIR Parakeet runtime remains a fallback. Source builds need the `SpeechRuntime` resource supplied by `Tools/AutoSendRelease/build-runtime.sh` and `package-archive.sh` to offer Parakeet installation.
 
-### Phonon-2 runtime
+### Phonon-2 Neural Engine runtime (1.3)
+
+The portable ASR build includes the native Swift worker and verified Core ML models in `Contents/Resources/PhononCoreML`. It needs no Python installation, external drive, or model download. Each app starts a private worker, warms the models, and reuses them between recordings. The encoder, decoder, and joint use Core ML's CPU/Neural Engine configuration; the preprocessor runs on CPU. First launch compiles the model for the Neural Engine, which can take several minutes. Later launches use Apple's cache. Cancellation, engine failure, and incomplete or empty responses preserve the recording and prevent delivery.
+
+Source builds use `Tools/PhononCoreML/Package.swift` to build `phonon-coreml`, `download-model.py` to download and hash-check the pinned checkpoint, and `bundle.py` to add the worker and models to an archive before signing and notarization. Keep scratch builds, caches, and downloaded models on external agent storage. The worker only calls `AsrModels.loadLocal`; it never downloads models during startup or recording.
+
+Model: [FluidInference/phonon-2-coreml](https://huggingface.co/FluidInference/phonon-2-coreml), revision `a812a0dfef205660787ef6234317ab79acf4d5d6`. Runtime: [FluidAudio 0.17.5](https://github.com/FluidInference/FluidAudio/releases/tag/v0.17.5), pinned in `Tools/PhononCoreML/Package.resolved`. The model is English-only and retains its CC-BY-4.0 attribution. See `Tools/PhononCoreML/THIRD-PARTY-NOTICES.txt` and the bundled licenses.
+
+### Previous MLX Phonon-2 runtime (1.2)
 
 On Apple silicon, install the pinned runtime once for both apps. Run this from the repository with `uv` and Python 3.12 available:
 
@@ -59,7 +67,7 @@ python3 Tools/PhononRuntime/install.py "/Volumes/4TB Private/Offloaded/Agent Wor
 
 The installer keeps dependencies, caches, and models on the external volume. It verifies the upstream model archive and every extracted file, runs a load/decode check, and links the completed runtime at `~/Library/Application Support/AutoImproveRecorder/Phonon2`. Keep that volume mounted while using this model. The app does not download models during recording.
 
-Each app starts a private worker, warms the model, and reuses it between recordings. Requests pass over pipes; no network server runs. Cancellation, an incomplete transcript, or an engine failure keeps the recording and prevents delivery. Existing AIR model preferences remain saved; new preferences default to Phonon-2. Select Phonon-2 in AIR Settings to change an existing installation.
+The previous 1.2 build uses a private MLX/Python worker. Its tooling remains under `Tools/PhononRuntime` for reproducing that release. Existing AIR model preferences remain saved; new preferences default to Phonon-2. Select Phonon-2 in AIR Settings to change an existing installation.
 
 [Phonon-2](https://huggingface.co/FermionResearch/Phonon-2) is English-only. The weights use CC-BY-4.0 and derive from NVIDIA Parakeet TDT 0.6B v3. See [third-party notices](Tools/PhononRuntime/THIRD-PARTY-NOTICES.txt).
 

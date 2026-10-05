@@ -8,7 +8,7 @@ enum AutoSendTranscriptionModel: String, CaseIterable, Identifiable, Sendable {
     var id: String { rawValue }
     var label: String {
         switch self {
-        case .phonon2: return "Phonon-2 (Default)"
+        case .phonon2: return "Phonon-2 · Neural Engine (Default)"
         case .parakeet: return "Parakeet"
         }
     }
