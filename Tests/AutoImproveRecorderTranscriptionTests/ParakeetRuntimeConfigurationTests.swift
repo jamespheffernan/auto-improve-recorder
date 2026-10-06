@@ -82,7 +82,7 @@ final class ParakeetRuntimeConfigurationTests: XCTestCase {
         XCTAssertEqual(loader.paths, ["/air/ParakeetCpp/capi/libparakeet.dylib"])
     }
 
-    func testFailedSymbolLoadIsKeptAndNotRetried() {
+    func testFailedSymbolLoadIsRetriedFromTheCurrentRootOnTheNextUse() {
         let root = MutableRoot(fallbackRoot)
         let loader = FakeLoader(result: nil)
         let fileChecks = Counter()
@@ -96,18 +96,93 @@ final class ParakeetRuntimeConfigurationTests: XCTestCase {
         )
 
         XCTAssertNil(runtime.symbols)
-        root.value = versionedRoot
-        loader.result = fakeSymbols
-        XCTAssertNil(runtime.symbols)
         XCTAssertThrowsError(try runtime.context(modelPath: "/models/good.gguf")) { error in
             guard case ParakeetCAPIError.libraryUnavailable = error else {
                 return XCTFail("unexpected error: \(error)")
             }
         }
-
-        XCTAssertEqual(loader.paths, ["/air/ParakeetCpp/capi/libparakeet.dylib"])
         XCTAssertEqual(fileChecks.value, 0)
         XCTAssertEqual(fakeLoadedModelPaths, [])
+
+        root.value = versionedRoot
+        loader.result = fakeSymbols
+        XCTAssertNotNil(runtime.symbols)
+        XCTAssertNoThrow(try runtime.context(modelPath: "/models/good.gguf"))
+        XCTAssertNotNil(runtime.symbols)
+
+        XCTAssertEqual(loader.paths, [
+            "/air/ParakeetCpp/capi/libparakeet.dylib",
+            "/air/ParakeetCpp/capi/libparakeet.dylib",
+            "/asr/Runtime/20260918/capi/libparakeet.dylib"
+        ])
+        XCTAssertEqual(fakeLoadedModelPaths, ["/models/good.gguf"])
+    }
+
+    // MARK: One root after a successful load
+
+    func testEveryPathUsesTheRootTheLibraryLoadedFrom() throws {
+        let root = MutableRoot(fallbackRoot)
+        let configuration = root.configuration
+        let loader = FakeLoader(result: nil)
+        let runtime = ParakeetResidentRuntime(
+            configuration: configuration,
+            loadSymbols: loader.load,
+            fileExists: { _ in true }
+        )
+        let cliRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("parakeet-kept-root-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: cliRoot) }
+
+        // Before a load succeeds, every path follows the current root.
+        XCTAssertNil(runtime.symbols)
+        XCTAssertEqual(runtime.modelPath(filename: "fast.gguf"), "/air/ParakeetCpp/models/fast.gguf")
+        root.value = cliRoot
+        XCTAssertEqual(runtime.libraryURL, cliRoot.appendingPathComponent("capi/libparakeet.dylib"))
+        XCTAssertEqual(runtime.modelPath(filename: "fast.gguf"), cliRoot.appendingPathComponent("models/fast.gguf").path)
+
+        // The library loads from `cliRoot`. The root then changes, as when the installer finishes.
+        loader.result = fakeSymbols
+        XCTAssertNotNil(runtime.symbols)
+        root.value = versionedRoot
+
+        XCTAssertEqual(configuration.resolveRoot(), cliRoot)
+        XCTAssertEqual(runtime.libraryURL, cliRoot.appendingPathComponent("capi/libparakeet.dylib"))
+        for filename in ["fast.gguf", ParakeetModelFilename.liveRecommended] {
+            XCTAssertEqual(
+                runtime.modelPath(filename: filename),
+                cliRoot.appendingPathComponent("models/\(filename)").path
+            )
+        }
+
+        // The one-shot CLI with the same configuration reads the kept root too.
+        for folder in ["bin", "models", "lib"] {
+            try FileManager.default.createDirectory(
+                at: cliRoot.appendingPathComponent(folder),
+                withIntermediateDirectories: true
+            )
+        }
+        let cli = cliRoot.appendingPathComponent(ParakeetOneShotProcess.executablePath)
+        try Data("#!/bin/sh\nexit 0\n".utf8).write(to: cli)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: cli.path)
+        try Data().write(to: cliRoot.appendingPathComponent(ParakeetOneShotProcess.modelPath))
+        try Data().write(to: cliRoot.appendingPathComponent("lib/libggml-base.dylib"))
+        XCTAssertTrue(ParakeetOneShotProcess(configuration: configuration).runtimeIsInstalled)
+    }
+
+    func testAFixedRootIsUnchangedByASuccessfulLoad() {
+        let root = MutableRoot(fallbackRoot)
+        let configuration = root.configuration
+        let runtime = ParakeetResidentRuntime(
+            configuration: configuration,
+            loadSymbols: { _ in fakeSymbols },
+            fileExists: { _ in true }
+        )
+
+        XCTAssertEqual(runtime.modelPath(filename: "live.gguf"), "/air/ParakeetCpp/models/live.gguf")
+        XCTAssertNotNil(runtime.symbols)
+        XCTAssertEqual(configuration.resolveRoot(), fallbackRoot)
+        XCTAssertEqual(runtime.libraryURL.path, "/air/ParakeetCpp/capi/libparakeet.dylib")
+        XCTAssertEqual(runtime.modelPath(filename: "live.gguf"), "/air/ParakeetCpp/models/live.gguf")
     }
 
     func testConcurrentFirstUsesShareOneSymbolLoad() {
@@ -158,9 +233,9 @@ final class ParakeetRuntimeConfigurationTests: XCTestCase {
         XCTAssertEqual(fakeLoadedModelPaths, ["/models/good.gguf", "/models/broken.gguf"])
     }
 
-    // MARK: First-use cached model path
+    // MARK: Model path before a load
 
-    func testCachedModelPathKeepsTheRootFromItsFirstUse() {
+    func testModelPathIsResolvedOnEveryUseWhileNoLoadHasSucceeded() {
         let root = MutableRoot(fallbackRoot)
         let runtime = ParakeetResidentRuntime(
             configuration: root.configuration,
@@ -169,14 +244,13 @@ final class ParakeetRuntimeConfigurationTests: XCTestCase {
         )
         XCTAssertEqual(root.resolutions, 0, "creating the runtime must not resolve the root")
 
-        XCTAssertEqual(runtime.cachedModelPath(filename: "fast.gguf"), "/air/ParakeetCpp/models/fast.gguf")
+        XCTAssertEqual(runtime.modelPath(filename: "fast.gguf"), "/air/ParakeetCpp/models/fast.gguf")
         XCTAssertEqual(root.resolutions, 1)
 
+        XCTAssertNil(runtime.symbols)
         root.value = versionedRoot
-        XCTAssertEqual(runtime.cachedModelPath(filename: "fast.gguf"), "/air/ParakeetCpp/models/fast.gguf")
-        XCTAssertEqual(root.resolutions, 1)
         XCTAssertEqual(runtime.modelPath(filename: "fast.gguf"), "/asr/Runtime/20260918/models/fast.gguf")
-        XCTAssertEqual(runtime.cachedModelPath(filename: "other.gguf"), "/asr/Runtime/20260918/models/other.gguf")
+        XCTAssertEqual(root.resolutions, 3)
     }
 
     // MARK: Live input admission

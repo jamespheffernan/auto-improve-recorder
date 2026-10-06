@@ -238,13 +238,10 @@ final class ParakeetResidentRuntime: @unchecked Sendable {
     private let loadSymbols: (String) -> ParakeetCAPI.Symbols?
     private let fileExists: (String) -> Bool
     private let symbolsLock = NSLock()
-    private var symbolsResolved = false
     private var resolvedSymbols: ParakeetCAPI.Symbols?
     private let lock = NSLock()
     private var contexts: [String: ParakeetResidentContext] = [:]
     private var failedLoads: [String: String] = [:]
-    private let modelPathLock = NSLock()
-    private var cachedModelPaths: [String: String] = [:]
 
     init(
         configuration: ParakeetRuntimeConfiguration,
@@ -261,35 +258,26 @@ final class ParakeetResidentRuntime: @unchecked Sendable {
     }
 
     /// Loaded on first use and kept for the life of the runtime. A failed
-    /// load is kept too: a library installed later is not loaded until the
-    /// app restarts. Concurrent first callers wait for the one load.
+    /// load is not kept: the next use resolves the root and tries again. A
+    /// successful load fixes the configuration's root to the one the library
+    /// came from. Concurrent first callers wait for the one load.
     var symbols: ParakeetCAPI.Symbols? {
         symbolsLock.lock()
         defer { symbolsLock.unlock() }
-        if !symbolsResolved {
-            resolvedSymbols = loadSymbols(libraryURL.path)
-            symbolsResolved = true
+        if resolvedSymbols == nil {
+            let root = configuration.resolveRoot()
+            resolvedSymbols = loadSymbols(root.appendingPathComponent("capi/libparakeet.dylib").path)
+            if resolvedSymbols != nil {
+                configuration.keepRoot(root)
+            }
         }
         return resolvedSymbols
     }
 
-    /// The model's path under the current root. The root is resolved on
-    /// every call.
+    /// The model's path under the configuration's root: the root the library
+    /// loaded from, or the current root while no load has succeeded.
     func modelPath(filename: String) -> String {
         configuration.resolveRoot().appendingPathComponent("models/\(filename)").path
-    }
-
-    /// The model's path under the root as it was the first time this
-    /// filename was asked for. Later root changes do not affect it.
-    func cachedModelPath(filename: String) -> String {
-        modelPathLock.lock()
-        defer { modelPathLock.unlock() }
-        if let path = cachedModelPaths[filename] {
-            return path
-        }
-        let path = modelPath(filename: filename)
-        cachedModelPaths[filename] = path
-        return path
     }
 
     func context(modelPath: String) throws -> ParakeetResidentContext {

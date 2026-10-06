@@ -57,11 +57,11 @@ struct ParakeetResidentRecordingAdapter: RecordingTranscriber {
 
 extension ParakeetResidentRecordingAdapter {
     /// The shared resident runtime with one model file under `<root>/models`.
-    /// The model path is resolved on first use and then fixed for the life of
-    /// the process.
+    /// The model path is under the root the library loaded from, or under
+    /// the current root while no load has succeeded.
     static func runtime(modelFilename: String, provider: String) -> ParakeetResidentRecordingAdapter {
         let modelPath: @Sendable () -> String = {
-            ParakeetResidentRuntime.shared.cachedModelPath(filename: modelFilename)
+            ParakeetResidentRuntime.shared.modelPath(filename: modelFilename)
         }
         return ParakeetResidentRecordingAdapter(
             engineName: provider,
