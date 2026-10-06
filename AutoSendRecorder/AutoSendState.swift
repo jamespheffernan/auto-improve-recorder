@@ -384,7 +384,8 @@ enum AutoSendTranscriptArchive {
             ),
             deliveredText: evidence.deliveredText,
             deliveredVia: evidence.disposition?.archiveLabel,
-            message: evidence.failure
+            message: evidence.failure,
+            transcriptionEngine: evidence.transcriptionEngine
         )
     }
 }

@@ -59,6 +59,27 @@ final class AutoSendBackupMicrophoneTests: XCTestCase {
         XCTAssertEqual(present(run.snapshot).statusMessage, "Pasted and sent.")
     }
 
+    func testArchiveNamesTheEngineThatTranscribedTheTextThatWasUsed() async {
+        let engines = [mainURL: "Main Engine", backupURL: "Backup Engine"]
+        let usedBackup = await finishRun(
+            main: .success("um"),
+            backup: .success("the whole five minute ramble"),
+            primaryWasSilent: true,
+            engines: engines
+        )
+        XCTAssertEqual(usedBackup.records.archived.map(\.audioURL), [backupURL])
+        XCTAssertEqual(usedBackup.records.archived.map(\.transcriptionEngine), ["Backup Engine"])
+
+        let keptMain = await finishRun(
+            main: .success("the main microphone came back and heard all of it"),
+            backup: .success("came back"),
+            primaryWasSilent: true,
+            engines: engines
+        )
+        XCTAssertEqual(keptMain.records.archived.map(\.audioURL), [mainURL])
+        XCTAssertEqual(keptMain.records.archived.map(\.transcriptionEngine), ["Main Engine"])
+    }
+
     func testNormalRunDoesNotAskToWaitForTheBackup() async {
         let run = await finishRun(main: .success("all good"), backup: .success("all good too and longer"))
         XCTAssertEqual(run.deliveredText, "all good")
@@ -255,7 +276,8 @@ final class AutoSendBackupMicrophoneTests: XCTestCase {
         main: Result<String, Error>,
         backup: Result<String, Error>?,
         primaryWasSilent: Bool = false,
-        stopError: Error? = nil
+        stopError: Error? = nil,
+        engines: [URL: String] = [:]
     ) async -> FinishedRun {
         let capture = BackupFakeCapture(
             mainURL: mainURL,
@@ -270,7 +292,7 @@ final class AutoSendBackupMicrophoneTests: XCTestCase {
         )
         var results = [mainURL: main]
         results[backupURL] = backup
-        let transcript = BackupFakeTranscript(results: results)
+        let transcript = BackupFakeTranscript(results: results, engines: engines)
         let delivery = BackupFakeDelivery()
         let records = BackupRunRecords()
         let workflow = AutoSendWorkflow(environment: AutoSendWorkflowEnvironment(
@@ -378,15 +400,28 @@ private actor BackupFakeCapture: AutoSendCaptureService {
 
 private actor BackupFakeTranscript: AutoSendTranscriptService {
     let results: [URL: Result<String, Error>]
+    /// The engine name reported for each file. A file without an entry reports none.
+    let engines: [URL: String]
     private(set) var calls: [URL] = []
 
-    init(results: [URL: Result<String, Error>]) {
+    init(results: [URL: Result<String, Error>], engines: [URL: String] = [:]) {
         self.results = results
+        self.engines = engines
     }
 
     func transcribe(audioURL: URL, operationID: AutoSendOperationID) async throws -> String {
         calls.append(audioURL)
         return try results[audioURL]!.get()
+    }
+
+    func transcribeNamingEngine(
+        audioURL: URL,
+        operationID: AutoSendOperationID
+    ) async throws -> AutoSendTranscript {
+        AutoSendTranscript(
+            text: try await transcribe(audioURL: audioURL, operationID: operationID),
+            engineName: engines[audioURL]
+        )
     }
 
     func cancel(operationID: AutoSendOperationID) async {}

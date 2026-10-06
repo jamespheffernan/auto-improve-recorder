@@ -39,6 +39,7 @@ final class AutoSendLexiconTests: XCTestCase {
                     deliveredText: evidence.deliveredText,
                     deliveredVia: evidence.disposition?.archiveLabel,
                     message: evidence.failure,
+                    transcriptionEngine: evidence.transcriptionEngine,
                     root: archiveRoot
                 )
             }
@@ -59,6 +60,43 @@ final class AutoSendLexiconTests: XCTestCase {
         XCTAssertEqual(record?["deliveredText"] as? String, "put it on Turf Review")
         XCTAssertEqual(record?["deliveredVia"] as? String, "sent")
         XCTAssertEqual(record?["product"] as? String, "ASR")
+        // A service that reports no engine name leaves the record without one.
+        XCTAssertNil(record?["transcriptionEngine"])
+    }
+
+    func testASRArchivesTheEngineNameTheTranscriptionReturned() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("asr-engine-\(UUID().uuidString)", isDirectory: true)
+        let archiveRoot = root.appendingPathComponent("TranscriptTruth")
+        let workflow = AutoSendWorkflow(environment: AutoSendWorkflowEnvironment(
+            capture: StubCapture(url: root.appendingPathComponent("recording-engine.wav")),
+            transcription: EngineNamingTranscript(text: "hello there", engineName: "Phonon-2 test engine"),
+            delivery: RecordingDelivery(),
+            archive: { evidence in
+                TranscriptArchiveStore.saveAutoSend(
+                    audioURL: evidence.audioURL,
+                    outcome: TranscriptRuleOutcome(
+                        recognizer: evidence.recognizerText,
+                        afterRules: evidence.afterRulesText,
+                        final: evidence.finalText
+                    ),
+                    deliveredText: evidence.deliveredText,
+                    deliveredVia: evidence.disposition?.archiveLabel,
+                    message: evidence.failure,
+                    transcriptionEngine: evidence.transcriptionEngine,
+                    root: archiveRoot
+                )
+            }
+        ))
+
+        await workflow.start()
+        let stopped = await workflow.stop()
+
+        XCTAssertTrue(stopped)
+        let recordURL = TranscriptArchiveStore.recordURL(for: "recording-engine", root: archiveRoot)
+        let record = try JSONSerialization.jsonObject(with: Data(contentsOf: recordURL)) as? [String: Any]
+        XCTAssertEqual(record?["deliveredText"] as? String, "hello there")
+        XCTAssertEqual(record?["transcriptionEngine"] as? String, "Phonon-2 test engine")
     }
 
     func testASRReadsAIRsManualRulesWithoutWritingThem() throws {
@@ -116,6 +154,23 @@ private actor StubTranscript: AutoSendTranscriptService {
     let text: String
     init(text: String) { self.text = text }
     func transcribe(audioURL: URL, operationID: AutoSendOperationID) async throws -> String { text }
+    func cancel(operationID: AutoSendOperationID) async {}
+}
+
+private actor EngineNamingTranscript: AutoSendTranscriptService {
+    let text: String
+    let engineName: String
+    init(text: String, engineName: String) {
+        self.text = text
+        self.engineName = engineName
+    }
+    func transcribe(audioURL: URL, operationID: AutoSendOperationID) async throws -> String { text }
+    func transcribeNamingEngine(
+        audioURL: URL,
+        operationID: AutoSendOperationID
+    ) async throws -> AutoSendTranscript {
+        AutoSendTranscript(text: text, engineName: engineName)
+    }
     func cancel(operationID: AutoSendOperationID) async {}
 }
 

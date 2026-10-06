@@ -77,10 +77,18 @@ final class AutoSendParakeetService: AutoSendTranscriptService, @unchecked Senda
 
     /// A finish whose operation has no stored handle uses the model selected
     /// now and reads the saved file only.
-    func transcribe(audioURL: URL, operationID: AutoSendOperationID) async throws -> String {
+    func transcribeNamingEngine(
+        audioURL: URL,
+        operationID: AutoSendOperationID
+    ) async throws -> AutoSendTranscript {
         let handle = slot.take(operation: operationID.rawValue)
             ?? policy.beginWithoutCapture(model: currentModel)
-        return try await handle.finish(audioURL: audioURL).text
+        let result = try await handle.finish(audioURL: audioURL)
+        return AutoSendTranscript(text: result.text, engineName: result.engineName)
+    }
+
+    func transcribe(audioURL: URL, operationID: AutoSendOperationID) async throws -> String {
+        try await transcribeNamingEngine(audioURL: audioURL, operationID: operationID).text
     }
 
     func cancel(operationID: AutoSendOperationID) async {

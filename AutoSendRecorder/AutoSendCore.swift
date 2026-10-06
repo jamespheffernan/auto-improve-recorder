@@ -343,9 +343,33 @@ extension AutoSendCaptureService {
     }
 }
 
+/// A recording's text and the name of the engine that produced it. The name is nil when the
+/// service does not report one.
+struct AutoSendTranscript: Equatable, Sendable {
+    var text: String
+    var engineName: String?
+}
+
 protocol AutoSendTranscriptService {
     func transcribe(audioURL: URL, operationID: AutoSendOperationID) async throws -> String
+    /// The same transcription with the engine's name. The workflow calls this one.
+    func transcribeNamingEngine(
+        audioURL: URL,
+        operationID: AutoSendOperationID
+    ) async throws -> AutoSendTranscript
     func cancel(operationID: AutoSendOperationID) async
+}
+
+extension AutoSendTranscriptService {
+    func transcribeNamingEngine(
+        audioURL: URL,
+        operationID: AutoSendOperationID
+    ) async throws -> AutoSendTranscript {
+        AutoSendTranscript(
+            text: try await transcribe(audioURL: audioURL, operationID: operationID),
+            engineName: nil
+        )
+    }
 }
 
 protocol AutoSendDeliveryService {
@@ -359,6 +383,8 @@ struct AutoSendTranscriptEvidence: Equatable, Sendable {
     var recognizerText: String
     var afterRulesText: String
     var finalText: String
+    /// The engine that transcribed the recording whose text was used.
+    var transcriptionEngine: String?
     var deliveredText: String?
     var disposition: AutoSendDeliveryDisposition?
     var failure: String?
@@ -480,13 +506,16 @@ actor AutoSendWorkflow {
             }
 
             var transcript = ""
+            var engineName: String?
             if let mainAudioURL {
                 lastAudioURL = mainAudioURL
                 do {
-                    transcript = try await environment.transcription.transcribe(
+                    let mainTranscript = try await environment.transcription.transcribeNamingEngine(
                         audioURL: mainAudioURL,
                         operationID: operationID
                     )
+                    transcript = mainTranscript.text
+                    engineName = mainTranscript.engineName
                 } catch {
                     mainFailure = error
                 }
@@ -517,10 +546,11 @@ actor AutoSendWorkflow {
                         // Drops any live handle, so the backup is read from its saved file.
                         await environment.transcription.cancel(operationID: operationID)
                     }
-                    let backupTranscript = try await environment.transcription.transcribe(
+                    let backupResult = try await environment.transcription.transcribeNamingEngine(
                         audioURL: backup.audioURL,
                         operationID: operationID
                     )
+                    let backupTranscript = backupResult.text
                     guard isActive(operationID) else {
                         environment.discardRecording(backup.audioURL)
                         await environment.transcription.cancel(operationID: operationID)
@@ -535,6 +565,7 @@ actor AutoSendWorkflow {
                     ) {
                         mainFailure = nil
                         transcript = backupTranscript
+                        engineName = backupResult.engineName
                         processed = backupProcessed
                         normalized = backupNormalized
                         usedAudioURL = backup.audioURL
@@ -573,7 +604,8 @@ actor AutoSendWorkflow {
                 audioURL: usedAudioURL,
                 recognizerText: transcript,
                 afterRulesText: processed.afterRules,
-                finalText: normalized
+                finalText: normalized,
+                transcriptionEngine: engineName
             )
             guard !normalized.isEmpty else {
                 throw AutoSendWorkflowError.emptyTranscript

@@ -230,6 +230,7 @@ enum TranscriptArchiveStore {
         deliveredText: String?,
         deliveredVia: String?,
         message: String?,
+        transcriptionEngine: String?,
         root: URL = autoSendRoot()
     ) -> Bool {
         let name = audioURL.deletingPathExtension().lastPathComponent
@@ -241,7 +242,7 @@ enum TranscriptArchiveStore {
             deliveredText: deliveredText,
             deliveredVia: deliveredVia,
             message: message,
-            transcriptionEngine: "parakeet.cpp"
+            transcriptionEngine: transcriptionEngine
         )
         return save(record, root: root)
     }
