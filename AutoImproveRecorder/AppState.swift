@@ -1157,6 +1157,7 @@ final class AppState: ObservableObject {
                 let microphoneResolution = try resolveMicrophoneForRecording()
                 audioURL = try startAudioRecorder(
                     at: archiveDraft.audioURL,
+                    recordingID: recordingID,
                     initialResolution: microphoneResolution,
                     recordingHandle: recordingHandle,
                     requestedAt: requestedAt
@@ -1241,6 +1242,7 @@ final class AppState: ObservableObject {
 
     private func startAudioRecorder(
         at audioURL: URL,
+        recordingID: UUID,
         initialResolution: MicrophoneResolution,
         recordingHandle: any RecordingSessionHandle,
         requestedAt: Date
@@ -1249,6 +1251,7 @@ final class AppState: ObservableObject {
             microphoneRecovery.recordingStarted(on: initialResolution)
             return try startAudioRecorderOnce(
                 at: audioURL,
+                recordingID: recordingID,
                 resolution: initialResolution,
                 recordingHandle: recordingHandle,
                 requestedAt: requestedAt
@@ -1271,6 +1274,7 @@ final class AppState: ObservableObject {
             microphoneRecovery.recordingStarted(on: fallbackResolution)
             return try startAudioRecorderOnce(
                 at: audioURL,
+                recordingID: recordingID,
                 resolution: fallbackResolution,
                 recordingHandle: recordingHandle,
                 requestedAt: requestedAt
@@ -1278,8 +1282,11 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// `recordingID` is the recording this recorder run belongs to. The stream handler sends it
+    /// with each microphone health event.
     private func startAudioRecorderOnce(
         at audioURL: URL,
+        recordingID: UUID,
         resolution: MicrophoneResolution,
         recordingHandle: any RecordingSessionHandle,
         requestedAt: Date
@@ -1308,6 +1315,7 @@ final class AppState: ObservableObject {
                         Task { @MainActor [weak self] in
                             self?.handleMicrophoneHealthEvent(
                                 event,
+                                recordingID: recordingID,
                                 resolution: resolution,
                                 audioURL: audioURL,
                                 requestedAt: requestedAt
@@ -1437,10 +1445,14 @@ final class AppState: ObservableObject {
 
     private func handleMicrophoneHealthEvent(
         _ event: MicrophoneHealthEvent,
+        recordingID: UUID,
         resolution: MicrophoneResolution,
         audioURL: URL,
         requestedAt: Date
     ) {
+        // An event from an earlier recording is dropped, even when that recording used the same
+        // microphone and its resolution equals the active one.
+        guard recordingID == activeRecordingID else { return }
         // A recording with a backup keeps its main microphone; the backup holds the audio.
         guard activeBackupMicrophone == nil else { return }
         guard case .recording = phase,
@@ -1459,6 +1471,7 @@ final class AppState: ObservableObject {
             event: event,
             quarantinedUntil: quarantinedUntil,
             audioURL: audioURL,
+            recordingID: recordingID,
             requestedAt: requestedAt
         )
     }
@@ -1468,6 +1481,7 @@ final class AppState: ObservableObject {
         event: MicrophoneHealthEvent,
         quarantinedUntil: Date,
         audioURL: URL,
+        recordingID: UUID,
         requestedAt: Date
     ) {
         defer { microphoneRecovery.recoveryFinished() }
@@ -1501,6 +1515,7 @@ final class AppState: ObservableObject {
             microphoneRecovery.recordingStarted(on: fallbackResolution)
             _ = try startAudioRecorderOnce(
                 at: audioURL,
+                recordingID: recordingID,
                 resolution: fallbackResolution,
                 recordingHandle: recordingHandle,
                 requestedAt: requestedAt

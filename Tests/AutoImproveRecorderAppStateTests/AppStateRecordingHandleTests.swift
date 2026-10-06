@@ -134,6 +134,54 @@ final class AppStateRecordingHandleTests: XCTestCase {
         XCTAssertEqual(harness.transcription.requests.values.map(\.mode), [.localParakeetStreaming])
     }
 
+    func testLateSilenceReportFromAnEarlierRecordingDoesNotRestartTheCurrentOne() async throws {
+        let preferred = AudioInputDevice(
+            id: "mic-preferred", name: "Preferred Mic", coreAudioDeviceID: nil, transportType: nil,
+            isConnected: true, isInputCapable: true, isSystemDefault: false
+        )
+        let builtIn = AudioInputDevice(
+            id: "mic-builtin", name: "Built-in Mic", coreAudioDeviceID: nil, transportType: nil,
+            isConnected: true, isInputCapable: true, isSystemDefault: true
+        )
+        let harness = try makeHarness(devices: [preferred, builtIn], settings: {
+            $0.preferredMicrophoneID = "mic-preferred"
+        })
+        await harness.startAndWaitForRecording()
+        let firstRecordingsHandler = try XCTUnwrap(harness.recorder.streamHandler)
+        harness.appState.cancelRecording()
+
+        // The second recording uses the same microphone, so its resolution equals the first's.
+        await harness.startAndWaitForRecording()
+        XCTAssertEqual(harness.recorder.startedMicrophoneIDs, ["mic-preferred", "mic-preferred"])
+
+        // Three silent buffers make the first recording's health monitor report startup silence
+        // now, after that recording ended.
+        let silence = try capturedBuffer()
+        for _ in 0..<3 {
+            firstRecordingsHandler(.captured(silence))
+        }
+        for _ in 0..<25 {
+            try await Task.sleep(nanoseconds: 2_000_000)
+        }
+
+        XCTAssertTrue(harness.appState.isRecording)
+        XCTAssertEqual(harness.recorder.startedMicrophoneIDs, ["mic-preferred", "mic-preferred"])
+        XCTAssertEqual(harness.recorder.stopCount, 1)
+        XCTAssertNil(harness.appState.statusMessage)
+        let handles = harness.transcription.handles.values
+        XCTAssertEqual(handles.count, 2)
+        XCTAssertEqual(handles[1].cancels.count, 0)
+
+        // Silence from the current recording's own handler still restarts it on the fallback.
+        await harness.waitUntil("the current recording to restart on the fallback microphone") {
+            guard harness.recorder.startedMicrophoneIDs.count < 3 else { return true }
+            harness.recorder.streamHandler?(.captured(silence))
+            return false
+        }
+        XCTAssertEqual(harness.recorder.startedMicrophoneIDs, ["mic-preferred", "mic-preferred", "mic-builtin"])
+        XCTAssertEqual(harness.appState.statusMessage, "Could not hear Preferred Mic; using Built-in Mic.")
+    }
+
     func testCancelWhileRecordingCancelsTheHandleWithoutFinishingIt() async throws {
         let harness = try makeHarness()
         await harness.startAndWaitForRecording()
