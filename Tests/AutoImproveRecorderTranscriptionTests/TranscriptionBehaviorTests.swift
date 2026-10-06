@@ -481,6 +481,17 @@ private final class FakeLiveSession: LocalLiveTranscriptionSession, @unchecked S
     }
 }
 
+/// One recording for `Script.transcribe`: the mode, what the recording was started with, and the
+/// live session and realtime transcriber it has at stop.
+private struct TranscriptionServiceRequest: @unchecked Sendable {
+    var audioURL: URL
+    var mode: TranscriptionMode
+    var apiKey: String
+    var dictionarySnapshot: String
+    var streamingTranscriber: OpenAIRealtimeTranscriber?
+    var parakeetStreamSession: (any LocalLiveTranscriptionSession)?
+}
+
 /// Scripted results for every dependency of `LiveTranscriptionService`, and a
 /// record of the calls, statuses and diagnostics it produced.
 private final class Script: @unchecked Sendable {
@@ -583,12 +594,26 @@ private final class Script: @unchecked Sendable {
         return LiveTranscriptionService(dependencies: dependencies)
     }
 
+    /// Runs one recording the way `AppState` does: begins the mode's handle with the live session
+    /// the request carries, gives it the request's realtime transcriber and finishes it on the file.
     func transcribe(_ request: TranscriptionServiceRequest) async throws -> TranscriptionResult {
-        try await service.transcribe(
-            request,
+        var service = service
+        service.dependencies.liveParakeetIsAvailable = { request.parakeetStreamSession != nil }
+        service.dependencies.beginLiveParakeet = { request.parakeetStreamSession! }
+        let handle = service.beginRecording(
+            RecordingTranscriptionRequest(
+                mode: request.mode,
+                dictionarySnapshot: request.dictionarySnapshot,
+                attachedToCapture: true,
+                apiKey: { request.apiKey }
+            ),
             status: { status in self.lock.withLock { self.recordedStatuses.append(status) } },
             recordDiagnostics: { diagnostics in self.lock.withLock { self.recordedDiagnostics.append(diagnostics) } }
         )
+        if let realtime = request.streamingTranscriber {
+            (handle as? RealtimeBridgeRecordingHandle)?.useRealtimeTranscriber(realtime)
+        }
+        return try await handle.finish(audioURL: request.audioURL)
     }
 
     func prepare(mode: TranscriptionMode, apiKey: String) async -> OpenAIRealtimeTranscriber? {

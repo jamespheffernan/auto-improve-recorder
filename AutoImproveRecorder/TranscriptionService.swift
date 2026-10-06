@@ -1,14 +1,5 @@
 import Foundation
 
-struct TranscriptionServiceRequest {
-    var audioURL: URL
-    var mode: TranscriptionMode
-    var apiKey: String
-    var dictionarySnapshot: String
-    var streamingTranscriber: OpenAIRealtimeTranscriber?
-    var parakeetStreamSession: (any LocalLiveTranscriptionSession)?
-}
-
 protocol TranscriptionService {
     func prepareRealtimeIfNeeded(
         mode: TranscriptionMode,
@@ -18,58 +9,24 @@ protocol TranscriptionService {
         recordDiagnostics: @escaping (OpenAIRealtimeDiagnostics) async -> Void
     ) async -> OpenAIRealtimeTranscriber?
 
-    func transcribe(
-        _ request: TranscriptionServiceRequest,
-        status: @escaping (String) async -> Void,
-        recordDiagnostics: @escaping (OpenAIRealtimeDiagnostics) async -> Void
-    ) async throws -> TranscriptionResult
+    /// Starts the transcription work for one recording in the request's mode.
+    /// It is called before the first capture buffer and does not wait for a
+    /// model to load.
+    func beginRecording(
+        _ request: RecordingTranscriptionRequest,
+        status: @escaping @Sendable (String) async -> Void,
+        recordDiagnostics: @escaping @Sendable (OpenAIRealtimeDiagnostics) async -> Void
+    ) -> any RecordingSessionHandle
 }
 
 struct LiveTranscriptionService: TranscriptionService {
-    /// The engine and realtime calls this service makes. The defaults run the
-    /// live engines; tests replace them with scripted closures.
-    struct Dependencies {
-        var transcribePhonon: (URL) async throws -> String = { audioURL in
-            try await PhononTranscriber.shared.transcribe(audioURL: audioURL)
-        }
-        var transcribeParakeetCpp: (ParakeetCppVariant, URL, TranscriptionContext) async throws -> TranscriptionResult = { variant, audioURL, context in
-            let transcriber = ParakeetCppTranscriber(variant: variant)
-            return try await transcriber.transcribe(audioURL: audioURL, context: context)
-        }
-        var parakeetResidentIsAvailable: () -> Bool = {
-            ParakeetResidentTranscriber.isAvailable
-        }
-        var transcribeParakeetResident: (URL, TranscriptionContext) async throws -> TranscriptionResult = { audioURL, context in
-            try await ParakeetResidentTranscriber().transcribe(audioURL: audioURL, context: context)
-        }
-        var transcribeOpenAIAPI: (String, URL, TranscriptionContext) async throws -> TranscriptionResult = { apiKey, audioURL, context in
-            let transcriber = OpenAIAudioTranscriber(apiKey: apiKey)
-            return try await transcriber.transcribe(audioURL: audioURL, context: context)
-        }
-        var transcribeAppleLocal: (URL, TranscriptionContext) async throws -> TranscriptionResult = { audioURL, context in
-            try await AppleLocalAudioTranscriber().transcribe(audioURL: audioURL, context: context)
-        }
-        var transcribeLocalWhisper: (URL, TranscriptionContext) async throws -> TranscriptionResult = { audioURL, context in
-            try await WhisperCppTranscriber().transcribe(audioURL: audioURL, context: context)
-        }
-        var makeRealtimeTranscriber: (String, String) -> OpenAIRealtimeTranscriber = { apiKey, dictionarySnapshot in
-            OpenAIRealtimeTranscriber(apiKey: apiKey, dictionarySnapshot: dictionarySnapshot)
-        }
-        var startRealtime: (OpenAIRealtimeTranscriber) async throws -> Void = { transcriber in
-            try await transcriber.start()
-        }
-        var finishRealtime: (OpenAIRealtimeTranscriber) async throws -> TranscriptionResult = { transcriber in
-            try await transcriber.finish()
-        }
-        var realtimeDiagnostics: (OpenAIRealtimeTranscriber, String) async -> OpenAIRealtimeDiagnostics = { transcriber, summary in
-            await transcriber.diagnostics(summary: summary)
-        }
-        var cancelRealtime: (OpenAIRealtimeTranscriber) async -> Void = { transcriber in
-            await transcriber.cancel()
-        }
-    }
+    typealias Dependencies = AIRTranscriberCatalog.Dependencies
 
     var dependencies = Dependencies()
+
+    private var catalog: AIRTranscriberCatalog {
+        AIRTranscriberCatalog(dependencies: dependencies)
+    }
 
     func prepareRealtimeIfNeeded(
         mode: TranscriptionMode,
@@ -102,83 +59,31 @@ struct LiveTranscriptionService: TranscriptionService {
         }
     }
 
-    func transcribe(
-        _ request: TranscriptionServiceRequest,
-        status: @escaping (String) async -> Void,
-        recordDiagnostics: @escaping (OpenAIRealtimeDiagnostics) async -> Void
-    ) async throws -> TranscriptionResult {
-        let startedAt = Date()
-        let context = TranscriptionContext(dictionarySnapshot: request.dictionarySnapshot)
+    func beginRecording(
+        _ request: RecordingTranscriptionRequest,
+        status: @escaping @Sendable (String) async -> Void,
+        recordDiagnostics: @escaping @Sendable (OpenAIRealtimeDiagnostics) async -> Void
+    ) -> any RecordingSessionHandle {
+        if let transcriber = catalog.transcriber(for: request) {
+            return transcriber.begin(events: { event in
+                switch event {
+                case .status(let message):
+                    await status(message)
+                }
+            })
+        }
 
-        switch request.mode {
-        case .localPhonon2:
-            await status("Transcribing with Phonon-2.")
-            let text = try await dependencies.transcribePhonon(request.audioURL)
-            await status(String(format: "Phonon-2 transcript ready in %.1fs.", Date().timeIntervalSince(startedAt)))
-            return TranscriptionResult(text: text, engineName: "Phonon-2")
-        case .openAIAPI:
-            return try await transcribeWithOpenAIAPI(
-                audioURL: request.audioURL,
-                apiKey: request.apiKey,
-                context: context,
-                startedAt: startedAt,
-                status: status
-            )
-
-        case .localWhisper:
-            return try await transcribeWithLocalWhisper(
-                audioURL: request.audioURL,
-                context: context,
-                startedAt: startedAt,
-                status: status
-            )
-
-        case .appleLocal:
-            return try await transcribeWithAppleLocal(
-                audioURL: request.audioURL,
-                context: context,
-                startedAt: startedAt,
-                status: status
-            )
-
-        case .localParakeetCppFast:
-            return try await transcribeWithParakeetCpp(
-                variant: .fast110M,
-                audioURL: request.audioURL,
-                context: context,
-                startedAt: startedAt,
-                status: status
-            )
-
-        case .localParakeetCppRecommended:
-            return try await transcribeWithParakeetCpp(
-                variant: .recommended06B,
-                audioURL: request.audioURL,
-                context: context,
-                startedAt: startedAt,
-                status: status
-            )
-
-        case .localParakeetCppResident:
-            return try await transcribeWithParakeetResident(
-                audioURL: request.audioURL,
-                context: context,
-                startedAt: startedAt,
-                status: status
-            )
-
-        case .localParakeetStreaming:
-            return try await transcribeWithParakeetStreaming(
-                request,
-                context: context,
-                startedAt: startedAt,
-                status: status
-            )
-
-        case .fastest:
-            return try await transcribeFastest(
-                request,
-                context: context,
+        // `fastest`: the realtime transcriber is still made and owned outside
+        // the handle, so the handle only runs the finish steps.
+        let service = self
+        return RealtimeBridgeRecordingHandle { streamingTranscriber, audioURL in
+            let apiKey = await request.apiKey()
+            let startedAt = Date()
+            return try await service.transcribeFastest(
+                streamingTranscriber: streamingTranscriber,
+                audioURL: audioURL,
+                apiKey: apiKey,
+                context: TranscriptionContext(dictionarySnapshot: request.dictionarySnapshot),
                 startedAt: startedAt,
                 status: status,
                 recordDiagnostics: recordDiagnostics
@@ -187,13 +92,15 @@ struct LiveTranscriptionService: TranscriptionService {
     }
 
     private func transcribeFastest(
-        _ request: TranscriptionServiceRequest,
+        streamingTranscriber: OpenAIRealtimeTranscriber?,
+        audioURL: URL,
+        apiKey: String,
         context: TranscriptionContext,
         startedAt: Date,
-        status: @escaping (String) async -> Void,
+        status: @escaping @Sendable (String) async -> Void,
         recordDiagnostics: @escaping (OpenAIRealtimeDiagnostics) async -> Void
     ) async throws -> TranscriptionResult {
-        if let streamingTranscriber = request.streamingTranscriber {
+        if let streamingTranscriber {
             do {
                 let result = try await dependencies.finishRealtime(streamingTranscriber)
                 let elapsed = Date().timeIntervalSince(startedAt)
@@ -202,9 +109,9 @@ struct LiveTranscriptionService: TranscriptionService {
                     await recordDiagnostics(await dependencies.realtimeDiagnostics(streamingTranscriber, reason))
                     NSLog(reason)
                     await status("Realtime transcript looked wrong; using OpenAI API.")
-                    return try await transcribeWithOpenAIAPI(
-                        audioURL: request.audioURL,
-                        apiKey: request.apiKey,
+                    return try await catalog.transcribeWithOpenAIAPI(
+                        audioURL: audioURL,
+                        apiKey: apiKey,
                         context: context,
                         startedAt: Date(),
                         status: status
@@ -218,9 +125,9 @@ struct LiveTranscriptionService: TranscriptionService {
                 await recordDiagnostics(diagnostics)
                 NSLog("OpenAI realtime transcription finalize failed; falling back to OpenAI API: \(diagnostics.details)")
                 await status("OpenAI streaming failed; using OpenAI API.")
-                return try await transcribeWithOpenAIAPI(
-                    audioURL: request.audioURL,
-                    apiKey: request.apiKey,
+                return try await catalog.transcribeWithOpenAIAPI(
+                    audioURL: audioURL,
+                    apiKey: apiKey,
                     context: context,
                     startedAt: Date(),
                     status: status
@@ -229,131 +136,13 @@ struct LiveTranscriptionService: TranscriptionService {
         }
 
         await status("Fastest unavailable; falling back to Parakeet.cpp Recommended.")
-        return try await transcribeWithParakeetCpp(
+        return try await catalog.transcribeWithParakeetCpp(
             variant: .recommended06B,
-            audioURL: request.audioURL,
+            audioURL: audioURL,
             context: context,
             startedAt: Date(),
             status: status
         )
-    }
-
-    /// Opt-in resident in-process 0.6B model (~0.3 s stop-to-transcript)
-    /// when the C API runtime is installed; falls back to the one-shot CLI
-    /// rather than losing the recording when the resident runtime is absent.
-    private func transcribeWithParakeetResident(
-        audioURL: URL,
-        context: TranscriptionContext,
-        startedAt: Date,
-        status: @escaping (String) async -> Void
-    ) async throws -> TranscriptionResult {
-        guard dependencies.parakeetResidentIsAvailable() else {
-            await status("Resident Parakeet unavailable; using Parakeet.cpp Recommended.")
-            return try await transcribeWithParakeetCpp(
-                variant: .recommended06B,
-                audioURL: audioURL,
-                context: context,
-                startedAt: startedAt,
-                status: status
-            )
-        }
-        await status("Transcribing with resident Parakeet.")
-        let result = try await dependencies.transcribeParakeetResident(audioURL, context)
-        let elapsed = Date().timeIntervalSince(startedAt)
-        NSLog("%@ transcription finished in %.2fs.", result.engineName, elapsed)
-        await status(String(format: "Parakeet transcript ready in %.1fs.", elapsed))
-        return result
-    }
-
-    /// Option B: the transcript streamed live during recording; finalize only
-    /// flushes the tail (~30 ms). Any streaming failure falls back to the
-    /// one-shot recommended model over the recorded file.
-    private func transcribeWithParakeetStreaming(
-        _ request: TranscriptionServiceRequest,
-        context: TranscriptionContext,
-        startedAt: Date,
-        status: @escaping (String) async -> Void
-    ) async throws -> TranscriptionResult {
-        if let session = request.parakeetStreamSession {
-            do {
-                let text = try await session.finalize()
-                if !text.isEmpty {
-                    let elapsed = Date().timeIntervalSince(startedAt)
-                    NSLog("%@ transcription finished in %.2fs.", session.engineName, elapsed)
-                    await status(String(format: "Live transcript ready in %.1fs.", elapsed))
-                    return TranscriptionResult(text: text, engineName: session.engineName)
-                }
-                NSLog("parakeet streaming returned an empty transcript; falling back to offline Parakeet.")
-            } catch {
-                NSLog("parakeet streaming finalize failed; falling back to offline Parakeet: \(error.localizedDescription)")
-            }
-        }
-        await status("Live streaming unavailable; using Parakeet.cpp Recommended.")
-        return try await transcribeWithParakeetCpp(
-            variant: .recommended06B,
-            audioURL: request.audioURL,
-            context: context,
-            startedAt: Date(),
-            status: status
-        )
-    }
-
-    private func transcribeWithParakeetCpp(
-        variant: ParakeetCppVariant,
-        audioURL: URL,
-        context: TranscriptionContext,
-        startedAt: Date,
-        status: @escaping (String) async -> Void
-    ) async throws -> TranscriptionResult {
-        await status("Transcribing with \(variant.engineName).")
-        let result = try await dependencies.transcribeParakeetCpp(variant, audioURL, context)
-        let elapsed = Date().timeIntervalSince(startedAt)
-        NSLog("%@ transcription finished in %.2fs.", variant.engineName, elapsed)
-        await status(String(format: "%@ transcript ready in %.1fs.", variant.engineName, elapsed))
-        return result
-    }
-
-    private func transcribeWithOpenAIAPI(
-        audioURL: URL,
-        apiKey: String,
-        context: TranscriptionContext,
-        startedAt: Date,
-        status: @escaping (String) async -> Void
-    ) async throws -> TranscriptionResult {
-        await status("Transcribing with OpenAI API.")
-        let result = try await dependencies.transcribeOpenAIAPI(apiKey, audioURL, context)
-        let elapsed = Date().timeIntervalSince(startedAt)
-        NSLog("OpenAI API transcription finished in %.2fs.", elapsed)
-        await status(String(format: "OpenAI API transcript ready in %.1fs.", elapsed))
-        return result
-    }
-
-    private func transcribeWithAppleLocal(
-        audioURL: URL,
-        context: TranscriptionContext,
-        startedAt: Date,
-        status: @escaping (String) async -> Void
-    ) async throws -> TranscriptionResult {
-        await status("Transcribing with Apple Speech.")
-        let result = try await dependencies.transcribeAppleLocal(audioURL, context)
-        let elapsed = Date().timeIntervalSince(startedAt)
-        NSLog("Apple Speech transcription finished in %.2fs.", elapsed)
-        await status(String(format: "Apple Speech transcript ready in %.1fs.", elapsed))
-        return result
-    }
-
-    private func transcribeWithLocalWhisper(
-        audioURL: URL,
-        context: TranscriptionContext,
-        startedAt: Date,
-        status: @escaping (String) async -> Void
-    ) async throws -> TranscriptionResult {
-        await status("Transcribing with local Whisper.")
-        let result = try await dependencies.transcribeLocalWhisper(audioURL, context)
-        let elapsed = Date().timeIntervalSince(startedAt)
-        NSLog("whisper.cpp transcription finished in %.2fs.", elapsed)
-        await status(String(format: "Local Whisper transcript ready in %.1fs.", elapsed))
-        return result
     }
 
     private func shouldVerifyRealtimeTranscript(_ text: String) -> Bool {
@@ -361,5 +150,47 @@ struct LiveTranscriptionService: TranscriptionService {
             .split { !$0.isLetter && !$0.isNumber }
             .filter { !$0.isEmpty }
         return words.count <= 2
+    }
+}
+
+/// The handle for a `fastest` recording until its realtime path moves behind
+/// the handle. `AppState` still owns the realtime transcriber and the audio
+/// sink: it feeds and cancels them itself and gives the transcriber to this
+/// handle when the recording stops.
+final class RealtimeBridgeRecordingHandle: RecordingSessionHandle, @unchecked Sendable {
+    private let finishSteps: (OpenAIRealtimeTranscriber?, URL) async throws -> TranscriptionResult
+    private let lock = NSLock()
+    private var cancelled = false
+    private var realtimeTranscriber: OpenAIRealtimeTranscriber?
+
+    init(finish: @escaping (OpenAIRealtimeTranscriber?, URL) async throws -> TranscriptionResult) {
+        self.finishSteps = finish
+    }
+
+    /// Called at stop, before `finish`, with the transcriber that is ready.
+    /// Without it `finish` uses the recommended one-shot CLI.
+    func useRealtimeTranscriber(_ transcriber: OpenAIRealtimeTranscriber?) {
+        lock.lock()
+        realtimeTranscriber = transcriber
+        lock.unlock()
+    }
+
+    func receive(_ event: AudioCaptureEvent) {}
+
+    func finish(audioURL: URL) async throws -> TranscriptionResult {
+        lock.lock()
+        let wasCancelled = cancelled
+        let transcriber = realtimeTranscriber
+        realtimeTranscriber = nil
+        lock.unlock()
+        guard !wasCancelled else { throw CancellationError() }
+        return try await finishSteps(transcriber, audioURL)
+    }
+
+    func cancel() {
+        lock.lock()
+        cancelled = true
+        realtimeTranscriber = nil
+        lock.unlock()
     }
 }

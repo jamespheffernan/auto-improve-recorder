@@ -290,6 +290,10 @@ final class FakeTranscriptionService: TranscriptionService, @unchecked Sendable 
     var resultsByAudioFileName: [String: Result<TranscriptionResult, FakeError>] = [:]
     var gate = Gate()
     let requests = Recorded<TranscriptionServiceRequest>()
+    /// Runs at the beginning of every `beginRecording`.
+    var onBegin: (() -> Void)?
+    /// Every handle the service has begun, in order.
+    let handles = Recorded<FakeRecordingHandle>()
     let realtimePreparations = Recorded<TranscriptionMode>()
     /// `prepareRealtimeIfNeeded` waits here, then records whether its task was cancelled while it waited.
     /// It always returns nil: `OpenAIRealtimeTranscriber` is a concrete class that opens a network session.
@@ -309,14 +313,67 @@ final class FakeTranscriptionService: TranscriptionService, @unchecked Sendable 
         return nil
     }
 
-    func transcribe(
-        _ request: TranscriptionServiceRequest,
-        status: @escaping (String) async -> Void,
-        recordDiagnostics: @escaping (OpenAIRealtimeDiagnostics) async -> Void
-    ) async throws -> TranscriptionResult {
-        requests.append(request)
-        await gate.wait()
-        return try (resultsByAudioFileName[request.audioURL.lastPathComponent] ?? result).get()
+    func beginRecording(
+        _ request: RecordingTranscriptionRequest,
+        status: @escaping @Sendable (String) async -> Void,
+        recordDiagnostics: @escaping @Sendable (OpenAIRealtimeDiagnostics) async -> Void
+    ) -> any RecordingSessionHandle {
+        onBegin?()
+        let handle = FakeRecordingHandle(request: request, service: self)
+        handles.append(handle)
+        return handle
+    }
+}
+
+/// What a fake handle was finished with. The key is the one read at finish.
+struct TranscriptionServiceRequest {
+    var audioURL: URL
+    var mode: TranscriptionMode
+    var apiKey: String
+    var dictionarySnapshot: String
+    var attachedToCapture: Bool
+    /// Always nil: the fake service never prepares a realtime transcriber.
+    var streamingTranscriber: OpenAIRealtimeTranscriber?
+}
+
+/// A handle that records what reaches it. `finish` records a request on the service, waits at the
+/// service's gate and gives the service's result.
+final class FakeRecordingHandle: RecordingSessionHandle, @unchecked Sendable {
+    let request: RecordingTranscriptionRequest
+    private let service: FakeTranscriptionService
+    /// "captured" or "failure", in arrival order. Events after a cancel are still recorded.
+    let events = Recorded<String>()
+    let cancels = Recorded<Void>()
+    let finishedURLs = Recorded<URL>()
+
+    init(request: RecordingTranscriptionRequest, service: FakeTranscriptionService) {
+        self.request = request
+        self.service = service
+    }
+
+    func receive(_ event: AudioCaptureEvent) {
+        switch event {
+        case .captured: events.append("captured")
+        case .failure: events.append("failure")
+        }
+    }
+
+    func finish(audioURL: URL) async throws -> TranscriptionResult {
+        finishedURLs.append(audioURL)
+        service.requests.append(TranscriptionServiceRequest(
+            audioURL: audioURL,
+            mode: request.mode,
+            apiKey: await request.apiKey(),
+            dictionarySnapshot: request.dictionarySnapshot,
+            attachedToCapture: request.attachedToCapture,
+            streamingTranscriber: nil
+        ))
+        await service.gate.wait()
+        return try (service.resultsByAudioFileName[audioURL.lastPathComponent] ?? service.result).get()
+    }
+
+    func cancel() {
+        cancels.append(())
     }
 }
 

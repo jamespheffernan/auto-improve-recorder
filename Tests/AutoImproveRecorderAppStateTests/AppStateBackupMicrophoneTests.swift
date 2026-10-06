@@ -509,3 +509,25 @@ final class AppStateBackupMicrophoneTests: XCTestCase {
         assertNoBackupRunning(harness)
     }
 }
+
+extension AppStateBackupMicrophoneTests {
+    func testBackupSecondTranscriptionKeepsTheRecordingModeWhenTheSettingChanges() async throws {
+        let harness = try makeHarness()
+        setTranscripts(harness, main: "", backup: "words from the backup")
+        await harness.startAndWaitForRecording()
+        harness.appState.transcriptionMode = .openAIAPI
+
+        harness.markBeforeEnding()
+        harness.appState.stopRecording()
+        await harness.waitForDelivery()
+
+        XCTAssertEqual(requestedFiles(harness), [mainFile, backupFile])
+        XCTAssertEqual(harness.transcription.requests.values.map(\.mode), [.localPhonon2, .localPhonon2])
+        // The backup's handle is begun at stop and is never attached to capture.
+        XCTAssertEqual(harness.transcription.requests.values.map(\.attachedToCapture), [true, false])
+        let handles = harness.transcription.handles.values
+        XCTAssertEqual(handles.count, 2)
+        XCTAssertTrue(handles[1].events.values.isEmpty)
+        XCTAssertEqual(harness.delivery.requests.values.map(\.text), ["words from the backup"])
+    }
+}

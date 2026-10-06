@@ -130,7 +130,10 @@ final class AppState: ObservableObject {
     private var activeSpaceLatchRegistrationFailed = false
     private let realtimeAudioSink = OpenAIRealtimeAudioSink()
     private var activeStreamingTranscriber: OpenAIRealtimeTranscriber?
-    private var activeParakeetStreamSession: (any LocalLiveTranscriptionSession)?
+    private var activeRecordingHandle: (any RecordingSessionHandle)?
+    /// The transcription mode read when the session's recording started. Stop, transcription,
+    /// the archive record and a microphone restart use it; the setting is not read again.
+    private var sessionTranscriptionMode: TranscriptionMode?
     private var activeRealtimeStartupTask: Task<Void, Never>?
     private var activeRecordingID: UUID?
     private var activeProcessingRecordingID: UUID?
@@ -821,15 +824,15 @@ final class AppState: ObservableObject {
         let stoppedRecordingID = activeRecordingID
         let streamingTranscriber = activeStreamingTranscriber
         activeStreamingTranscriber = nil
-        let parakeetStream = activeParakeetStreamSession
-        activeParakeetStreamSession = nil
+        let recordingHandle = activeRecordingHandle
+        activeRecordingHandle = nil
         guard let audioURL = environment.recording.stopRecording() else {
             let backup = endBackupMicrophone()
             activeRecordingID = nil
             microphoneRecovery.recordingEnded()
             endMicrophoneUseLock()
             realtimeAudioSink.clear()
-            cancelLiveTranscription(streamingTranscriber: streamingTranscriber, parakeetStream: parakeetStream)
+            cancelLiveTranscription(streamingTranscriber: streamingTranscriber, recordingHandle: recordingHandle)
             let message = "Recording stopped before an audio file was created."
             guard shouldTranscribe, let backup else {
                 backup?.stop.discard()
@@ -852,7 +855,7 @@ final class AppState: ObservableObject {
 
         guard shouldTranscribe else {
             backup?.stop.discard()
-            cancelLiveTranscription(streamingTranscriber: streamingTranscriber, parakeetStream: parakeetStream)
+            cancelLiveTranscription(streamingTranscriber: streamingTranscriber, recordingHandle: recordingHandle)
             try? FileManager.default.removeItem(at: audioURL)
             discardActiveArchiveDraftIfNeeded()
             microphoneRecovery.recordingEnded()
@@ -869,7 +872,7 @@ final class AppState: ObservableObject {
         }
 
         if let captureFailure {
-            cancelLiveTranscription(streamingTranscriber: streamingTranscriber, parakeetStream: parakeetStream)
+            cancelLiveTranscription(streamingTranscriber: streamingTranscriber, recordingHandle: recordingHandle)
             let message = captureFailure.localizedDescription
             let reportFailure: @MainActor () -> Void = { [weak self] in
                 guard let self else { return }
@@ -903,7 +906,7 @@ final class AppState: ObservableObject {
             await processRecording(
                 audioURL: audioURL,
                 streamingTranscriber: streamingTranscriber,
-                parakeetStream: parakeetStream,
+                recordingHandle: recordingHandle,
                 backup: backup
             )
         }
@@ -937,7 +940,7 @@ final class AppState: ObservableObject {
                 result = try await transcribe(
                     audioURL: backupURL,
                     streamingTranscriber: nil,
-                    parakeetStream: nil,
+                    recordingHandle: nil,
                     dictionarySnapshot: session.transcriptionVocabulary
                 )
             } catch {
@@ -969,7 +972,7 @@ final class AppState: ObservableObject {
         clearActiveRecordingIdentity()
         isStartingRecording = false
         let audioURL = stopRecorderAndReleaseMicrophone()
-        cancelParakeetStreamSession()
+        cancelRecordingHandle()
         finishCancelledRecording(removing: audioURL)
     }
 
@@ -980,7 +983,7 @@ final class AppState: ObservableObject {
         clearActiveRecordingIdentity()
         let streamingTranscriber = activeStreamingTranscriber
         activeStreamingTranscriber = nil
-        cancelParakeetStreamSession()
+        cancelRecordingHandle()
         let audioURL = stopRecorderAndReleaseMicrophone()
         if let streamingTranscriber {
             Task { await streamingTranscriber.cancel() }
@@ -1053,19 +1056,19 @@ final class AppState: ObservableObject {
         endBackupMicrophone()?.stop.discard()
     }
 
-    private func cancelParakeetStreamSession() {
-        activeParakeetStreamSession?.cancel()
-        activeParakeetStreamSession = nil
+    private func cancelRecordingHandle() {
+        activeRecordingHandle?.cancel()
+        activeRecordingHandle = nil
     }
 
     private func cancelLiveTranscription(
         streamingTranscriber: OpenAIRealtimeTranscriber?,
-        parakeetStream: (any LocalLiveTranscriptionSession)?
+        recordingHandle: (any RecordingSessionHandle)?
     ) {
         if let streamingTranscriber {
             Task { await streamingTranscriber.cancel() }
         }
-        parakeetStream?.cancel()
+        recordingHandle?.cancel()
     }
 
     func copyDisplayText() {
@@ -1156,12 +1159,17 @@ final class AppState: ObservableObject {
             let dictionarySnapshot = dictionaryStore.currentSnapshotString
             let transcriptionVocabulary = dictionaryStore.transcriptionVocabularyString
             activeArchiveDraft = archiveDraft
-            let shouldPrepareRealtime = transcriptionMode == .fastest
+            let recordingMode = transcriptionMode
+            let shouldPrepareRealtime = recordingMode == .fastest
             let shouldBufferRealtimeAudio = shouldPrepareRealtime &&
                 !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             realtimeAudioSink.reset(bufferPendingAudio: shouldBufferRealtimeAudio)
-            let parakeetStream = makeParakeetStreamSessionIfNeeded()
-            activeParakeetStreamSession = parakeetStream
+            let recordingHandle = beginRecordingHandle(
+                mode: recordingMode,
+                dictionarySnapshot: transcriptionVocabulary,
+                attachedToCapture: true
+            )
+            activeRecordingHandle = recordingHandle
             // With the switch off there is no silence watch and no backup.
             activeSilenceWatch = environment.backupMicrophoneRecordingEnabled() ? MicrophoneSilenceWatch() : nil
             silentMicrophoneWarningShown = false
@@ -1174,13 +1182,13 @@ final class AppState: ObservableObject {
                     at: archiveDraft.audioURL,
                     initialResolution: microphoneResolution,
                     audioSink: audioSink,
-                    parakeetStream: parakeetStream,
+                    recordingHandle: recordingHandle,
                     requestedAt: requestedAt
                 )
             } catch {
                 realtimeAudioSink.clear()
-                parakeetStream?.cancel()
-                activeParakeetStreamSession = nil
+                recordingHandle.cancel()
+                activeRecordingHandle = nil
                 throw error
             }
             guard activeStartID == startID, case .starting = phase else { return }
@@ -1195,6 +1203,7 @@ final class AppState: ObservableObject {
                 dictionarySnapshot: dictionarySnapshot,
                 transcriptionVocabulary: transcriptionVocabulary
             )
+            sessionTranscriptionMode = recordingMode
             showRawTranscript = false
             if shouldPrepareRealtime {
                 statusMessage = shouldBufferRealtimeAudio
@@ -1231,6 +1240,7 @@ final class AppState: ObservableObject {
                 activeRealtimeStartupTask = Task { [weak self] in
                     await self?.prepareRealtimeTranscriberForActiveRecording(
                         recordingID: recordingID,
+                        mode: recordingMode,
                         dictionarySnapshot: transcriptionVocabulary,
                         requestedAt: requestedAt
                     )
@@ -1249,7 +1259,7 @@ final class AppState: ObservableObject {
             microphoneRecovery.recordingEnded()
             activeRealtimeStartupTask = nil
             realtimeAudioSink.clear()
-            cancelParakeetStreamSession()
+            cancelRecordingHandle()
             handleRecordingTriggerEvent(.startFailed(startID: startID, error: error.localizedDescription, at: Date()))
             failWithMessage(error.localizedDescription)
         }
@@ -1275,7 +1285,7 @@ final class AppState: ObservableObject {
         at audioURL: URL,
         initialResolution: MicrophoneResolution,
         audioSink: OpenAIRealtimeAudioSink,
-        parakeetStream: (any LocalLiveTranscriptionSession)?,
+        recordingHandle: any RecordingSessionHandle,
         requestedAt: Date
     ) throws -> URL {
         do {
@@ -1284,7 +1294,7 @@ final class AppState: ObservableObject {
                 at: audioURL,
                 resolution: initialResolution,
                 audioSink: audioSink,
-                parakeetStream: parakeetStream,
+                recordingHandle: recordingHandle,
                 requestedAt: requestedAt
             )
         } catch {
@@ -1307,7 +1317,7 @@ final class AppState: ObservableObject {
                 at: audioURL,
                 resolution: fallbackResolution,
                 audioSink: audioSink,
-                parakeetStream: parakeetStream,
+                recordingHandle: recordingHandle,
                 requestedAt: requestedAt
             )
         }
@@ -1317,7 +1327,7 @@ final class AppState: ObservableObject {
         at audioURL: URL,
         resolution: MicrophoneResolution,
         audioSink: OpenAIRealtimeAudioSink,
-        parakeetStream: (any LocalLiveTranscriptionSession)?,
+        recordingHandle: any RecordingSessionHandle,
         requestedAt: Date
     ) throws -> URL {
         let healthMonitor = shouldMonitorForPreferredMicrophoneHealth(resolution)
@@ -1352,10 +1362,10 @@ final class AppState: ObservableObject {
                         }
                     }
                     audioSink.appendAudioBuffer(captured)
-                    parakeetStream?.append(captured)
+                    recordingHandle.receive(captureEvent)
                 case .failure(let failure):
                     audioSink.recordCaptureFailure(failure)
-                    parakeetStream?.recordCaptureFailure(failure)
+                    recordingHandle.receive(captureEvent)
                     Task { @MainActor [weak self] in
                         guard let self, case .recording = self.phase else { return }
                         self.statusMessage = "Recording degraded. Stop and try again. \(failure.localizedDescription)"
@@ -1428,10 +1438,38 @@ final class AppState: ObservableObject {
         environment.playMicrophoneWarningSound()
     }
 
-    private func makeParakeetStreamSessionIfNeeded() -> (any LocalLiveTranscriptionSession)? {
-        guard transcriptionMode == .localParakeetStreaming,
-              RecommendedLiveTranscription.isAvailable else { return nil }
-        return RecommendedLiveTranscription.begin()
+    /// The mode of the session's recording, or the setting when no recording has started yet.
+    private var recordingMode: TranscriptionMode {
+        sessionTranscriptionMode ?? transcriptionMode
+    }
+
+    /// Starts the transcription work for one recording. The API key is read when the handle
+    /// finishes, as it was before handles.
+    private func beginRecordingHandle(
+        mode: TranscriptionMode,
+        dictionarySnapshot: String,
+        attachedToCapture: Bool
+    ) -> any RecordingSessionHandle {
+        environment.transcription.beginRecording(
+            RecordingTranscriptionRequest(
+                mode: mode,
+                dictionarySnapshot: dictionarySnapshot,
+                attachedToCapture: attachedToCapture,
+                apiKey: { [weak self] in
+                    await MainActor.run { self?.apiKey ?? "" }
+                }
+            ),
+            status: { [weak self] message in
+                await MainActor.run {
+                    self?.statusMessage = message
+                }
+            },
+            recordDiagnostics: { [weak self] diagnostics in
+                await MainActor.run {
+                    self?.recordOpenAIRealtimeDiagnostics(diagnostics)
+                }
+            }
+        )
     }
 
     private func shouldMonitorForPreferredMicrophoneHealth(_ resolution: MicrophoneResolution) -> Bool {
@@ -1503,16 +1541,21 @@ final class AppState: ObservableObject {
             _ = environment.recording.stopRecording()
             realtimeAudioSink.clear()
 
-            let shouldPrepareRealtime = transcriptionMode == .fastest
+            let recordingMode = self.recordingMode
+            let shouldPrepareRealtime = recordingMode == .fastest
             let shouldBufferRealtimeAudio = shouldPrepareRealtime &&
                 !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             audioSink.reset(bufferPendingAudio: shouldBufferRealtimeAudio)
 
-            // The old stream only heard digital silence; restart it cleanly
-            // alongside the fallback microphone.
-            activeParakeetStreamSession?.cancel()
-            let parakeetStream = makeParakeetStreamSessionIfNeeded()
-            activeParakeetStreamSession = parakeetStream
+            // The old handle only heard digital silence; start a new one in
+            // the same mode alongside the fallback microphone.
+            activeRecordingHandle?.cancel()
+            let recordingHandle = beginRecordingHandle(
+                mode: recordingMode,
+                dictionarySnapshot: session.transcriptionVocabulary,
+                attachedToCapture: true
+            )
+            activeRecordingHandle = recordingHandle
 
             statusMessage = "Could not hear \(resolution.device.name); using \(fallbackResolution.device.name)."
             microphoneRecovery.recordingStarted(on: fallbackResolution)
@@ -1520,7 +1563,7 @@ final class AppState: ObservableObject {
                 at: audioURL,
                 resolution: fallbackResolution,
                 audioSink: audioSink,
-                parakeetStream: parakeetStream,
+                recordingHandle: recordingHandle,
                 requestedAt: requestedAt
             )
             microphoneDeviceLogger.info(
@@ -1532,6 +1575,7 @@ final class AppState: ObservableObject {
                 activeRealtimeStartupTask = Task { [weak self] in
                     await self?.prepareRealtimeTranscriberForActiveRecording(
                         recordingID: recordingID,
+                        mode: recordingMode,
                         dictionarySnapshot: dictionarySnapshot,
                         requestedAt: requestedAt
                     )
@@ -1566,10 +1610,10 @@ final class AppState: ObservableObject {
 
     private func prepareRealtimeTranscriberForActiveRecording(
         recordingID: UUID,
+        mode selectedMode: TranscriptionMode,
         dictionarySnapshot: String,
         requestedAt: Date
     ) async {
-        let selectedMode = transcriptionMode
         let selectedAPIKey = apiKey
         let streamingTranscriber = await environment.transcription.prepareRealtimeIfNeeded(
             mode: selectedMode,
@@ -1619,7 +1663,7 @@ final class AppState: ObservableObject {
     private func processRecording(
         audioURL: URL,
         streamingTranscriber: OpenAIRealtimeTranscriber?,
-        parakeetStream: (any LocalLiveTranscriptionSession)? = nil,
+        recordingHandle: (any RecordingSessionHandle)? = nil,
         backup: StoppedBackupMicrophone? = nil
     ) async {
         do {
@@ -1627,7 +1671,7 @@ final class AppState: ObservableObject {
             let result = try await transcribeChoosingBackup(
                 audioURL: audioURL,
                 streamingTranscriber: streamingTranscriber,
-                parakeetStream: parakeetStream,
+                recordingHandle: recordingHandle,
                 backup: backup
             )
             await continueRun(with: result, dictionarySnapshot: dictionarySnapshot)
@@ -1693,7 +1737,7 @@ final class AppState: ObservableObject {
     private func transcribeChoosingBackup(
         audioURL: URL,
         streamingTranscriber: OpenAIRealtimeTranscriber?,
-        parakeetStream: (any LocalLiveTranscriptionSession)?,
+        recordingHandle: (any RecordingSessionHandle)?,
         backup: StoppedBackupMicrophone?
     ) async throws -> TranscriptionResult {
         let vocabulary = session.transcriptionVocabulary
@@ -1702,7 +1746,7 @@ final class AppState: ObservableObject {
             main = .success(try await transcribe(
                 audioURL: audioURL,
                 streamingTranscriber: streamingTranscriber,
-                parakeetStream: parakeetStream,
+                recordingHandle: recordingHandle,
                 dictionarySnapshot: vocabulary
             ))
         } catch {
@@ -1721,7 +1765,7 @@ final class AppState: ObservableObject {
             let backupResult = try await transcribe(
                 audioURL: backupURL,
                 streamingTranscriber: nil,
-                parakeetStream: nil,
+                recordingHandle: nil,
                 dictionarySnapshot: vocabulary
             )
             if BackupTranscriptChoice.prefersBackup(
@@ -1768,30 +1812,20 @@ final class AppState: ObservableObject {
     private func transcribe(
         audioURL: URL,
         streamingTranscriber: OpenAIRealtimeTranscriber?,
-        parakeetStream: (any LocalLiveTranscriptionSession)?,
+        recordingHandle: (any RecordingSessionHandle)?,
         dictionarySnapshot: String
     ) async throws -> TranscriptionResult {
-        let request = TranscriptionServiceRequest(
-            audioURL: audioURL,
-            mode: transcriptionMode,
-            apiKey: apiKey,
+        // Without a handle this is a second transcription of a saved file. It gets a handle in
+        // the recording's mode that was never attached to capture.
+        let handle = recordingHandle ?? beginRecordingHandle(
+            mode: recordingMode,
             dictionarySnapshot: dictionarySnapshot,
-            streamingTranscriber: streamingTranscriber,
-            parakeetStreamSession: parakeetStream
+            attachedToCapture: false
         )
-        return try await environment.transcription.transcribe(
-            request,
-            status: { [weak self] message in
-                await MainActor.run {
-                    self?.statusMessage = message
-                }
-            },
-            recordDiagnostics: { [weak self] diagnostics in
-                await MainActor.run {
-                    self?.recordOpenAIRealtimeDiagnostics(diagnostics)
-                }
-            }
-        )
+        if let streamingTranscriber {
+            (handle as? RealtimeBridgeRecordingHandle)?.useRealtimeTranscriber(streamingTranscriber)
+        }
+        return try await handle.finish(audioURL: audioURL)
     }
 
     private func improveCurrentTranscript(force: Bool) async {
@@ -1904,7 +1938,7 @@ final class AppState: ObservableObject {
         )
         let metadata = TranscriptArchiveMetadata(
             updatedAt: Date(),
-            transcriptionMode: transcriptionMode.rawValue,
+            transcriptionMode: recordingMode.rawValue,
             transcriptionEngine: transcriptionEngineName,
             improvementMode: improvementMode.rawValue,
             cleanupMode: outputMode.rawValue,
@@ -1948,24 +1982,7 @@ final class AppState: ObservableObject {
             return "Finalizing OpenAI streaming transcript."
         }
 
-        switch transcriptionMode {
-        case .localPhonon2:
-            return "Transcribing with Phonon-2."
-        case .localWhisper:
-            return "Transcribing with local Whisper."
-        case .localParakeetCppFast:
-            return "Transcribing with Parakeet.cpp Fast."
-        case .localParakeetCppRecommended, .fastest:
-            return "Transcribing with Parakeet.cpp Recommended."
-        case .localParakeetCppResident:
-            return "Transcribing with resident Parakeet."
-        case .localParakeetStreaming:
-            return "Finalizing live Parakeet transcript."
-        case .appleLocal:
-            return "Transcribing with Apple Speech."
-        case .openAIAPI:
-            return "Transcribing with OpenAI API."
-        }
+        return AIRTranscriberCatalog.stopStatus(for: recordingMode)
     }
 
     private func finishProcessing() async {

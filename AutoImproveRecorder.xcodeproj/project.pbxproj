@@ -85,6 +85,8 @@
 		AIRPKRESIDENT000000001 /* ParakeetResidentTranscriber.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRPKRESIDENT000000000 /* ParakeetResidentTranscriber.swift */; };
 		AIRPKRUNTIMECONFIG0001 /* ParakeetRuntimeConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRPKRUNTIMECONFIG0000 /* ParakeetRuntimeConfiguration.swift */; };
 		AIRRECTRANSCRIBER00001 /* RecordingTranscriber.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRRECTRANSCRIBER00000 /* RecordingTranscriber.swift */; };
+		AIRTRANSCATALOG0000001 /* AIRTranscriberCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRTRANSCATALOG0000000 /* AIRTranscriberCatalog.swift */; };
+		AIRRECADAPTERS00000001 /* AIRRecordingAdapters.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRRECADAPTERS00000000 /* AIRRecordingAdapters.swift */; };
 		AIRLOCALRECADAPTERS001 /* LocalRecordingAdapters.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRLOCALRECADAPTERS000 /* LocalRecordingAdapters.swift */; };
 		AIRLOCALTXPROCESSES001 /* LocalTranscriptionProcesses.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRLOCALTXPROCESSES000 /* LocalTranscriptionProcesses.swift */; };
 		AIRLOCALTXPOLICY000001 /* LocalTranscriberPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRLOCALTXPOLICY000000 /* LocalTranscriberPolicy.swift */; };
@@ -213,6 +215,8 @@
 		AIRPKRESIDENT000000000 /* ParakeetResidentTranscriber.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ParakeetResidentTranscriber.swift; sourceTree = "<group>"; };
 		AIRPKRUNTIMECONFIG0000 /* ParakeetRuntimeConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ParakeetRuntimeConfiguration.swift; sourceTree = "<group>"; };
 		AIRRECTRANSCRIBER00000 /* RecordingTranscriber.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingTranscriber.swift; sourceTree = "<group>"; };
+		AIRTRANSCATALOG0000000 /* AIRTranscriberCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRTranscriberCatalog.swift; sourceTree = "<group>"; };
+		AIRRECADAPTERS00000000 /* AIRRecordingAdapters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRRecordingAdapters.swift; sourceTree = "<group>"; };
 		AIRLOCALRECADAPTERS000 /* LocalRecordingAdapters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalRecordingAdapters.swift; sourceTree = "<group>"; };
 		AIRLOCALTXPROCESSES000 /* LocalTranscriptionProcesses.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalTranscriptionProcesses.swift; sourceTree = "<group>"; };
 		AIRLOCALTXPOLICY000000 /* LocalTranscriberPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalTranscriberPolicy.swift; sourceTree = "<group>"; };
@@ -344,6 +348,8 @@
 				AIRPKRESIDENT000000000 /* ParakeetResidentTranscriber.swift */,
 				AIRPKRUNTIMECONFIG0000 /* ParakeetRuntimeConfiguration.swift */,
 				AIRRECTRANSCRIBER00000 /* RecordingTranscriber.swift */,
+				AIRTRANSCATALOG0000000 /* AIRTranscriberCatalog.swift */,
+				AIRRECADAPTERS00000000 /* AIRRecordingAdapters.swift */,
 				AIRLOCALRECADAPTERS000 /* LocalRecordingAdapters.swift */,
 				AIRLOCALTXPROCESSES000 /* LocalTranscriptionProcesses.swift */,
 				AIRLOCALTXPOLICY000000 /* LocalTranscriberPolicy.swift */,
@@ -607,6 +613,8 @@
 				AIRPKRESIDENT000000001 /* ParakeetResidentTranscriber.swift in Sources */,
 				AIRPKRUNTIMECONFIG0001 /* ParakeetRuntimeConfiguration.swift in Sources */,
 				AIRRECTRANSCRIBER00001 /* RecordingTranscriber.swift in Sources */,
+				AIRTRANSCATALOG0000001 /* AIRTranscriberCatalog.swift in Sources */,
+				AIRRECADAPTERS00000001 /* AIRRecordingAdapters.swift in Sources */,
 				AIRLOCALRECADAPTERS001 /* LocalRecordingAdapters.swift in Sources */,
 				AIRLOCALTXPROCESSES001 /* LocalTranscriptionProcesses.swift in Sources */,
 				AIRLOCALTXPOLICY000001 /* LocalTranscriberPolicy.swift in Sources */,

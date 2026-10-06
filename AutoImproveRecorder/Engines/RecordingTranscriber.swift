@@ -11,6 +11,27 @@ protocol RecordingTranscriber: Sendable {
     /// Starts the transcription work for one recording. It is called before
     /// the first capture buffer.
     func begin() -> any RecordingSessionHandle
+
+    /// The same as `begin()`, for a caller that shows what the transcriber
+    /// reports. `events` is awaited in order while `finish` runs.
+    func begin(
+        events: @escaping @Sendable (TranscriptionEvent) async -> Void
+    ) -> any RecordingSessionHandle
+}
+
+/// What a transcriber reports while it works on one recording.
+enum TranscriptionEvent: Equatable, Sendable {
+    /// A line for the app to show as its status.
+    case status(String)
+}
+
+extension RecordingTranscriber {
+    /// Transcribers that report nothing ignore `events`.
+    func begin(
+        events: @escaping @Sendable (TranscriptionEvent) async -> Void
+    ) -> any RecordingSessionHandle {
+        begin()
+    }
 }
 
 /// The transcription work for one recording.
