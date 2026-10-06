@@ -3,8 +3,8 @@ import XCTest
 @testable import AutoImproveRecorderDictionaryCore
 @testable import AutoSendRecorderCore
 
-/// ASR wiring as AutoSendState builds it: SharedReplacementRules feeds `applyRules`, and the archive
-/// hook writes TranscriptArchiveStore.saveAutoSend records.
+/// ASR wiring as AutoSendState builds it: SharedReplacementRules.process feeds `processTranscript`,
+/// and the archive hook writes TranscriptArchiveStore.saveAutoSend records.
 final class AutoSendLexiconTests: XCTestCase {
     func testASRAppliesTheSeedRuleBeforeSendingAndArchivesThreeTexts() async throws {
         let root = FileManager.default.temporaryDirectory
@@ -23,8 +23,10 @@ final class AutoSendLexiconTests: XCTestCase {
             capture: StubCapture(url: root.appendingPathComponent("recording-fixture.wav")),
             transcription: StubTranscript(text: "put it on perf review"),
             delivery: delivery,
-            applyRules: { ReplacementRuleEngine.apply($0, rules: rules.currentRules()) },
-            normalize: { TranscriptTextNormalizer.normalizeSpokenNumbers(in: $0) },
+            processTranscript: {
+                let outcome = rules.process($0)
+                return AutoSendProcessedTranscript(afterRules: outcome.afterRules, final: outcome.final)
+            },
             archive: { evidence in
                 archived.append(evidence)
                 TranscriptArchiveStore.saveAutoSend(

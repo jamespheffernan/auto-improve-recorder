@@ -310,8 +310,11 @@ enum TranscriptPostProcessor {
     }
 }
 
-/// Read-only access to AIR's manual rules file, for ASR, which never writes AIR's files.
+/// Where AIR's manual rules file lives and how it is read. AIR's store reads it through this;
+/// ASR does too, and never writes AIR's files.
 enum ManualDictionaryFiles {
+    static let rulesFileName = "replacement-rules.json"
+
     static func defaultDirectoryURL() -> URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? FileManager.default.homeDirectoryForCurrentUser
@@ -321,11 +324,15 @@ enum ManualDictionaryFiles {
     }
 
     static func loadRules(directoryURL: URL = defaultDirectoryURL()) throws -> [DictionaryReplacementRule] {
-        let url = directoryURL.appendingPathComponent("replacement-rules.json")
+        let url = directoryURL.appendingPathComponent(rulesFileName)
         guard FileManager.default.fileExists(atPath: url.path) else { return [] }
+        return try decodeRules(Data(contentsOf: url))
+    }
+
+    static func decodeRules(_ data: Data) throws -> [DictionaryReplacementRule] {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        return try decoder.decode(RulesFile.self, from: Data(contentsOf: url)).rules
+        return try decoder.decode(RulesFile.self, from: data).rules
     }
 
     private struct RulesFile: Decodable {

@@ -553,8 +553,7 @@ final class AutoSendWorkflowTests: XCTestCase {
             capture: FakeCapture(),
             transcription: FakeTranscript(text: "hello"),
             delivery: FakeDelivery(disposition: .sent),
-            normalize: { $0 },
-            phaseDidChange: { phases.append($0.phase) }
+            runDidChange: { phases.append($0.phase) }
         ))
 
         await workflow.start()
@@ -619,8 +618,7 @@ final class AutoSendWorkflowTests: XCTestCase {
         let workflow = AutoSendWorkflow(environment: AutoSendWorkflowEnvironment(
             capture: capture,
             transcription: transcript,
-            delivery: delivery,
-            normalize: { $0 }
+            delivery: delivery
         ))
 
         await workflow.start()
@@ -644,8 +642,7 @@ final class AutoSendWorkflowTests: XCTestCase {
         let workflow = AutoSendWorkflow(environment: AutoSendWorkflowEnvironment(
             capture: capture,
             transcription: FakeTranscript(text: "hello"),
-            delivery: FakeDelivery(disposition: .sent),
-            normalize: { $0 }
+            delivery: FakeDelivery(disposition: .sent)
         ))
 
         let staleStart = Task { await workflow.start() }
@@ -671,8 +668,7 @@ final class AutoSendWorkflowTests: XCTestCase {
             capture: FakeCapture(),
             transcription: FakeTranscript(text: "do not send"),
             delivery: delivery,
-            normalize: { $0 },
-            phaseDidChange: { phases.append($0.phase) }
+            runDidChange: { phases.append($0.phase) }
         ))
 
         await workflow.start()
@@ -743,8 +739,209 @@ final class AutoSendWorkflowTests: XCTestCase {
             capture: capture,
             transcription: transcript,
             delivery: delivery,
-            normalize: normalize
+            processTranscript: { AutoSendProcessedTranscript(afterRules: $0, final: normalize($0)) }
         ))
+    }
+}
+
+/// The run snapshot the workflow publishes, and the one mapping from it to what the user sees.
+final class AutoSendRunSnapshotTests: XCTestCase {
+    func testEverySnapshotOfASentRunIsCompleteAndInOrder() async {
+        let snapshots = SnapshotCollector()
+        let workflow = AutoSendWorkflow(environment: AutoSendWorkflowEnvironment(
+            capture: FakeCapture(),
+            transcription: FakeTranscript(text: "hello"),
+            delivery: FakeDelivery(disposition: .sent),
+            runDidChange: { snapshots.append($0) }
+        ))
+
+        await workflow.start()
+        await workflow.stop()
+
+        let published = snapshots.values
+        XCTAssertEqual(published.map(\.sequence), [1, 2, 3, 4, 5])
+        XCTAssertEqual(published.map(\.phase), [.starting, .recording, .transcribing, .delivering, .ready])
+        XCTAssertEqual(published.map(\.lastText), ["", "", "", "hello", "hello"])
+        XCTAssertEqual(published.map(\.deliveryDisposition), [nil, nil, nil, nil, .sent])
+        let current = await workflow.snapshot
+        XCTAssertEqual(current, published.last)
+    }
+
+    func testStartingSnapshotCarriesNothingFromThePreviousRun() async {
+        let snapshots = SnapshotCollector()
+        let workflow = AutoSendWorkflow(environment: AutoSendWorkflowEnvironment(
+            capture: FakeCapture(),
+            transcription: FakeTranscript(text: "first run"),
+            delivery: FakeDelivery(disposition: .sent),
+            runDidChange: { snapshots.append($0) }
+        ))
+        await workflow.start()
+        await workflow.stop()
+
+        await workflow.start()
+
+        let starting = snapshots.values.last { $0.phase == .starting }
+        XCTAssertEqual(starting?.lastText, "")
+        XCTAssertNil(starting?.deliveryDisposition)
+        XCTAssertNil(starting?.failureKind)
+        XCTAssertEqual(starting?.wasCancelled, false)
+    }
+
+    func testCancelledRunIsShownAsCancelledUntilTheNextRunStarts() async {
+        let workflow = AutoSendWorkflow(environment: AutoSendWorkflowEnvironment(
+            capture: FakeCapture(),
+            transcription: FakeTranscript(text: "unused"),
+            delivery: FakeDelivery(disposition: .sent)
+        ))
+        await workflow.start()
+
+        await workflow.cancel()
+
+        let cancelled = await workflow.snapshot
+        XCTAssertEqual(cancelled.phase, .idle)
+        XCTAssertEqual(
+            present(cancelled),
+            AutoSendRunPresentation(
+                experienceState: .cancelled,
+                statusMessage: "Cancelled. Saved recordings were not deleted."
+            )
+        )
+
+        await workflow.start()
+
+        let restarted = await workflow.snapshot
+        XCTAssertFalse(restarted.wasCancelled)
+        XCTAssertEqual(present(restarted).experienceState, .recording)
+    }
+
+    func testMicrophonePermissionFailureIsShownAsPermissionNeeded() async {
+        let workflow = AutoSendWorkflow(environment: AutoSendWorkflowEnvironment(
+            capture: FakeCapture(startError: AutoSendRecorderProductError.microphoneDenied),
+            transcription: FakeTranscript(text: "must not run"),
+            delivery: FakeDelivery(disposition: .sent)
+        ))
+
+        await workflow.start()
+
+        let failed = await workflow.snapshot
+        let message = AutoSendRecorderProductError.microphoneDenied.localizedDescription
+        XCTAssertEqual(
+            present(failed),
+            AutoSendRunPresentation(experienceState: .permissionNeeded(message), statusMessage: message)
+        )
+    }
+
+    func testOtherFailuresAreShownAsFailedWithTheirMessage() {
+        var snapshot = AutoSendRunSnapshot()
+        snapshot.phase = .failed("capture failed")
+        snapshot.failureKind = .recording
+
+        XCTAssertEqual(
+            present(snapshot),
+            AutoSendRunPresentation(experienceState: .failed("capture failed"), statusMessage: "capture failed")
+        )
+    }
+
+    func testEachDeliveryDispositionHasOnePresentation() {
+        let cases: [(AutoSendDeliveryDisposition?, AutoSendExperienceState, String)] = [
+            (.sent, .sent, "Pasted and sent."),
+            (.pastedWithoutSending, .pastedWithoutSend, "Pasted. Sending is off for this app."),
+            (.sendSuppressed("Send held back."), .suppressed, "Send held back."),
+            (.noPasteTarget("No text field."), .noTarget("No text field."), "No text field."),
+            (.copied("Copied to clipboard."), .pastedWithoutSend, "Copied to clipboard."),
+            (.permissionRequired("Allow access."), .permissionNeeded("Allow access."), "Allow access."),
+            (.pasteFailed("Paste failed."), .failed("Paste failed."), "Paste failed."),
+            (nil, .pastedWithoutSend, "Transcript ready.")
+        ]
+
+        for (disposition, experienceState, statusMessage) in cases {
+            var snapshot = AutoSendRunSnapshot()
+            snapshot.phase = .ready
+            snapshot.deliveryDisposition = disposition
+            XCTAssertEqual(
+                present(snapshot),
+                AutoSendRunPresentation(experienceState: experienceState, statusMessage: statusMessage),
+                "\(String(describing: disposition))"
+            )
+        }
+    }
+
+    func testBusyPhasesHaveFixedPresentations() {
+        let cases: [(AutoSendPhase, AutoSendExperienceState, String)] = [
+            (.starting, .starting, "Listening..."),
+            (.transcribing, .finalizing, "Finishing and sending..."),
+            (.delivering, .delivering, "Pasting transcript...")
+        ]
+
+        for (phase, experienceState, statusMessage) in cases {
+            var snapshot = AutoSendRunSnapshot()
+            snapshot.phase = phase
+            XCTAssertEqual(
+                present(snapshot),
+                AutoSendRunPresentation(experienceState: experienceState, statusMessage: statusMessage)
+            )
+        }
+    }
+
+    func testIdleAndRecordingMessagesFollowTheTriggerModeAndLatch() {
+        var snapshot = AutoSendRunSnapshot()
+
+        XCTAssertEqual(
+            present(snapshot, triggerMode: .walkieTalkie).statusMessage,
+            "Ready. Hold Hyper-R to record and release to send, or press Space to lock it."
+        )
+        XCTAssertEqual(
+            present(snapshot, triggerMode: .toggle).statusMessage,
+            "Ready. Press Hyper-R to start, then press again to send."
+        )
+
+        snapshot.phase = .recording
+        XCTAssertEqual(
+            present(snapshot, triggerMode: .walkieTalkie).statusMessage,
+            "Recording. Release Hyper-R to send, or press Space to lock it."
+        )
+        XCTAssertEqual(
+            present(snapshot, triggerMode: .walkieTalkie, isLatched: true).statusMessage,
+            "Recording locked. Press Hyper-R to send."
+        )
+        XCTAssertEqual(
+            present(snapshot, triggerMode: .toggle, isLatched: true).statusMessage,
+            "Recording. Press Hyper-R again to send."
+        )
+    }
+
+    func testStartAndStopAreAcceptedInTheSamePhasesTheWorkflowAcceptsThem() {
+        let phases: [AutoSendPhase] = [
+            .idle, .starting, .recording, .transcribing, .delivering, .ready, .failed("x")
+        ]
+
+        XCTAssertEqual(phases.filter(\.acceptsStart), [.idle, .ready, .failed("x")])
+        XCTAssertEqual(phases.filter(\.acceptsStop), [.recording])
+    }
+
+    private func present(
+        _ snapshot: AutoSendRunSnapshot,
+        triggerMode: AutoSendTriggerMode = .walkieTalkie,
+        isLatched: Bool = false
+    ) -> AutoSendRunPresentation {
+        snapshot.presentation(triggerMode: triggerMode, shortcutName: "Hyper-R", isLatched: isLatched)
+    }
+}
+
+private final class SnapshotCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedValues: [AutoSendRunSnapshot] = []
+
+    var values: [AutoSendRunSnapshot] {
+        lock.lock()
+        defer { lock.unlock() }
+        return storedValues
+    }
+
+    func append(_ snapshot: AutoSendRunSnapshot) {
+        lock.lock()
+        storedValues.append(snapshot)
+        lock.unlock()
     }
 }
 

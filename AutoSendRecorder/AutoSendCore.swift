@@ -17,6 +17,12 @@ enum AutoSendPhase: Equatable, Sendable {
             return false
         }
     }
+
+    /// A run can begin only when no run is in progress.
+    var acceptsStart: Bool { !isBusy }
+
+    /// Only a run that is recording can be stopped and sent.
+    var acceptsStop: Bool { self == .recording }
 }
 
 enum AutoSendRecordingTriggerEvent: Equatable, Sendable {
@@ -114,9 +120,18 @@ struct AutoSendRecordingTriggerController: Sendable {
     }
 }
 
-struct AutoSendPhaseUpdate: Equatable, Sendable {
-    let sequence: UInt64
-    let phase: AutoSendPhase
+/// One run as the workflow sees it. The workflow publishes a new snapshot on every change, so a
+/// reader never combines values read at different moments.
+struct AutoSendRunSnapshot: Equatable, Sendable {
+    /// Increases with every change; a reader keeps the highest it has seen.
+    var sequence: UInt64 = 0
+    var phase: AutoSendPhase = .idle
+    /// The current run's text once transcribed; empty from the start of a run until then.
+    var lastText = ""
+    var deliveryDisposition: AutoSendDeliveryDisposition?
+    var failureKind: AutoSendFailureKind?
+    /// True when the run ended because the user cancelled it.
+    var wasCancelled = false
 }
 
 struct AutoSendOperationID: Equatable, Hashable, Sendable {
@@ -237,62 +252,70 @@ struct AutoSendTranscriptEvidence: Equatable, Sendable {
     var failure: String?
 }
 
+/// The recogniser's text after replacement rules, and after rules plus spoken-number normalisation.
+struct AutoSendProcessedTranscript: Equatable, Sendable {
+    var afterRules: String
+    var final: String
+}
+
 struct AutoSendWorkflowEnvironment: @unchecked Sendable {
     let capture: any AutoSendCaptureService
     let transcription: any AutoSendTranscriptService
     let delivery: any AutoSendDeliveryService
-    /// Replacement rules, applied to the recogniser's output before `normalize`.
-    let applyRules: @Sendable (String) -> String
-    let normalize: @Sendable (String) -> String
+    /// Replacement rules and spoken-number normalisation, applied to the recogniser's output.
+    let processTranscript: @Sendable (String) -> AutoSendProcessedTranscript
     let archive: @Sendable (AutoSendTranscriptEvidence) -> Void
-    let phaseDidChange: @Sendable (AutoSendPhaseUpdate) -> Void
+    let runDidChange: @Sendable (AutoSendRunSnapshot) -> Void
 
     init(
         capture: any AutoSendCaptureService,
         transcription: any AutoSendTranscriptService,
         delivery: any AutoSendDeliveryService,
-        applyRules: @escaping @Sendable (String) -> String = { $0 },
-        normalize: @escaping @Sendable (String) -> String,
+        processTranscript: @escaping @Sendable (String) -> AutoSendProcessedTranscript = {
+            AutoSendProcessedTranscript(afterRules: $0, final: $0)
+        },
         archive: @escaping @Sendable (AutoSendTranscriptEvidence) -> Void = { _ in },
-        phaseDidChange: @escaping @Sendable (AutoSendPhaseUpdate) -> Void = { _ in }
+        runDidChange: @escaping @Sendable (AutoSendRunSnapshot) -> Void = { _ in }
     ) {
         self.capture = capture
         self.transcription = transcription
         self.delivery = delivery
-        self.applyRules = applyRules
-        self.normalize = normalize
+        self.processTranscript = processTranscript
         self.archive = archive
-        self.phaseDidChange = phaseDidChange
+        self.runDidChange = runDidChange
     }
 }
 
 actor AutoSendWorkflow {
     private let environment: AutoSendWorkflowEnvironment
-    private(set) var phase: AutoSendPhase = .idle
+    /// The only copy of the run's state. Every change to it goes out through `publish`.
+    private(set) var snapshot = AutoSendRunSnapshot()
     private(set) var lastAudioURL: URL?
-    private(set) var lastText = ""
-    private(set) var lastDeliveryDisposition: AutoSendDeliveryDisposition?
-    private(set) var lastFailureKind: AutoSendFailureKind?
     private var nextOperationValue: UInt64 = 0
     private var activeOperationID: AutoSendOperationID?
-    private var phaseSequence: UInt64 = 0
     private var deliveryTask: (
         operationID: AutoSendOperationID,
         task: Task<AutoSendDeliveryDisposition, Error>
     )?
+
+    var phase: AutoSendPhase { snapshot.phase }
+    var lastText: String { snapshot.lastText }
+    var lastDeliveryDisposition: AutoSendDeliveryDisposition? { snapshot.deliveryDisposition }
+    var lastFailureKind: AutoSendFailureKind? { snapshot.failureKind }
 
     init(environment: AutoSendWorkflowEnvironment) {
         self.environment = environment
     }
 
     func start(source: AutoSendRecordingSource = .macHotKey) async {
-        guard !phase.isBusy else { return }
+        guard phase.acceptsStart else { return }
         let operationID = makeOperationID()
         activeOperationID = operationID
+        snapshot.lastText = ""
+        snapshot.deliveryDisposition = nil
+        snapshot.failureKind = nil
+        snapshot.wasCancelled = false
         publish(.starting)
-        lastText = ""
-        lastDeliveryDisposition = nil
-        lastFailureKind = nil
 
         do {
             try await environment.capture.start(
@@ -311,7 +334,7 @@ actor AutoSendWorkflow {
             }
             activeOperationID = nil
             await environment.transcription.cancel(operationID: operationID)
-            lastFailureKind = error is AutoSendRecorderProductError
+            snapshot.failureKind = error is AutoSendRecorderProductError
                 ? .microphonePermission
                 : .recording
             publish(.failed(error.localizedDescription))
@@ -320,7 +343,7 @@ actor AutoSendWorkflow {
 
     @discardableResult
     func stop() async -> Bool {
-        guard phase == .recording, let operationID = activeOperationID else { return false }
+        guard phase.acceptsStop, let operationID = activeOperationID else { return false }
         publish(.transcribing)
         var evidence: AutoSendTranscriptEvidence?
 
@@ -341,19 +364,18 @@ actor AutoSendWorkflow {
                 return false
             }
 
-            let afterRules = environment.applyRules(transcript)
-            let normalized = environment.normalize(afterRules)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let processed = environment.processTranscript(transcript)
+            let normalized = processed.final.trimmingCharacters(in: .whitespacesAndNewlines)
             evidence = AutoSendTranscriptEvidence(
                 audioURL: audioURL,
                 recognizerText: transcript,
-                afterRulesText: afterRules,
+                afterRulesText: processed.afterRules,
                 finalText: normalized
             )
             guard !normalized.isEmpty else {
                 throw AutoSendWorkflowError.emptyTranscript
             }
-            lastText = normalized
+            snapshot.lastText = normalized
             publish(.delivering)
             let task = Task {
                 try await environment.delivery.deliver(text: normalized)
@@ -367,7 +389,7 @@ actor AutoSendWorkflow {
                 environment.archive(record)
             }
             guard isActive(operationID) else { return false }
-            lastDeliveryDisposition = disposition
+            snapshot.deliveryDisposition = disposition
             activeOperationID = nil
             publish(.ready)
             return true
@@ -384,7 +406,7 @@ actor AutoSendWorkflow {
             let failedDuringDelivery = phase == .delivering
             activeOperationID = nil
             await environment.transcription.cancel(operationID: operationID)
-            lastFailureKind = failedDuringDelivery ? .delivery : .transcription
+            snapshot.failureKind = failedDuringDelivery ? .delivery : .transcription
             publish(.failed(error.localizedDescription))
             return true
         }
@@ -397,6 +419,7 @@ actor AutoSendWorkflow {
             deliveryTask = nil
         }
         activeOperationID = nil
+        snapshot.wasCancelled = true
         publish(.idle)
         await environment.capture.cancel(operationID: operationID)
         await environment.transcription.cancel(operationID: operationID)
@@ -423,11 +446,9 @@ actor AutoSendWorkflow {
     }
 
     private func publish(_ newPhase: AutoSendPhase) {
-        phase = newPhase
-        phaseSequence &+= 1
-        environment.phaseDidChange(
-            AutoSendPhaseUpdate(sequence: phaseSequence, phase: newPhase)
-        )
+        snapshot.phase = newPhase
+        snapshot.sequence &+= 1
+        environment.runDidChange(snapshot)
     }
 }
 
@@ -600,5 +621,280 @@ struct AutoSendSourceAwareTranscriptionPipeline: Sendable {
             liveSession: liveSession,
             audioURL: audioURL
         )
+    }
+}
+
+// MARK: - What the user sees
+
+enum AutoSendExperienceState: Equatable, Sendable, Identifiable {
+    case idle
+    case starting
+    case recording
+    case finalizing
+    case delivering
+    case sent
+    case cancelled
+    case pastedWithoutSend
+    case suppressed
+    case noTarget(String)
+    case failed(String)
+    case hotKeyConflict
+    case permissionNeeded(String)
+
+    var id: String {
+        switch self {
+        case .idle: return "idle"
+        case .starting: return "starting"
+        case .recording: return "recording"
+        case .finalizing: return "finalizing"
+        case .delivering: return "delivering"
+        case .sent: return "sent"
+        case .cancelled: return "cancelled"
+        case .pastedWithoutSend: return "pasted-without-send"
+        case .suppressed: return "suppressed"
+        case .noTarget: return "no-target"
+        case .failed: return "failed"
+        case .hotKeyConflict: return "hotkey-conflict"
+        case .permissionNeeded: return "permission-needed"
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .idle: return "Ready"
+        case .starting: return "Listening"
+        case .recording: return "Recording"
+        case .finalizing: return "Finishing"
+        case .delivering: return "Sending"
+        case .sent: return "Sent"
+        case .cancelled: return "Cancelled"
+        case .pastedWithoutSend: return "Pasted only"
+        case .suppressed: return "Send suppressed"
+        case .noTarget: return "No text field"
+        case .failed: return "Failed"
+        case .hotKeyConflict: return "Hotkey conflict"
+        case .permissionNeeded: return "Permission needed"
+        }
+    }
+
+    var detail: String? {
+        switch self {
+        case .idle:
+            return "Use the recording shortcut"
+        case .starting:
+            return "Microphone is opening · use the cancel shortcut to stop"
+        case .recording:
+            return "Use the recording shortcut to send · use the cancel shortcut to stop"
+        case .finalizing:
+            return "Preparing transcript · use the cancel shortcut to stop"
+        case .delivering:
+            return "Pasting into the focused field · use the cancel shortcut to stop"
+        case .sent:
+            return "Pasted and sent"
+        case .cancelled:
+            return "The recording was not sent"
+        case .pastedWithoutSend:
+            return "Your app rule disabled sending"
+        case .suppressed:
+            return "The destination was not safe to send to"
+        case .noTarget(let message), .failed(let message), .permissionNeeded(let message):
+            return message
+        case .hotKeyConflict:
+            return "Another app uses the recording shortcut"
+        }
+    }
+
+    var symbolName: String {
+        switch self {
+        case .idle: return "paperplane"
+        case .starting: return "mic"
+        case .recording: return "waveform"
+        case .finalizing: return "paperplane"
+        case .delivering: return "paperplane.fill"
+        case .sent: return "checkmark.circle.fill"
+        case .cancelled: return "xmark.circle.fill"
+        case .pastedWithoutSend: return "doc.on.clipboard.fill"
+        case .suppressed: return "hand.raised.fill"
+        case .noTarget: return "text.cursor"
+        case .failed: return "exclamationmark.triangle.fill"
+        case .hotKeyConflict: return "keyboard"
+        case .permissionNeeded: return "lock.trianglebadge.exclamationmark"
+        }
+    }
+
+    var tone: AutoSendExperienceTone {
+        switch self {
+        case .idle, .starting, .finalizing, .delivering:
+            return .neutral
+        case .recording:
+            return .recording
+        case .sent:
+            return .success
+        case .cancelled, .pastedWithoutSend:
+            return .informational
+        case .suppressed, .noTarget, .hotKeyConflict, .permissionNeeded:
+            return .warning
+        case .failed:
+            return .failure
+        }
+    }
+
+    var shouldShowHUD: Bool {
+        self != .idle
+    }
+
+    var hudLifetime: Duration? {
+        switch self {
+        case .sent:
+            return .milliseconds(850)
+        case .cancelled:
+            return .milliseconds(1200)
+        case .pastedWithoutSend, .suppressed, .noTarget:
+            return .seconds(2)
+        case .failed, .hotKeyConflict, .permissionNeeded:
+            return .seconds(4)
+        case .idle, .starting, .recording, .finalizing, .delivering:
+            return nil
+        }
+    }
+
+#if DEBUG
+    static let playgroundStates: [AutoSendExperienceState] = [
+        .idle,
+        .starting,
+        .recording,
+        .finalizing,
+        .delivering,
+        .sent,
+        .cancelled,
+        .pastedWithoutSend,
+        .suppressed,
+        .noTarget("Focus an editable text field, then try again."),
+        .failed("The transcript could not be delivered. The recording was kept."),
+        .hotKeyConflict,
+        .permissionNeeded("Allow microphone and Accessibility access in System Settings.")
+    ]
+#endif
+}
+
+enum AutoSendExperienceTone: Sendable {
+    case neutral
+    case recording
+    case success
+    case informational
+    case warning
+    case failure
+}
+
+/// What the HUD, the menu and the settings window show for a run.
+struct AutoSendRunPresentation: Equatable, Sendable {
+    var experienceState: AutoSendExperienceState
+    var statusMessage: String
+
+    static func readyMessage(triggerMode: AutoSendTriggerMode, shortcutName: String) -> String {
+        switch triggerMode {
+        case .walkieTalkie:
+            return "Ready. Hold \(shortcutName) to record and release to send, or press Space to lock it."
+        case .toggle:
+            return "Ready. Press \(shortcutName) to start, then press again to send."
+        }
+    }
+
+    static func recordingMessage(
+        triggerMode: AutoSendTriggerMode,
+        shortcutName: String,
+        isLatched: Bool
+    ) -> String {
+        switch triggerMode {
+        case .walkieTalkie:
+            if isLatched {
+                return "Recording locked. Press \(shortcutName) to send."
+            }
+            return "Recording. Release \(shortcutName) to send, or press Space to lock it."
+        case .toggle:
+            return "Recording. Press \(shortcutName) again to send."
+        }
+    }
+}
+
+extension AutoSendRunSnapshot {
+    /// The one mapping from a run's state to what the user sees.
+    func presentation(
+        triggerMode: AutoSendTriggerMode,
+        shortcutName: String,
+        isLatched: Bool
+    ) -> AutoSendRunPresentation {
+        switch phase {
+        case .idle:
+            if wasCancelled {
+                return AutoSendRunPresentation(
+                    experienceState: .cancelled,
+                    statusMessage: "Cancelled. Saved recordings were not deleted."
+                )
+            }
+            return AutoSendRunPresentation(
+                experienceState: .idle,
+                statusMessage: AutoSendRunPresentation.readyMessage(
+                    triggerMode: triggerMode,
+                    shortcutName: shortcutName
+                )
+            )
+        case .starting:
+            return AutoSendRunPresentation(experienceState: .starting, statusMessage: "Listening...")
+        case .recording:
+            return AutoSendRunPresentation(
+                experienceState: .recording,
+                statusMessage: AutoSendRunPresentation.recordingMessage(
+                    triggerMode: triggerMode,
+                    shortcutName: shortcutName,
+                    isLatched: isLatched
+                )
+            )
+        case .transcribing:
+            return AutoSendRunPresentation(
+                experienceState: .finalizing,
+                statusMessage: "Finishing and sending..."
+            )
+        case .delivering:
+            return AutoSendRunPresentation(
+                experienceState: .delivering,
+                statusMessage: "Pasting transcript..."
+            )
+        case .ready:
+            switch deliveryDisposition {
+            case .sent:
+                return AutoSendRunPresentation(experienceState: .sent, statusMessage: "Pasted and sent.")
+            case .pastedWithoutSending:
+                return AutoSendRunPresentation(
+                    experienceState: .pastedWithoutSend,
+                    statusMessage: "Pasted. Sending is off for this app."
+                )
+            case .sendSuppressed(let message):
+                return AutoSendRunPresentation(experienceState: .suppressed, statusMessage: message)
+            case .noPasteTarget(let message):
+                return AutoSendRunPresentation(experienceState: .noTarget(message), statusMessage: message)
+            case .copied(let message):
+                return AutoSendRunPresentation(experienceState: .pastedWithoutSend, statusMessage: message)
+            case .permissionRequired(let message):
+                return AutoSendRunPresentation(
+                    experienceState: .permissionNeeded(message),
+                    statusMessage: message
+                )
+            case .pasteFailed(let message):
+                return AutoSendRunPresentation(experienceState: .failed(message), statusMessage: message)
+            case .none:
+                return AutoSendRunPresentation(
+                    experienceState: .pastedWithoutSend,
+                    statusMessage: "Transcript ready."
+                )
+            }
+        case .failed(let message):
+            return AutoSendRunPresentation(
+                experienceState: failureKind == .microphonePermission
+                    ? .permissionNeeded(message)
+                    : .failed(message),
+                statusMessage: message
+            )
+        }
     }
 }

@@ -2,175 +2,14 @@ import AppKit
 import Combine
 import Foundation
 
-enum AutoSendExperienceState: Equatable, Sendable, Identifiable {
-    case idle
-    case starting
-    case recording
-    case finalizing
-    case delivering
-    case sent
-    case cancelled
-    case pastedWithoutSend
-    case suppressed
-    case noTarget(String)
-    case failed(String)
-    case hotKeyConflict
-    case permissionNeeded(String)
-
-    var id: String {
-        switch self {
-        case .idle: return "idle"
-        case .starting: return "starting"
-        case .recording: return "recording"
-        case .finalizing: return "finalizing"
-        case .delivering: return "delivering"
-        case .sent: return "sent"
-        case .cancelled: return "cancelled"
-        case .pastedWithoutSend: return "pasted-without-send"
-        case .suppressed: return "suppressed"
-        case .noTarget: return "no-target"
-        case .failed: return "failed"
-        case .hotKeyConflict: return "hotkey-conflict"
-        case .permissionNeeded: return "permission-needed"
-        }
-    }
-
-    var title: String {
-        switch self {
-        case .idle: return "Ready"
-        case .starting: return "Listening"
-        case .recording: return "Recording"
-        case .finalizing: return "Finishing"
-        case .delivering: return "Sending"
-        case .sent: return "Sent"
-        case .cancelled: return "Cancelled"
-        case .pastedWithoutSend: return "Pasted only"
-        case .suppressed: return "Send suppressed"
-        case .noTarget: return "No text field"
-        case .failed: return "Failed"
-        case .hotKeyConflict: return "Hotkey conflict"
-        case .permissionNeeded: return "Permission needed"
-        }
-    }
-
-    var detail: String? {
-        switch self {
-        case .idle:
-            return "Use the recording shortcut"
-        case .starting:
-            return "Microphone is opening · use the cancel shortcut to stop"
-        case .recording:
-            return "Use the recording shortcut to send · use the cancel shortcut to stop"
-        case .finalizing:
-            return "Preparing transcript · use the cancel shortcut to stop"
-        case .delivering:
-            return "Pasting into the focused field · use the cancel shortcut to stop"
-        case .sent:
-            return "Pasted and sent"
-        case .cancelled:
-            return "The recording was not sent"
-        case .pastedWithoutSend:
-            return "Your app rule disabled sending"
-        case .suppressed:
-            return "The destination was not safe to send to"
-        case .noTarget(let message), .failed(let message), .permissionNeeded(let message):
-            return message
-        case .hotKeyConflict:
-            return "Another app uses the recording shortcut"
-        }
-    }
-
-    var symbolName: String {
-        switch self {
-        case .idle: return "paperplane"
-        case .starting: return "mic"
-        case .recording: return "waveform"
-        case .finalizing: return "paperplane"
-        case .delivering: return "paperplane.fill"
-        case .sent: return "checkmark.circle.fill"
-        case .cancelled: return "xmark.circle.fill"
-        case .pastedWithoutSend: return "doc.on.clipboard.fill"
-        case .suppressed: return "hand.raised.fill"
-        case .noTarget: return "text.cursor"
-        case .failed: return "exclamationmark.triangle.fill"
-        case .hotKeyConflict: return "keyboard"
-        case .permissionNeeded: return "lock.trianglebadge.exclamationmark"
-        }
-    }
-
-    var tone: AutoSendExperienceTone {
-        switch self {
-        case .idle, .starting, .finalizing, .delivering:
-            return .neutral
-        case .recording:
-            return .recording
-        case .sent:
-            return .success
-        case .cancelled, .pastedWithoutSend:
-            return .informational
-        case .suppressed, .noTarget, .hotKeyConflict, .permissionNeeded:
-            return .warning
-        case .failed:
-            return .failure
-        }
-    }
-
-    var shouldShowHUD: Bool {
-        self != .idle
-    }
-
-    var hudLifetime: Duration? {
-        switch self {
-        case .sent:
-            return .milliseconds(850)
-        case .cancelled:
-            return .milliseconds(1200)
-        case .pastedWithoutSend, .suppressed, .noTarget:
-            return .seconds(2)
-        case .failed, .hotKeyConflict, .permissionNeeded:
-            return .seconds(4)
-        case .idle, .starting, .recording, .finalizing, .delivering:
-            return nil
-        }
-    }
-
-#if DEBUG
-    static let playgroundStates: [AutoSendExperienceState] = [
-        .idle,
-        .starting,
-        .recording,
-        .finalizing,
-        .delivering,
-        .sent,
-        .cancelled,
-        .pastedWithoutSend,
-        .suppressed,
-        .noTarget("Focus an editable text field, then try again."),
-        .failed("The transcript could not be delivered. The recording was kept."),
-        .hotKeyConflict,
-        .permissionNeeded("Allow microphone and Accessibility access in System Settings.")
-    ]
-#endif
-}
-
-enum AutoSendExperienceTone: Sendable {
-    case neutral
-    case recording
-    case success
-    case informational
-    case warning
-    case failure
-}
-
+/// Carries the workflow's snapshots to the state object, which does not exist yet when the
+/// workflow's environment is built.
 @MainActor
-private final class AutoSendPhaseRelay {
+private final class AutoSendRunRelay {
     weak var state: AutoSendState?
-    private var lastSequence: UInt64 = 0
 
-    func publish(_ update: AutoSendPhaseUpdate) {
-        guard update.sequence > lastSequence else { return }
-        lastSequence = update.sequence
-        state?.receivePublishedPhase(update.phase)
+    func publish(_ snapshot: AutoSendRunSnapshot) {
+        state?.receive(snapshot)
     }
 }
 
@@ -192,10 +31,11 @@ final class AutoSendState: ObservableObject {
     let replacementRules: SharedReplacementRules
     private let transcription: AutoSendParakeetService
     private let workflow: AutoSendWorkflow
-    private let phaseRelay: AutoSendPhaseRelay
+    private let runRelay: AutoSendRunRelay
+    /// The newest snapshot received from the workflow, which owns the run's state.
+    private var snapshot = AutoSendRunSnapshot()
     private var appRememberedForSettings: FocusedApp?
     private var stopTask: Task<Void, Never>?
-    private var stopTaskGeneration: UInt64 = 0
     private var recordingTriggerController = AutoSendRecordingTriggerController()
     private var esp32TriggerController = AutoSendRecordingTriggerController()
     private var activeRecordingSource: AutoSendRecordingSource?
@@ -220,11 +60,11 @@ final class AutoSendState: ObservableObject {
             transcription?.selectModel(model)
             Task { await transcription?.warmUp() }
         }
-        let phaseRelay = AutoSendPhaseRelay()
+        let runRelay = AutoSendRunRelay()
         self.settings = settings
         availableMicrophones = microphones
         self.transcription = transcription
-        self.phaseRelay = phaseRelay
+        self.runRelay = runRelay
         let recording = AutoSendRecordingService(
             transcription: transcription,
             preferredMicrophoneID: settings.preferredMicrophoneID
@@ -240,18 +80,18 @@ final class AutoSendState: ObservableObject {
             capture: recording,
             transcription: transcription,
             delivery: delivery,
-            applyRules: { [replacementRules] in
-                ReplacementRuleEngine.apply($0, rules: replacementRules.currentRules())
+            processTranscript: { [replacementRules] in
+                let outcome = replacementRules.process($0)
+                return AutoSendProcessedTranscript(afterRules: outcome.afterRules, final: outcome.final)
             },
-            normalize: { TranscriptTextNormalizer.normalizeSpokenNumbers(in: $0) },
             archive: { AutoSendTranscriptArchive.save($0) },
-            phaseDidChange: { [weak phaseRelay] update in
+            runDidChange: { [weak runRelay] snapshot in
                 Task { @MainActor in
-                    phaseRelay?.publish(update)
+                    runRelay?.publish(snapshot)
                 }
             }
         ))
-        phaseRelay.state = self
+        runRelay.state = self
     }
 
     func refreshMicrophones() {
@@ -335,58 +175,35 @@ final class AutoSendState: ObservableObject {
     }
 
     func startRecording(source: AutoSendRecordingSource = .macHotKey) {
-        guard !phase.isBusy else { return }
+        guard phase.acceptsStart else { return }
         activeRecordingSource = source
         if source == .macHotKey && settings.triggerMode == .walkieTalkie {
             _ = registerSpaceLatch?()
         }
-        phase = .starting
-        experienceState = .starting
-        statusMessage = "Listening..."
-        notifyChange()
-        Task {
+        anticipate(.starting)
+        Task { [workflow] in
             await workflow.start(source: source)
-            await refreshFromWorkflow()
         }
     }
 
     func stopRecording() {
-        guard phase == .recording else { return }
+        guard phase.acceptsStop else { return }
         unregisterSpaceLatch?()
-        phase = .transcribing
-        experienceState = .finalizing
-        statusMessage = "Finishing and sending..."
-        notifyChange()
-        stopTaskGeneration &+= 1
-        let generation = stopTaskGeneration
+        anticipate(.transcribing)
         stopTask?.cancel()
-        stopTask = Task { [weak self] in
-            guard let self else { return }
-            let completed = await workflow.stop()
-            guard completed,
-                  !Task.isCancelled,
-                  stopTaskGeneration == generation else {
-                return
-            }
-            await refreshFromWorkflow()
-            if stopTaskGeneration == generation {
-                stopTask = nil
-            }
+        // Kept so that `cancel` can interrupt a stop that is still transcribing.
+        stopTask = Task { [workflow] in
+            await workflow.stop()
         }
     }
 
     func cancel() {
         guard phase.isBusy else { return }
         unregisterSpaceLatch?()
-        stopTaskGeneration &+= 1
         stopTask?.cancel()
         stopTask = nil
-        Task {
+        Task { [workflow] in
             await workflow.cancel()
-            await refreshFromWorkflow()
-            experienceState = .cancelled
-            statusMessage = "Cancelled. Saved recordings were not deleted."
-            notifyChange()
         }
     }
 
@@ -445,87 +262,41 @@ final class AutoSendState: ObservableObject {
         appRememberedForSettings = app
     }
 
-    private func refreshFromWorkflow() async {
-        phase = await workflow.phase
-        lastText = await workflow.lastText
-        switch phase {
-        case .recording:
-            experienceState = .recording
-            statusMessage = recordingStatusMessage
-        case .ready:
-            switch await workflow.lastDeliveryDisposition {
-            case .sent:
-                experienceState = .sent
-                statusMessage = "Pasted and sent."
-            case .pastedWithoutSending:
-                experienceState = .pastedWithoutSend
-                statusMessage = "Pasted. Sending is off for this app."
-            case .sendSuppressed(let message):
-                experienceState = .suppressed
-                statusMessage = message
-            case .noPasteTarget(let message):
-                experienceState = .noTarget(message)
-                statusMessage = message
-            case .copied(let message):
-                experienceState = .pastedWithoutSend
-                statusMessage = message
-            case .permissionRequired(let message):
-                experienceState = .permissionNeeded(message)
-                statusMessage = message
-            case .pasteFailed(let message):
-                experienceState = .failed(message)
-                statusMessage = message
-            case .none:
-                experienceState = .pastedWithoutSend
-                statusMessage = "Transcript ready."
-            }
-        case .failed(let message):
-            let failureKind = await workflow.lastFailureKind
-            experienceState = Self.experienceState(forFailure: message, kind: failureKind)
-            statusMessage = message
-        case .idle:
-            experienceState = .idle
-            statusMessage = readyStatusMessage
-        case .starting:
-            experienceState = .starting
-            statusMessage = "Listening..."
-        case .transcribing:
-            experienceState = .finalizing
-            statusMessage = "Finishing and sending..."
-        case .delivering:
-            experienceState = .delivering
-            statusMessage = "Pasting transcript..."
-        }
+    /// Shows a snapshot from the workflow. Snapshots can arrive out of order, so only one newer
+    /// than the last counts.
+    fileprivate func receive(_ newSnapshot: AutoSendRunSnapshot) {
+        guard newSnapshot.sequence > snapshot.sequence else { return }
+        snapshot = newSnapshot
+        phase = newSnapshot.phase
+        lastText = newSnapshot.lastText
+        present(newSnapshot)
         processRecordingPhaseChange()
+        // The trigger controller may have latched, which changes the recording message. If it
+        // issued a stop instead, the next phase is already showing.
         if phase == .recording {
-            statusMessage = recordingStatusMessage
+            present(newSnapshot)
         }
         notifyChange()
     }
 
-    fileprivate func receivePublishedPhase(_ newPhase: AutoSendPhase) {
-        phase = newPhase
-        switch newPhase {
-        case .starting:
-            experienceState = .starting
-            statusMessage = "Listening..."
-        case .recording:
-            experienceState = .recording
-            statusMessage = recordingStatusMessage
-        case .transcribing:
-            experienceState = .finalizing
-            statusMessage = "Finishing and sending..."
-        case .delivering:
-            experienceState = .delivering
-            statusMessage = "Pasting transcript..."
-        case .idle, .ready, .failed:
-            break
-        }
-        processRecordingPhaseChange()
-        if phase == .recording {
-            statusMessage = recordingStatusMessage
-        }
+    /// Shows a phase before the workflow publishes it, so the HUD responds at once and a second
+    /// trigger sees the run as busy. The workflow's next snapshot replaces it.
+    private func anticipate(_ anticipated: AutoSendPhase) {
+        var shown = snapshot
+        shown.phase = anticipated
+        phase = anticipated
+        present(shown)
         notifyChange()
+    }
+
+    private func present(_ shown: AutoSendRunSnapshot) {
+        let presentation = shown.presentation(
+            triggerMode: settings.triggerMode,
+            shortcutName: settings.recordingShortcut.displayName,
+            isLatched: recordingTriggerController.isLatched
+        )
+        experienceState = presentation.experienceState
+        statusMessage = presentation.statusMessage
     }
 
     private func processRecordingPhaseChange() {
@@ -579,39 +350,15 @@ final class AutoSendState: ObservableObject {
         )
     }
 
-    private static func experienceState(
-        forFailure message: String,
-        kind: AutoSendFailureKind?
-    ) -> AutoSendExperienceState {
-        if kind == .microphonePermission {
-            return .permissionNeeded(message)
-        }
-        return .failed(message)
-    }
-
     private func notifyChange() {
         didChange?()
     }
 
     private var readyStatusMessage: String {
-        switch settings.triggerMode {
-        case .walkieTalkie:
-            return "Ready. Hold \(settings.recordingShortcut.displayName) to record and release to send, or press Space to lock it."
-        case .toggle:
-            return "Ready. Press \(settings.recordingShortcut.displayName) to start, then press again to send."
-        }
-    }
-
-    private var recordingStatusMessage: String {
-        switch settings.triggerMode {
-        case .walkieTalkie:
-            if recordingTriggerController.isLatched {
-                return "Recording locked. Press \(settings.recordingShortcut.displayName) to send."
-            }
-            return "Recording. Release \(settings.recordingShortcut.displayName) to send, or press Space to lock it."
-        case .toggle:
-            return "Recording. Press \(settings.recordingShortcut.displayName) again to send."
-        }
+        AutoSendRunPresentation.readyMessage(
+            triggerMode: settings.triggerMode,
+            shortcutName: settings.recordingShortcut.displayName
+        )
     }
 }
 

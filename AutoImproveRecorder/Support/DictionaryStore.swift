@@ -65,7 +65,7 @@ final class UserDictionaryStore: ObservableObject {
         self.lexiconReader = lexiconReader
         self.directoryURL = directoryURL
         self.entriesURL = directoryURL.appendingPathComponent("dictionary.json")
-        self.replacementRulesURL = directoryURL.appendingPathComponent("replacement-rules.json")
+        self.replacementRulesURL = directoryURL.appendingPathComponent(ManualDictionaryFiles.rulesFileName)
         self.fileManager = fileManager
         self.entries = []
         self.replacementRules = []
@@ -229,11 +229,7 @@ final class UserDictionaryStore: ObservableObject {
     }
 
     nonisolated static func defaultDirectoryURL() -> URL {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? FileManager.default.homeDirectoryForCurrentUser
-        return base
-            .appendingPathComponent("AutoImproveRecorder", isDirectory: true)
-            .appendingPathComponent("Dictionary", isDirectory: true)
+        ManualDictionaryFiles.defaultDirectoryURL()
     }
 
     private func load() {
@@ -258,9 +254,8 @@ final class UserDictionaryStore: ObservableObject {
 
     private func loadReplacementRules() throws -> [DictionaryReplacementRule] {
         guard fileManager.fileExists(atPath: replacementRulesURL.path) else { return [] }
-        let data = try Data(contentsOf: replacementRulesURL)
-        let file = try decoder.decode(DictionaryReplacementRulesFile.self, from: data)
-        return file.rules.sorted { $0.createdAt > $1.createdAt }
+        return try ManualDictionaryFiles.decodeRules(Data(contentsOf: replacementRulesURL))
+            .sorted { $0.createdAt > $1.createdAt }
     }
 
     private func sortNewestFirst() {
