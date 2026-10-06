@@ -325,12 +325,20 @@ protocol AutoSendCaptureService {
     ) async throws
     func stop(operationID: AutoSendOperationID) async throws -> URL
     func cancel(operationID: AutoSendOperationID) async
-    /// The backup recording of a run whose `stop` has returned, or nil when it has none.
-    func backupRecording(operationID: AutoSendOperationID) async -> AutoSendBackupRecording?
+    /// The backup recording of a run whose `stop` has returned or thrown. The capture side
+    /// returns it only when the main text is unusable or its silence watch reported during the
+    /// recording; otherwise it discards the backup without waiting and returns nil.
+    func backupRecording(
+        operationID: AutoSendOperationID,
+        mainTextIsUnusable: Bool
+    ) async -> AutoSendBackupRecording?
 }
 
 extension AutoSendCaptureService {
-    func backupRecording(operationID: AutoSendOperationID) async -> AutoSendBackupRecording? {
+    func backupRecording(
+        operationID: AutoSendOperationID,
+        mainTextIsUnusable: Bool
+    ) async -> AutoSendBackupRecording? {
         nil
     }
 }
@@ -458,20 +466,11 @@ actor AutoSendWorkflow {
         var evidence: AutoSendTranscriptEvidence?
 
         do {
-            let audioURL = try await environment.capture.stop(operationID: operationID)
-            guard isActive(operationID) else {
-                await environment.transcription.cancel(operationID: operationID)
-                return false
-            }
-            lastAudioURL = audioURL
-
+            // A failed stop leaves no main recording. The run continues only if a backup has text.
             var mainFailure: Error?
-            var transcript = ""
+            var mainAudioURL: URL?
             do {
-                transcript = try await environment.transcription.transcribe(
-                    audioURL: audioURL,
-                    operationID: operationID
-                )
+                mainAudioURL = try await environment.capture.stop(operationID: operationID)
             } catch {
                 mainFailure = error
             }
@@ -480,64 +479,94 @@ actor AutoSendWorkflow {
                 return false
             }
 
+            var transcript = ""
+            if let mainAudioURL {
+                lastAudioURL = mainAudioURL
+                do {
+                    transcript = try await environment.transcription.transcribe(
+                        audioURL: mainAudioURL,
+                        operationID: operationID
+                    )
+                } catch {
+                    mainFailure = error
+                }
+                guard isActive(operationID) else {
+                    await environment.transcription.cancel(operationID: operationID)
+                    return false
+                }
+            }
+
             var processed = AutoSendProcessedTranscript(afterRules: "", final: "")
             if mainFailure == nil {
                 processed = environment.processTranscript(transcript)
             }
             var normalized = processed.final.trimmingCharacters(in: .whitespacesAndNewlines)
-            var usedAudioURL = audioURL
-            // The main recording's handle is spent, so the backup is read from its saved file.
-            let backup = await environment.capture.backupRecording(operationID: operationID)
+            var usedAudioURL = mainAudioURL
+            let backup = await environment.capture.backupRecording(
+                operationID: operationID,
+                mainTextIsUnusable: mainFailure != nil || normalized.isEmpty
+            )
             guard isActive(operationID) else {
                 await environment.transcription.cancel(operationID: operationID)
                 return false
             }
             if let backup {
                 var backupWasRead = true
-                if mainFailure != nil || normalized.isEmpty || backup.primaryWasSilent {
-                    do {
-                        let backupTranscript = try await environment.transcription.transcribe(
-                            audioURL: backup.audioURL,
-                            operationID: operationID
-                        )
-                        guard isActive(operationID) else {
-                            environment.discardRecording(backup.audioURL)
-                            await environment.transcription.cancel(operationID: operationID)
-                            return false
-                        }
-                        let backupProcessed = environment.processTranscript(backupTranscript)
-                        let backupNormalized = backupProcessed.final
-                            .trimmingCharacters(in: .whitespacesAndNewlines)
-                        if AutoSendBackupTranscript.prefersBackup(
-                            mainText: normalized,
-                            backupText: backupNormalized
-                        ) {
-                            mainFailure = nil
-                            transcript = backupTranscript
-                            processed = backupProcessed
-                            normalized = backupNormalized
-                            usedAudioURL = backup.audioURL
-                            snapshot.backupMicrophoneUsed = backup.microphoneName
-                        }
-                    } catch {
-                        backupWasRead = false
+                do {
+                    if mainAudioURL == nil {
+                        // Drops any live handle, so the backup is read from its saved file.
+                        await environment.transcription.cancel(operationID: operationID)
                     }
+                    let backupTranscript = try await environment.transcription.transcribe(
+                        audioURL: backup.audioURL,
+                        operationID: operationID
+                    )
+                    guard isActive(operationID) else {
+                        environment.discardRecording(backup.audioURL)
+                        await environment.transcription.cancel(operationID: operationID)
+                        return false
+                    }
+                    let backupProcessed = environment.processTranscript(backupTranscript)
+                    let backupNormalized = backupProcessed.final
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    if AutoSendBackupTranscript.prefersBackup(
+                        mainText: normalized,
+                        backupText: backupNormalized
+                    ) {
+                        mainFailure = nil
+                        transcript = backupTranscript
+                        processed = backupProcessed
+                        normalized = backupNormalized
+                        usedAudioURL = backup.audioURL
+                        snapshot.backupMicrophoneUsed = backup.microphoneName
+                    }
+                } catch {
+                    backupWasRead = false
                 }
                 guard isActive(operationID) else {
                     environment.discardRecording(backup.audioURL)
                     await environment.transcription.cancel(operationID: operationID)
                     return false
                 }
-                lastAudioURL = usedAudioURL
+                if let usedAudioURL {
+                    lastAudioURL = usedAudioURL
+                }
                 // Both files stay when the backup could not be read, so no audio is lost.
                 if backupWasRead {
-                    environment.discardRecording(
-                        usedAudioURL == audioURL ? backup.audioURL : audioURL
-                    )
+                    if usedAudioURL == backup.audioURL {
+                        if let mainAudioURL {
+                            environment.discardRecording(mainAudioURL)
+                        }
+                    } else {
+                        environment.discardRecording(backup.audioURL)
+                    }
                 }
             }
             if let mainFailure {
                 throw mainFailure
+            }
+            guard let usedAudioURL else {
+                throw AutoSendWorkflowError.emptyTranscript
             }
 
             evidence = AutoSendTranscriptEvidence(

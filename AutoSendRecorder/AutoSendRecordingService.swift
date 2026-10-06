@@ -137,7 +137,8 @@ final class AutoSendRecordingService: AutoSendCaptureService, @unchecked Sendabl
                 let devices = AudioInputDeviceDiscovery.inputDevices()
                 let resolution = try resolveMicrophone(devices: devices)
                 let healthMonitor = healthMonitor(for: resolution, source: source)
-                let silenceWatch = MicrophoneSilenceWatch()
+                // With the switch off there is no backup and no silence watch.
+                let silenceWatch = backupMicrophoneEnabled() ? MicrophoneSilenceWatch() : nil
                 let primaryName = BackupMicrophoneChooser.resolvedPrimary(
                     resolution.device,
                     devices: devices
@@ -154,7 +155,7 @@ final class AutoSendRecordingService: AutoSendCaptureService, @unchecked Sendabl
                     streamHandler: { [weak self, weak transcription] event in
                         guard let self, self.isCurrent(operationID) else { return }
                         if case .captured(let captured) = event,
-                           silenceWatch.observePrimary(captured.buffer) != nil {
+                           silenceWatch?.observePrimary(captured.buffer) != nil {
                             self.reportSilentMicrophone(named: primaryName, operationID: operationID)
                         }
                         if case .captured(let captured) = event,
@@ -175,12 +176,13 @@ final class AutoSendRecordingService: AutoSendCaptureService, @unchecked Sendabl
                     }
                 )
                 // The main recorder is running. The backup is chosen now and opens on its own queue.
-                if let backupDevice = BackupMicrophoneChooser.chooseBackup(
-                    primary: resolution.device,
-                    devices: devices,
-                    isEnabled: backupMicrophoneEnabled(),
-                    preferredName: AutoSendMicrophoneSelection.ankerMicrophoneName
-                ) {
+                if let silenceWatch,
+                   let backupDevice = BackupMicrophoneChooser.chooseBackup(
+                       primary: resolution.device,
+                       devices: devices,
+                       isEnabled: true,
+                       preferredName: AutoSendMicrophoneSelection.ankerMicrophoneName
+                   ) {
                     startBackup(
                         on: backupDevice,
                         mainRecordingURL: url,
@@ -262,7 +264,10 @@ final class AutoSendRecordingService: AutoSendCaptureService, @unchecked Sendabl
         discardBackup(operationID: operationID)
     }
 
-    func backupRecording(operationID: AutoSendOperationID) async -> AutoSendBackupRecording? {
+    func backupRecording(
+        operationID: AutoSendOperationID,
+        mainTextIsUnusable: Bool
+    ) async -> AutoSendBackupRecording? {
         stateLock.lock()
         guard let stopped = stoppedBackup, stopped.operationID == operationID else {
             stateLock.unlock()
@@ -270,6 +275,11 @@ final class AutoSendRecordingService: AutoSendCaptureService, @unchecked Sendabl
         }
         stoppedBackup = nil
         stateLock.unlock()
+        // A usable main text with no silence report needs no backup: delete it without waiting.
+        guard mainTextIsUnusable || stopped.primaryWasSilent else {
+            stopped.stop.discard()
+            return nil
+        }
         guard let url = stopped.stop.wait() else { return nil }
         return AutoSendBackupRecording(
             audioURL: url,

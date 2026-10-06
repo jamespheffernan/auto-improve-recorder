@@ -59,12 +59,69 @@ final class AutoSendBackupMicrophoneTests: XCTestCase {
         XCTAssertEqual(present(run.snapshot).statusMessage, "Pasted and sent.")
     }
 
-    func testHealthyMainLeavesTheBackupUnreadAndDeletesIt() async {
+    func testNormalRunDoesNotAskToWaitForTheBackup() async {
         let run = await finishRun(main: .success("all good"), backup: .success("all good too and longer"))
         XCTAssertEqual(run.deliveredText, "all good")
+        // The capture side is told the main text is usable, so it discards the backup itself.
+        XCTAssertEqual(run.unusableArguments, [false])
         XCTAssertEqual(run.transcribed, [mainURL])
-        XCTAssertEqual(run.records.discarded, [backupURL])
+        XCTAssertTrue(run.records.discarded.isEmpty)
         XCTAssertNil(run.snapshot.backupMicrophoneUsed)
+    }
+
+    func testEmptyOrFailedMainTextAsksForTheBackup() async {
+        let empty = await finishRun(main: .success(""), backup: nil)
+        XCTAssertEqual(empty.unusableArguments, [true])
+        let failed = await finishRun(main: .failure(BackupTestError.main), backup: nil)
+        XCTAssertEqual(failed.unusableArguments, [true])
+    }
+
+    func testStopFailureWithBackupTextUsesTheBackup() async {
+        let run = await finishRun(
+            main: .success("never read"),
+            backup: .success("rescued after the capture gap"),
+            stopError: BackupTestError.stop
+        )
+        XCTAssertEqual(run.phase, .ready)
+        XCTAssertEqual(run.deliveredText, "rescued after the capture gap")
+        XCTAssertEqual(run.unusableArguments, [true])
+        XCTAssertEqual(run.transcribed, [backupURL])
+        XCTAssertEqual(run.snapshot.backupMicrophoneUsed, ankerName)
+        XCTAssertEqual(run.records.archived.map(\.audioURL), [backupURL])
+        XCTAssertTrue(run.records.discarded.isEmpty)
+        XCTAssertEqual(run.lastAudioURL, backupURL)
+        XCTAssertEqual(
+            present(run.snapshot).statusMessage,
+            "Pasted and sent. Used the backup microphone (Anker PowerConf C200)."
+        )
+    }
+
+    func testStopFailureWithEmptyBackupReportsTheStopFailure() async {
+        let run = await finishRun(main: .success("never read"), backup: .success("  "), stopError: BackupTestError.stop)
+        XCTAssertEqual(run.phase, .failed("main recording failed at stop"))
+        XCTAssertEqual(run.snapshot.failureKind, .transcription)
+        XCTAssertNil(run.deliveredText)
+        XCTAssertNil(run.snapshot.backupMicrophoneUsed)
+        XCTAssertEqual(run.records.discarded, [backupURL])
+    }
+
+    func testStopFailureWithUnreadableBackupReportsTheStopFailureAndKeepsTheFile() async {
+        let run = await finishRun(
+            main: .success("never read"),
+            backup: .failure(BackupTestError.backup),
+            stopError: BackupTestError.stop
+        )
+        XCTAssertEqual(run.phase, .failed("main recording failed at stop"))
+        XCTAssertTrue(run.records.discarded.isEmpty)
+    }
+
+    func testStopFailureWithNoBackupReportsTheStopFailure() async {
+        let run = await finishRun(main: .success("never read"), backup: nil, stopError: BackupTestError.stop)
+        XCTAssertEqual(run.phase, .failed("main recording failed at stop"))
+        XCTAssertEqual(run.snapshot.failureKind, .transcription)
+        XCTAssertTrue(run.transcribed.isEmpty)
+        XCTAssertNil(run.deliveredText)
+        XCTAssertNil(run.lastAudioURL)
     }
 
     func testNoBackupBehavesAsBefore() async {
@@ -189,6 +246,7 @@ final class AutoSendBackupMicrophoneTests: XCTestCase {
         var transcribed: [URL]
         var records: BackupRunRecords
         var lastAudioURL: URL?
+        var unusableArguments: [Bool]
         var phase: AutoSendPhase { snapshot.phase }
     }
 
@@ -196,10 +254,12 @@ final class AutoSendBackupMicrophoneTests: XCTestCase {
     private func finishRun(
         main: Result<String, Error>,
         backup: Result<String, Error>?,
-        primaryWasSilent: Bool = false
+        primaryWasSilent: Bool = false,
+        stopError: Error? = nil
     ) async -> FinishedRun {
         let capture = BackupFakeCapture(
             mainURL: mainURL,
+            stopError: stopError,
             backup: backup.map { _ in
                 AutoSendBackupRecording(
                     audioURL: backupURL,
@@ -227,7 +287,8 @@ final class AutoSendBackupMicrophoneTests: XCTestCase {
             deliveredText: await delivery.deliveredText,
             transcribed: await transcript.calls,
             records: records,
-            lastAudioURL: await workflow.lastAudioURL
+            lastAudioURL: await workflow.lastAudioURL,
+            unusableArguments: await capture.unusableArguments
         )
     }
 
@@ -239,11 +300,13 @@ final class AutoSendBackupMicrophoneTests: XCTestCase {
 private enum BackupTestError: LocalizedError {
     case main
     case backup
+    case stop
 
     var errorDescription: String? {
         switch self {
         case .main: return "main transcription failed"
         case .backup: return "backup transcription failed"
+        case .stop: return "main recording failed at stop"
         }
     }
 }
@@ -280,11 +343,14 @@ private final class BackupRunRecords: @unchecked Sendable {
 
 private actor BackupFakeCapture: AutoSendCaptureService {
     let mainURL: URL
+    let stopError: Error?
     let backup: AutoSendBackupRecording?
     private(set) var operationID: AutoSendOperationID?
+    private(set) var unusableArguments: [Bool] = []
 
-    init(mainURL: URL, backup: AutoSendBackupRecording?) {
+    init(mainURL: URL, stopError: Error? = nil, backup: AutoSendBackupRecording?) {
         self.mainURL = mainURL
+        self.stopError = stopError
         self.backup = backup
     }
 
@@ -293,13 +359,20 @@ private actor BackupFakeCapture: AutoSendCaptureService {
     }
 
     func stop(operationID: AutoSendOperationID) async throws -> URL {
-        mainURL
+        if let stopError { throw stopError }
+        return mainURL
     }
 
     func cancel(operationID: AutoSendOperationID) async {}
 
-    func backupRecording(operationID: AutoSendOperationID) async -> AutoSendBackupRecording? {
-        backup
+    /// Like the real capture: the backup comes back only when it is needed.
+    func backupRecording(
+        operationID: AutoSendOperationID,
+        mainTextIsUnusable: Bool
+    ) async -> AutoSendBackupRecording? {
+        unusableArguments.append(mainTextIsUnusable)
+        guard let backup, mainTextIsUnusable || backup.primaryWasSilent else { return nil }
+        return backup
     }
 }
 
