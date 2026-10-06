@@ -61,6 +61,11 @@ let package = Package(
             path: "Tests/AutoImproveRecorderAudioPipelineTests"
         ),
         .testTarget(
+            name: "AutoImproveRecorderTranscriptionTests",
+            dependencies: ["AutoImproveRecorderCore"],
+            path: "Tests/AutoImproveRecorderTranscriptionTests"
+        ),
+        .testTarget(
             name: "AutoImproveRecorderTriggerCoreTests",
             dependencies: ["AutoImproveRecorderCore"],
             path: "Tests/AutoImproveRecorderTriggerCoreTests"

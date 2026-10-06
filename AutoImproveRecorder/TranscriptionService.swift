@@ -26,6 +26,51 @@ protocol TranscriptionService {
 }
 
 struct LiveTranscriptionService: TranscriptionService {
+    /// The engine and realtime calls this service makes. The defaults run the
+    /// live engines; tests replace them with scripted closures.
+    struct Dependencies {
+        var transcribePhonon: (URL) async throws -> String = { audioURL in
+            try await PhononTranscriber.shared.transcribe(audioURL: audioURL)
+        }
+        var transcribeParakeetCpp: (ParakeetCppVariant, URL, TranscriptionContext) async throws -> TranscriptionResult = { variant, audioURL, context in
+            let transcriber = ParakeetCppTranscriber(variant: variant)
+            return try await transcriber.transcribe(audioURL: audioURL, context: context)
+        }
+        var parakeetResidentIsAvailable: () -> Bool = {
+            ParakeetResidentTranscriber.isAvailable
+        }
+        var transcribeParakeetResident: (URL, TranscriptionContext) async throws -> TranscriptionResult = { audioURL, context in
+            try await ParakeetResidentTranscriber().transcribe(audioURL: audioURL, context: context)
+        }
+        var transcribeOpenAIAPI: (String, URL, TranscriptionContext) async throws -> TranscriptionResult = { apiKey, audioURL, context in
+            let transcriber = OpenAIAudioTranscriber(apiKey: apiKey)
+            return try await transcriber.transcribe(audioURL: audioURL, context: context)
+        }
+        var transcribeAppleLocal: (URL, TranscriptionContext) async throws -> TranscriptionResult = { audioURL, context in
+            try await AppleLocalAudioTranscriber().transcribe(audioURL: audioURL, context: context)
+        }
+        var transcribeLocalWhisper: (URL, TranscriptionContext) async throws -> TranscriptionResult = { audioURL, context in
+            try await WhisperCppTranscriber().transcribe(audioURL: audioURL, context: context)
+        }
+        var makeRealtimeTranscriber: (String, String) -> OpenAIRealtimeTranscriber = { apiKey, dictionarySnapshot in
+            OpenAIRealtimeTranscriber(apiKey: apiKey, dictionarySnapshot: dictionarySnapshot)
+        }
+        var startRealtime: (OpenAIRealtimeTranscriber) async throws -> Void = { transcriber in
+            try await transcriber.start()
+        }
+        var finishRealtime: (OpenAIRealtimeTranscriber) async throws -> TranscriptionResult = { transcriber in
+            try await transcriber.finish()
+        }
+        var realtimeDiagnostics: (OpenAIRealtimeTranscriber, String) async -> OpenAIRealtimeDiagnostics = { transcriber, summary in
+            await transcriber.diagnostics(summary: summary)
+        }
+        var cancelRealtime: (OpenAIRealtimeTranscriber) async -> Void = { transcriber in
+            await transcriber.cancel()
+        }
+    }
+
+    var dependencies = Dependencies()
+
     func prepareRealtimeIfNeeded(
         mode: TranscriptionMode,
         apiKey: String,
@@ -42,17 +87,17 @@ struct LiveTranscriptionService: TranscriptionService {
             return nil
         }
 
-        let transcriber = OpenAIRealtimeTranscriber(apiKey: apiKey, dictionarySnapshot: dictionarySnapshot)
+        let transcriber = dependencies.makeRealtimeTranscriber(apiKey, dictionarySnapshot)
         do {
-            try await transcriber.start()
+            try await dependencies.startRealtime(transcriber)
             return transcriber
         } catch {
             let summary = "OpenAI streaming unavailable; falling back to Parakeet. \(error.localizedDescription)"
-            let diagnostics = await transcriber.diagnostics(summary: summary)
+            let diagnostics = await dependencies.realtimeDiagnostics(transcriber, summary)
             await recordDiagnostics(diagnostics)
             await status("OpenAI streaming unavailable; falling back to Parakeet.")
             NSLog("OpenAI realtime transcription start failed: \(diagnostics.details)")
-            await transcriber.cancel()
+            await dependencies.cancelRealtime(transcriber)
             return nil
         }
     }
@@ -68,7 +113,7 @@ struct LiveTranscriptionService: TranscriptionService {
         switch request.mode {
         case .localPhonon2:
             await status("Transcribing with Phonon-2.")
-            let text = try await PhononTranscriber.shared.transcribe(audioURL: request.audioURL)
+            let text = try await dependencies.transcribePhonon(request.audioURL)
             await status(String(format: "Phonon-2 transcript ready in %.1fs.", Date().timeIntervalSince(startedAt)))
             return TranscriptionResult(text: text, engineName: "Phonon-2")
         case .openAIAPI:
@@ -150,11 +195,11 @@ struct LiveTranscriptionService: TranscriptionService {
     ) async throws -> TranscriptionResult {
         if let streamingTranscriber = request.streamingTranscriber {
             do {
-                let result = try await streamingTranscriber.finish()
+                let result = try await dependencies.finishRealtime(streamingTranscriber)
                 let elapsed = Date().timeIntervalSince(startedAt)
                 if shouldVerifyRealtimeTranscript(result.text) {
                     let reason = "OpenAI realtime returned a suspiciously short transcript (‘\(result.text)’); using OpenAI API transcription instead."
-                    await recordDiagnostics(await streamingTranscriber.diagnostics(summary: reason))
+                    await recordDiagnostics(await dependencies.realtimeDiagnostics(streamingTranscriber, reason))
                     NSLog(reason)
                     await status("Realtime transcript looked wrong; using OpenAI API.")
                     return try await transcribeWithOpenAIAPI(
@@ -169,7 +214,7 @@ struct LiveTranscriptionService: TranscriptionService {
                 return result
             } catch {
                 let summary = "OpenAI streaming failed; falling back to OpenAI API. \(error.localizedDescription)"
-                let diagnostics = await streamingTranscriber.diagnostics(summary: summary)
+                let diagnostics = await dependencies.realtimeDiagnostics(streamingTranscriber, summary)
                 await recordDiagnostics(diagnostics)
                 NSLog("OpenAI realtime transcription finalize failed; falling back to OpenAI API: \(diagnostics.details)")
                 await status("OpenAI streaming failed; using OpenAI API.")
@@ -202,7 +247,7 @@ struct LiveTranscriptionService: TranscriptionService {
         startedAt: Date,
         status: @escaping (String) async -> Void
     ) async throws -> TranscriptionResult {
-        guard ParakeetResidentTranscriber.isAvailable else {
+        guard dependencies.parakeetResidentIsAvailable() else {
             await status("Resident Parakeet unavailable; using Parakeet.cpp Recommended.")
             return try await transcribeWithParakeetCpp(
                 variant: .recommended06B,
@@ -213,7 +258,7 @@ struct LiveTranscriptionService: TranscriptionService {
             )
         }
         await status("Transcribing with resident Parakeet.")
-        let result = try await ParakeetResidentTranscriber().transcribe(audioURL: audioURL, context: context)
+        let result = try await dependencies.transcribeParakeetResident(audioURL, context)
         let elapsed = Date().timeIntervalSince(startedAt)
         NSLog("%@ transcription finished in %.2fs.", result.engineName, elapsed)
         await status(String(format: "Parakeet transcript ready in %.1fs.", elapsed))
@@ -261,8 +306,7 @@ struct LiveTranscriptionService: TranscriptionService {
         status: @escaping (String) async -> Void
     ) async throws -> TranscriptionResult {
         await status("Transcribing with \(variant.engineName).")
-        let transcriber = ParakeetCppTranscriber(variant: variant)
-        let result = try await transcriber.transcribe(audioURL: audioURL, context: context)
+        let result = try await dependencies.transcribeParakeetCpp(variant, audioURL, context)
         let elapsed = Date().timeIntervalSince(startedAt)
         NSLog("%@ transcription finished in %.2fs.", variant.engineName, elapsed)
         await status(String(format: "%@ transcript ready in %.1fs.", variant.engineName, elapsed))
@@ -277,8 +321,7 @@ struct LiveTranscriptionService: TranscriptionService {
         status: @escaping (String) async -> Void
     ) async throws -> TranscriptionResult {
         await status("Transcribing with OpenAI API.")
-        let transcriber = OpenAIAudioTranscriber(apiKey: apiKey)
-        let result = try await transcriber.transcribe(audioURL: audioURL, context: context)
+        let result = try await dependencies.transcribeOpenAIAPI(apiKey, audioURL, context)
         let elapsed = Date().timeIntervalSince(startedAt)
         NSLog("OpenAI API transcription finished in %.2fs.", elapsed)
         await status(String(format: "OpenAI API transcript ready in %.1fs.", elapsed))
@@ -292,7 +335,7 @@ struct LiveTranscriptionService: TranscriptionService {
         status: @escaping (String) async -> Void
     ) async throws -> TranscriptionResult {
         await status("Transcribing with Apple Speech.")
-        let result = try await AppleLocalAudioTranscriber().transcribe(audioURL: audioURL, context: context)
+        let result = try await dependencies.transcribeAppleLocal(audioURL, context)
         let elapsed = Date().timeIntervalSince(startedAt)
         NSLog("Apple Speech transcription finished in %.2fs.", elapsed)
         await status(String(format: "Apple Speech transcript ready in %.1fs.", elapsed))
@@ -306,7 +349,7 @@ struct LiveTranscriptionService: TranscriptionService {
         status: @escaping (String) async -> Void
     ) async throws -> TranscriptionResult {
         await status("Transcribing with local Whisper.")
-        let result = try await WhisperCppTranscriber().transcribe(audioURL: audioURL, context: context)
+        let result = try await dependencies.transcribeLocalWhisper(audioURL, context)
         let elapsed = Date().timeIntervalSince(startedAt)
         NSLog("whisper.cpp transcription finished in %.2fs.", elapsed)
         await status(String(format: "Local Whisper transcript ready in %.1fs.", elapsed))
