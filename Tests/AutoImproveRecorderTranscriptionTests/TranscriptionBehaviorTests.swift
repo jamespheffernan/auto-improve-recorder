@@ -215,7 +215,7 @@ final class TranscriptionBehaviorTests: XCTestCase {
             TranscriptionResult(text: "three whole words", engineName: "OpenAI Realtime test")
         )
 
-        let result = try await script.transcribe(request(.fastest, realtime: Self.makeRealtimeHandle()))
+        let result = try await script.transcribe(request(.fastest, realtimePrepared: true))
 
         XCTAssertEqual(result, TranscriptionResult(text: "three whole words", engineName: "OpenAI Realtime test"))
         XCTAssertEqual(script.calls, ["realtime finish"])
@@ -227,7 +227,7 @@ final class TranscriptionBehaviorTests: XCTestCase {
         let script = Script()
         script.realtimeFinish = .failure(ScriptedError("socket closed"))
 
-        let result = try await script.transcribe(request(.fastest, realtime: Self.makeRealtimeHandle()))
+        let result = try await script.transcribe(request(.fastest, realtimePrepared: true))
 
         XCTAssertEqual(result, Script.apiResult)
         XCTAssertEqual(script.calls, [
@@ -254,7 +254,7 @@ final class TranscriptionBehaviorTests: XCTestCase {
                 TranscriptionResult(text: shortText, engineName: "OpenAI Realtime test")
             )
 
-            let result = try await script.transcribe(request(.fastest, realtime: Self.makeRealtimeHandle()))
+            let result = try await script.transcribe(request(.fastest, realtimePrepared: true))
 
             XCTAssertEqual(result, Script.apiResult, shortText)
             XCTAssertEqual(script.calls, [
@@ -280,7 +280,7 @@ final class TranscriptionBehaviorTests: XCTestCase {
         script.realtimeFinish = .success(TranscriptionResult(text: "thank you", engineName: "OpenAI Realtime test"))
         script.api = [.failure(ScriptedError("upload failed")), .success(Script.apiResult)]
 
-        let result = try await script.transcribe(request(.fastest, realtime: Self.makeRealtimeHandle()))
+        let result = try await script.transcribe(request(.fastest, realtimePrepared: true))
 
         XCTAssertEqual(result, Script.apiResult)
         XCTAssertEqual(script.calls, [
@@ -307,7 +307,7 @@ final class TranscriptionBehaviorTests: XCTestCase {
         script.api = [.failure(ScriptedError("upload failed"))]
 
         await assertThrows("upload failed") {
-            try await script.transcribe(self.request(.fastest, realtime: Self.makeRealtimeHandle()))
+            try await script.transcribe(self.request(.fastest, realtimePrepared: true))
         }
         XCTAssertEqual(script.calls, [
             "realtime finish",
@@ -318,50 +318,49 @@ final class TranscriptionBehaviorTests: XCTestCase {
 
     // MARK: Realtime preparation
 
-    func testPrepareRealtimeDoesNothingOutsideFastest() async {
+    func testPrepareDoesNothingOutsideFastest() async {
         for mode in TranscriptionMode.allCases where mode != .fastest {
             let script = Script()
 
-            let transcriber = await script.prepare(mode: mode, apiKey: "sk-test")
+            let status = await script.prepare(mode: mode, apiKey: "sk-test")
 
-            XCTAssertNil(transcriber, "\(mode)")
+            XCTAssertNil(status, "\(mode)")
             XCTAssertEqual(script.calls, [], "\(mode)")
             XCTAssertEqual(script.statuses, [], "\(mode)")
             XCTAssertEqual(script.diagnostics, [], "\(mode)")
         }
     }
 
-    func testPrepareRealtimeWithoutKeyReportsFallbackAndCreatesNothing() async {
+    func testPrepareFastestWithoutKeyReportsFallbackAndCreatesNothing() async {
         let script = Script()
 
-        let transcriber = await script.prepare(mode: .fastest, apiKey: "  \n")
+        _ = await script.prepare(mode: .fastest, apiKey: "  \n")
 
         let reason = "Fastest mode needs an OpenAI API key. Falling back to Parakeet."
-        XCTAssertNil(transcriber)
+        XCTAssertNil(script.createdRealtime)
         XCTAssertEqual(script.calls, [])
         XCTAssertEqual(script.diagnostics, [OpenAIRealtimeDiagnostics(summary: reason, details: reason)])
         XCTAssertEqual(script.statuses, [reason])
     }
 
-    func testPrepareRealtimeStartsAndReturnsTheCreatedTranscriber() async {
+    func testPrepareFastestStartsTheCreatedTranscriberAndAttachesItToTheAudio() async {
         let script = Script()
 
-        let transcriber = await script.prepare(mode: .fastest, apiKey: "sk-test")
+        _ = await script.prepare(mode: .fastest, apiKey: "sk-test")
 
-        XCTAssertNotNil(transcriber)
-        XCTAssertTrue(transcriber === script.createdRealtime)
+        XCTAssertNotNil(script.createdRealtime)
+        XCTAssertTrue(script.attachedRealtime === script.createdRealtime)
         XCTAssertEqual(script.calls, ["realtime create key=sk-test vocabulary=Turf, Phonon", "realtime start"])
-        XCTAssertEqual(script.statuses, [])
+        XCTAssertEqual(script.statuses, ["Recording with OpenAI realtime transcription."])
         XCTAssertEqual(script.diagnostics, [])
     }
 
-    func testPrepareRealtimeStartFailureReportsFallbackAndCancels() async {
+    func testPrepareFastestStartFailureReportsFallbackAndCancels() async {
         let script = Script()
         script.realtimeStart = .failure(ScriptedError("handshake refused"))
 
-        let transcriber = await script.prepare(mode: .fastest, apiKey: "sk-test")
+        _ = await script.prepare(mode: .fastest, apiKey: "sk-test")
 
-        XCTAssertNil(transcriber)
         XCTAssertEqual(script.calls, [
             "realtime create key=sk-test vocabulary=Turf, Phonon",
             "realtime start",
@@ -387,15 +386,9 @@ final class TranscriptionBehaviorTests: XCTestCase {
         ["Live streaming unavailable; using Parakeet.cpp Recommended."] + recommendedCLIStatuses
     private static let apiStatuses = ["Transcribing with OpenAI API.", "OpenAI API transcript ready in <t>s."]
 
-    /// A real transcriber object that is never started. The service only
-    /// passes it to the scripted realtime closures.
-    private static func makeRealtimeHandle() -> OpenAIRealtimeTranscriber {
-        OpenAIRealtimeTranscriber(apiKey: "unused")
-    }
-
     private func request(
         _ mode: TranscriptionMode,
-        realtime: OpenAIRealtimeTranscriber? = nil,
+        realtimePrepared: Bool = false,
         liveSession: (any LocalLiveTranscriptionSession)? = nil
     ) -> TranscriptionServiceRequest {
         TranscriptionServiceRequest(
@@ -403,7 +396,7 @@ final class TranscriptionBehaviorTests: XCTestCase {
             mode: mode,
             apiKey: "sk-test",
             dictionarySnapshot: vocabulary,
-            streamingTranscriber: realtime,
+            realtimePrepared: realtimePrepared,
             parakeetStreamSession: liveSession
         )
     }
@@ -488,7 +481,8 @@ private struct TranscriptionServiceRequest: @unchecked Sendable {
     var mode: TranscriptionMode
     var apiKey: String
     var dictionarySnapshot: String
-    var streamingTranscriber: OpenAIRealtimeTranscriber?
+    /// True when the handle's realtime socket has started before the recording stops.
+    var realtimePrepared = false
     var parakeetStreamSession: (any LocalLiveTranscriptionSession)?
 }
 
@@ -522,6 +516,7 @@ private final class Script: @unchecked Sendable {
     private var recordedDiagnostics: [OpenAIRealtimeDiagnostics] = []
     private var apiCallCount = 0
     private(set) var createdRealtime: OpenAIRealtimeTranscriber?
+    private(set) var attachedRealtime: OpenAIRealtimeTranscriber?
 
     var calls: [String] { lock.withLock { recordedCalls } }
     var statuses: [String] { lock.withLock { recordedStatuses } }
@@ -591,11 +586,16 @@ private final class Script: @unchecked Sendable {
         dependencies.cancelRealtime = { _ in
             self.record("realtime cancel")
         }
+        dependencies.realtimeAudioConsumer = { transcriber in
+            self.lock.withLock { self.attachedRealtime = transcriber }
+            return transcriber
+        }
         return LiveTranscriptionService(dependencies: dependencies)
     }
 
     /// Runs one recording the way `AppState` does: begins the mode's handle with the live session
-    /// the request carries, gives it the request's realtime transcriber and finishes it on the file.
+    /// the request carries, prepares it when the request says the socket started, and finishes it
+    /// on the file. The calls made by the preparation are dropped; the preparation tests assert them.
     func transcribe(_ request: TranscriptionServiceRequest) async throws -> TranscriptionResult {
         var service = service
         service.dependencies.liveParakeetIsAvailable = { request.parakeetStreamSession != nil }
@@ -605,24 +605,49 @@ private final class Script: @unchecked Sendable {
                 mode: request.mode,
                 dictionarySnapshot: request.dictionarySnapshot,
                 attachedToCapture: true,
+                apiKeyAtStart: request.apiKey,
                 apiKey: { request.apiKey }
             ),
-            status: { status in self.lock.withLock { self.recordedStatuses.append(status) } },
-            recordDiagnostics: { diagnostics in self.lock.withLock { self.recordedDiagnostics.append(diagnostics) } }
+            events: record(event:)
         )
-        if let realtime = request.streamingTranscriber {
-            (handle as? RealtimeBridgeRecordingHandle)?.useRealtimeTranscriber(realtime)
+        if request.realtimePrepared {
+            _ = await handle.prepare()
+            lock.withLock { recordedCalls.removeAll() }
         }
+        _ = handle.captureWillStop()
         return try await handle.finish(audioURL: request.audioURL)
     }
 
-    func prepare(mode: TranscriptionMode, apiKey: String) async -> OpenAIRealtimeTranscriber? {
-        await service.prepareRealtimeIfNeeded(
-            mode: mode,
-            apiKey: apiKey,
-            dictionarySnapshot: "Turf, Phonon",
-            status: { status in self.lock.withLock { self.recordedStatuses.append(status) } },
-            recordDiagnostics: { diagnostics in self.lock.withLock { self.recordedDiagnostics.append(diagnostics) } }
+    /// Begins a handle in `mode` and prepares it. The status `prepare` returns is recorded with
+    /// the other statuses, because `AppState` shows it the same way.
+    func prepare(mode: TranscriptionMode, apiKey: String) async -> String? {
+        let handle = service.beginRecording(
+            RecordingTranscriptionRequest(
+                mode: mode,
+                dictionarySnapshot: "Turf, Phonon",
+                attachedToCapture: true,
+                apiKeyAtStart: apiKey,
+                apiKey: { apiKey }
+            ),
+            events: record(event:)
         )
+        let status = await handle.prepare()
+        if let status {
+            lock.withLock { recordedStatuses.append(status) }
+        }
+        return status
+    }
+
+    @Sendable private func record(event: TranscriptionEvent) async {
+        lock.withLock {
+            switch event {
+            case .status(let status):
+                recordedStatuses.append(status)
+            case .diagnostic(let diagnostic):
+                recordedDiagnostics.append(
+                    OpenAIRealtimeDiagnostics(summary: diagnostic.summary, details: diagnostic.details)
+                )
+            }
+        }
     }
 }

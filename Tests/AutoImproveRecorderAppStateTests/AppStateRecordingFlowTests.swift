@@ -333,7 +333,9 @@ final class AppStateRecordingFlowTests: XCTestCase {
         XCTAssertEqual(harness.transcription.realtimePreparationWasCancelled.values, [true])
         let request = try XCTUnwrap(harness.transcription.requests.values.first)
         XCTAssertEqual(request.mode, .fastest)
-        XCTAssertNil(request.streamingTranscriber)
+        let handle = try XCTUnwrap(harness.transcription.handles.values.first)
+        XCTAssertEqual(handle.captureWillStops.count, 1)
+        XCTAssertEqual(handle.cancels.count, 0)
         harness.assertTornDown(recorderStops: 1)
     }
 

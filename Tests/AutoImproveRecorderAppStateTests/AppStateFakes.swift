@@ -294,32 +294,24 @@ final class FakeTranscriptionService: TranscriptionService, @unchecked Sendable 
     var onBegin: (() -> Void)?
     /// Every handle the service has begun, in order.
     let handles = Recorded<FakeRecordingHandle>()
+    /// The mode of every handle whose `prepare` was called, in order.
     let realtimePreparations = Recorded<TranscriptionMode>()
-    /// `prepareRealtimeIfNeeded` waits here, then records whether its task was cancelled while it waited.
-    /// It always returns nil: `OpenAIRealtimeTranscriber` is a concrete class that opens a network session.
+    /// A handle's `prepare` waits here, then records whether the handle was cancelled or told that
+    /// capture will stop while it waited.
     var realtimeGate = Gate()
     let realtimePreparationWasCancelled = Recorded<Bool>()
-
-    func prepareRealtimeIfNeeded(
-        mode: TranscriptionMode,
-        apiKey: String,
-        dictionarySnapshot: String,
-        status: @escaping (String) async -> Void,
-        recordDiagnostics: @escaping (OpenAIRealtimeDiagnostics) async -> Void
-    ) async -> OpenAIRealtimeTranscriber? {
-        realtimePreparations.append(mode)
-        await realtimeGate.wait()
-        realtimePreparationWasCancelled.append(Task.isCancelled)
-        return nil
-    }
+    /// Runs at the beginning of every handle's `prepare`.
+    var onPrepare: (() -> Void)?
+    /// What a handle's `prepare` and `captureWillStop` return.
+    var prepareStatus: String?
+    var stopStatus: String?
 
     func beginRecording(
         _ request: RecordingTranscriptionRequest,
-        status: @escaping @Sendable (String) async -> Void,
-        recordDiagnostics: @escaping @Sendable (OpenAIRealtimeDiagnostics) async -> Void
+        events: @escaping @Sendable (TranscriptionEvent) async -> Void
     ) -> any RecordingSessionHandle {
         onBegin?()
-        let handle = FakeRecordingHandle(request: request, service: self)
+        let handle = FakeRecordingHandle(request: request, service: self, events: events)
         handles.append(handle)
         return handle
     }
@@ -332,8 +324,6 @@ struct TranscriptionServiceRequest {
     var apiKey: String
     var dictionarySnapshot: String
     var attachedToCapture: Bool
-    /// Always nil: the fake service never prepares a realtime transcriber.
-    var streamingTranscriber: OpenAIRealtimeTranscriber?
 }
 
 /// A handle that records what reaches it. `finish` records a request on the service, waits at the
@@ -345,17 +335,45 @@ final class FakeRecordingHandle: RecordingSessionHandle, @unchecked Sendable {
     let events = Recorded<String>()
     let cancels = Recorded<Void>()
     let finishedURLs = Recorded<URL>()
+    let prepares = Recorded<Void>()
+    let captureWillStops = Recorded<Void>()
+    private let failures = Recorded<AudioCaptureFailure>()
+    /// Sends an event to `AppState` the way a live handle does.
+    let send: @Sendable (TranscriptionEvent) async -> Void
 
-    init(request: RecordingTranscriptionRequest, service: FakeTranscriptionService) {
+    init(
+        request: RecordingTranscriptionRequest,
+        service: FakeTranscriptionService,
+        events: @escaping @Sendable (TranscriptionEvent) async -> Void
+    ) {
         self.request = request
         self.service = service
+        self.send = events
     }
+
+    var captureFailure: AudioCaptureFailure? { failures.values.first }
 
     func receive(_ event: AudioCaptureEvent) {
         switch event {
         case .captured: events.append("captured")
-        case .failure: events.append("failure")
+        case .failure(let failure):
+            events.append("failure")
+            failures.append(failure)
         }
+    }
+
+    func prepare() async -> String? {
+        service.onPrepare?()
+        prepares.append(())
+        service.realtimePreparations.append(request.mode)
+        await service.realtimeGate.wait()
+        service.realtimePreparationWasCancelled.append(cancels.count + captureWillStops.count > 0)
+        return service.prepareStatus
+    }
+
+    func captureWillStop() -> String? {
+        captureWillStops.append(())
+        return service.stopStatus
     }
 
     func finish(audioURL: URL) async throws -> TranscriptionResult {
@@ -365,8 +383,7 @@ final class FakeRecordingHandle: RecordingSessionHandle, @unchecked Sendable {
             mode: request.mode,
             apiKey: await request.apiKey(),
             dictionarySnapshot: request.dictionarySnapshot,
-            attachedToCapture: request.attachedToCapture,
-            streamingTranscriber: nil
+            attachedToCapture: request.attachedToCapture
         ))
         await service.gate.wait()
         return try (service.resultsByAudioFileName[audioURL.lastPathComponent] ?? service.result).get()

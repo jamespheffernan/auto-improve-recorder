@@ -446,6 +446,24 @@ final class AppStateBackupMicrophoneTests: XCTestCase {
         assertNoBackupRunning(harness)
     }
 
+    func testFastestCaptureFailureAtStopReadsTheBackupWithAHandleThatIsNotAttachedToCapture() async throws {
+        let harness = try makeHarness()
+        harness.appState.transcriptionMode = .fastest
+        setTranscripts(harness, main: "never read", backup: "words from the backup")
+        await harness.startAndWaitForRecording()
+        try XCTUnwrap(harness.recorder.streamHandler)(.failure(.sharedBufferAllocationFailed(sequence: 1)))
+
+        harness.appState.stopRecording()
+        await harness.waitForDelivery()
+
+        XCTAssertEqual(requestedFiles(harness), [backupFile])
+        XCTAssertEqual(harness.transcription.requests.values.map(\.mode), [.fastest])
+        XCTAssertEqual(harness.transcription.requests.values.map(\.attachedToCapture), [false])
+        XCTAssertEqual(harness.transcription.handles.values.map(\.prepares.count), [1, 0])
+        XCTAssertEqual(harness.delivery.requests.values.map(\.text), ["words from the backup"])
+        assertNoBackupRunning(harness)
+    }
+
     func testCaptureFailureAtStopContinuesWithBackupText() async throws {
         let harness = try makeHarness()
         setTranscripts(harness, main: "never read", backup: "words from the backup")

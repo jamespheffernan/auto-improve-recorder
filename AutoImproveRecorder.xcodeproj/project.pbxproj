@@ -87,6 +87,7 @@
 		AIRRECTRANSCRIBER00001 /* RecordingTranscriber.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRRECTRANSCRIBER00000 /* RecordingTranscriber.swift */; };
 		AIRTRANSCATALOG0000001 /* AIRTranscriberCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRTRANSCATALOG0000000 /* AIRTranscriberCatalog.swift */; };
 		AIRREALTIMESINK0000001 /* AIRRealtimeAudioSink.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRREALTIMESINK0000000 /* AIRRealtimeAudioSink.swift */; };
+		AIRREALTIMEADAPTER0001 /* AIRRealtimeRecordingAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRREALTIMEADAPTER0000 /* AIRRealtimeRecordingAdapter.swift */; };
 		AIRRECADAPTERS00000001 /* AIRRecordingAdapters.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRRECADAPTERS00000000 /* AIRRecordingAdapters.swift */; };
 		AIRLOCALRECADAPTERS001 /* LocalRecordingAdapters.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRLOCALRECADAPTERS000 /* LocalRecordingAdapters.swift */; };
 		AIRLOCALTXPROCESSES001 /* LocalTranscriptionProcesses.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRLOCALTXPROCESSES000 /* LocalTranscriptionProcesses.swift */; };
@@ -218,6 +219,7 @@
 		AIRRECTRANSCRIBER00000 /* RecordingTranscriber.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingTranscriber.swift; sourceTree = "<group>"; };
 		AIRTRANSCATALOG0000000 /* AIRTranscriberCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRTranscriberCatalog.swift; sourceTree = "<group>"; };
 		AIRREALTIMESINK0000000 /* AIRRealtimeAudioSink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRRealtimeAudioSink.swift; sourceTree = "<group>"; };
+		AIRREALTIMEADAPTER0000 /* AIRRealtimeRecordingAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRRealtimeRecordingAdapter.swift; sourceTree = "<group>"; };
 		AIRRECADAPTERS00000000 /* AIRRecordingAdapters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRRecordingAdapters.swift; sourceTree = "<group>"; };
 		AIRLOCALRECADAPTERS000 /* LocalRecordingAdapters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalRecordingAdapters.swift; sourceTree = "<group>"; };
 		AIRLOCALTXPROCESSES000 /* LocalTranscriptionProcesses.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalTranscriptionProcesses.swift; sourceTree = "<group>"; };
@@ -352,6 +354,7 @@
 				AIRRECTRANSCRIBER00000 /* RecordingTranscriber.swift */,
 				AIRTRANSCATALOG0000000 /* AIRTranscriberCatalog.swift */,
 				AIRREALTIMESINK0000000 /* AIRRealtimeAudioSink.swift */,
+				AIRREALTIMEADAPTER0000 /* AIRRealtimeRecordingAdapter.swift */,
 				AIRRECADAPTERS00000000 /* AIRRecordingAdapters.swift */,
 				AIRLOCALRECADAPTERS000 /* LocalRecordingAdapters.swift */,
 				AIRLOCALTXPROCESSES000 /* LocalTranscriptionProcesses.swift */,
@@ -618,6 +621,7 @@
 				AIRRECTRANSCRIBER00001 /* RecordingTranscriber.swift in Sources */,
 				AIRTRANSCATALOG0000001 /* AIRTranscriberCatalog.swift in Sources */,
 				AIRREALTIMESINK0000001 /* AIRRealtimeAudioSink.swift in Sources */,
+				AIRREALTIMEADAPTER0001 /* AIRRealtimeRecordingAdapter.swift in Sources */,
 				AIRRECADAPTERS00000001 /* AIRRecordingAdapters.swift in Sources */,
 				AIRLOCALRECADAPTERS001 /* LocalRecordingAdapters.swift in Sources */,
 				AIRLOCALTXPROCESSES001 /* LocalTranscriptionProcesses.swift in Sources */,

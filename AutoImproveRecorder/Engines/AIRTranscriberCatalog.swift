@@ -9,6 +9,9 @@ struct RecordingTranscriptionRequest {
     /// microphone's. That handle gets no capture events, no live session and
     /// no realtime transcriber.
     var attachedToCapture: Bool
+    /// The key when the handle is begun. `fastest` holds audio for the
+    /// realtime socket only when it is not blank.
+    var apiKeyAtStart: String
     /// Read once when the handle finishes, before any transcription work.
     var apiKey: @Sendable () async -> String
 }
@@ -64,6 +67,8 @@ struct AIRTranscriberCatalog: @unchecked Sendable {
         var cancelRealtime: (OpenAIRealtimeTranscriber) async -> Void = { transcriber in
             await transcriber.cancel()
         }
+        /// What the recording's audio sink feeds once the transcriber has started.
+        var realtimeAudioConsumer: (OpenAIRealtimeTranscriber) -> any RealtimeAudioSinkConsumer = { $0 }
     }
 
     typealias Status = @Sendable (String) async -> Void
@@ -94,9 +99,17 @@ struct AIRTranscriberCatalog: @unchecked Sendable {
         }
     }
 
-    /// The configured transcriber for the request's mode. Nil for `fastest`,
-    /// which `LiveTranscriptionService` still runs itself.
-    func transcriber(for request: RecordingTranscriptionRequest) -> (any RecordingTranscriber)? {
+    /// The status shown when a recording starts, or nil for none. `fastest`
+    /// without a key records for the recommended one-shot CLI.
+    static func recordingStatus(for mode: TranscriptionMode, apiKeyAtStart: String) -> String? {
+        guard mode == .fastest else { return nil }
+        return apiKeyAtStart.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "Recording for Parakeet fallback."
+            : "Recording. Preparing OpenAI realtime transcription."
+    }
+
+    /// The configured transcriber for the request's mode.
+    func transcriber(for request: RecordingTranscriptionRequest) -> any RecordingTranscriber {
         let dependencies = dependencies
         let context = TranscriptionContext(dictionarySnapshot: request.dictionarySnapshot)
 
@@ -227,7 +240,7 @@ struct AIRTranscriberCatalog: @unchecked Sendable {
             }
 
         case .fastest:
-            return nil
+            return AIRRealtimeTranscriber(catalog: self, request: request)
         }
     }
 
@@ -329,8 +342,8 @@ struct AIRModeTranscriber: RecordingTranscriber, @unchecked Sendable {
     }
 }
 
-/// The handle for one AIR recording. The lock guards only the cancelled flag;
-/// the engine handle and the finish steps run with the lock released.
+/// The handle for one AIR recording. The lock guards only the cancelled flag
+/// and the first capture failure; the engine handle and the finish steps run with the lock released.
 final class AIRModeRecordingHandle: RecordingSessionHandle, @unchecked Sendable {
     private let engine: any RecordingSessionHandle
     private let apiKey: @Sendable () async -> String
@@ -338,6 +351,7 @@ final class AIRModeRecordingHandle: RecordingSessionHandle, @unchecked Sendable 
     private let status: AIRTranscriberCatalog.Status
     private let lock = NSLock()
     private var cancelled = false
+    private var firstCaptureFailure: AudioCaptureFailure?
 
     init(
         engine: any RecordingSessionHandle,
@@ -357,8 +371,20 @@ final class AIRModeRecordingHandle: RecordingSessionHandle, @unchecked Sendable 
         return cancelled
     }
 
+    var captureFailure: AudioCaptureFailure? {
+        lock.lock()
+        defer { lock.unlock() }
+        return firstCaptureFailure
+    }
+
     func receive(_ event: AudioCaptureEvent) {
-        guard !isCancelled else { return }
+        lock.lock()
+        let wasCancelled = cancelled
+        if !wasCancelled, firstCaptureFailure == nil, case .failure(let failure) = event {
+            firstCaptureFailure = failure
+        }
+        lock.unlock()
+        guard !wasCancelled else { return }
         engine.receive(event)
     }
 

@@ -128,13 +128,13 @@ final class AppState: ObservableObject {
         self?.recordingTriggerBehavior ?? .holdToTalk
     }
     private var activeSpaceLatchRegistrationFailed = false
-    private let realtimeAudioSink = OpenAIRealtimeAudioSink()
-    private var activeStreamingTranscriber: OpenAIRealtimeTranscriber?
     private var activeRecordingHandle: (any RecordingSessionHandle)?
+    /// Raised each time a handle is cancelled. Statuses and diagnostics from handles begun before
+    /// that are dropped.
+    private var recordingEventGeneration = 0
     /// The transcription mode read when the session's recording started. Stop, transcription,
     /// the archive record and a microphone restart use it; the setting is not read again.
     private var sessionTranscriptionMode: TranscriptionMode?
-    private var activeRealtimeStartupTask: Task<Void, Never>?
     private var activeRecordingID: UUID?
     private var activeProcessingRecordingID: UUID?
     private var activeArchiveDraftState = ActiveTranscriptArchiveDraftState()
@@ -586,7 +586,7 @@ final class AppState: ObservableObject {
         saveSettings(reason: .general)
         saveCredentials()
         cancelAllRecordingTriggerTimers()
-        cancelRealtimeStartupTask()
+        cancelRecordingHandle()
         clearActiveRecordingIdentity()
         discardActiveArchiveDraftIfNeeded()
         discardPreparedRecordingDraft()
@@ -820,19 +820,16 @@ final class AppState: ObservableObject {
     func stopRecording(shouldTranscribe: Bool = true) {
         guard case .recording = phase else { return }
         unregisterActiveRecordingHotKeys()
-        cancelRealtimeStartupTask()
         let stoppedRecordingID = activeRecordingID
-        let streamingTranscriber = activeStreamingTranscriber
-        activeStreamingTranscriber = nil
         let recordingHandle = activeRecordingHandle
         activeRecordingHandle = nil
+        let handleStopStatus = recordingHandle?.captureWillStop()
         guard let audioURL = environment.recording.stopRecording() else {
             let backup = endBackupMicrophone()
             activeRecordingID = nil
             microphoneRecovery.recordingEnded()
             endMicrophoneUseLock()
-            realtimeAudioSink.clear()
-            cancelLiveTranscription(streamingTranscriber: streamingTranscriber, recordingHandle: recordingHandle)
+            cancelLiveTranscription(recordingHandle: recordingHandle)
             let message = "Recording stopped before an audio file was created."
             guard shouldTranscribe, let backup else {
                 backup?.stop.discard()
@@ -849,13 +846,12 @@ final class AppState: ObservableObject {
         }
         let backup = endBackupMicrophone()
         endMicrophoneUseLock()
-        let captureFailure = realtimeAudioSink.captureFailureSnapshot()
-        realtimeAudioSink.clear()
+        let captureFailure = recordingHandle?.captureFailure
         activeRecordingID = nil
 
         guard shouldTranscribe else {
             backup?.stop.discard()
-            cancelLiveTranscription(streamingTranscriber: streamingTranscriber, recordingHandle: recordingHandle)
+            cancelLiveTranscription(recordingHandle: recordingHandle)
             try? FileManager.default.removeItem(at: audioURL)
             discardActiveArchiveDraftIfNeeded()
             microphoneRecovery.recordingEnded()
@@ -872,7 +868,7 @@ final class AppState: ObservableObject {
         }
 
         if let captureFailure {
-            cancelLiveTranscription(streamingTranscriber: streamingTranscriber, recordingHandle: recordingHandle)
+            cancelLiveTranscription(recordingHandle: recordingHandle)
             let message = captureFailure.localizedDescription
             let reportFailure: @MainActor () -> Void = { [weak self] in
                 guard let self else { return }
@@ -899,13 +895,12 @@ final class AppState: ObservableObject {
         activeProcessingRecordingID = stoppedRecordingID
         phase = .transcribing
         processingVisualState = .transcribing
-        statusMessage = transcriptionStatusMessage(streamingTranscriber: streamingTranscriber)
+        statusMessage = handleStopStatus ?? AIRTranscriberCatalog.stopStatus(for: recordingMode)
         showProcessingSignal?(.transcribing)
         handleRecordingTriggerEvent(.processingBegan(recordingID: stoppedRecordingID, at: Date()))
         Task {
             await processRecording(
                 audioURL: audioURL,
-                streamingTranscriber: streamingTranscriber,
                 recordingHandle: recordingHandle,
                 backup: backup
             )
@@ -939,7 +934,6 @@ final class AppState: ObservableObject {
             do {
                 result = try await transcribe(
                     audioURL: backupURL,
-                    streamingTranscriber: nil,
                     recordingHandle: nil,
                     dictionarySnapshot: session.transcriptionVocabulary
                 )
@@ -968,7 +962,6 @@ final class AppState: ObservableObject {
         }
 
         unregisterActiveRecordingHotKeys()
-        cancelRealtimeStartupTask()
         clearActiveRecordingIdentity()
         isStartingRecording = false
         let audioURL = stopRecorderAndReleaseMicrophone()
@@ -979,15 +972,9 @@ final class AppState: ObservableObject {
     private func cancelActiveRecording() {
         guard case .recording = phase else { return }
         unregisterActiveRecordingHotKeys()
-        cancelRealtimeStartupTask()
         clearActiveRecordingIdentity()
-        let streamingTranscriber = activeStreamingTranscriber
-        activeStreamingTranscriber = nil
         cancelRecordingHandle()
         let audioURL = stopRecorderAndReleaseMicrophone()
-        if let streamingTranscriber {
-            Task { await streamingTranscriber.cancel() }
-        }
         finishCancelledRecording(removing: audioURL)
     }
 
@@ -1013,11 +1000,6 @@ final class AppState: ObservableObject {
         unregisterWalkieTalkieLatchHotKey?()
     }
 
-    private func cancelRealtimeStartupTask() {
-        activeRealtimeStartupTask?.cancel()
-        activeRealtimeStartupTask = nil
-    }
-
     /// Forgets the start and the recording in flight.
     private func clearActiveRecordingIdentity() {
         activeStartID = nil
@@ -1031,7 +1013,6 @@ final class AppState: ObservableObject {
         let audioURL = environment.recording.stopRecording()
         discardBackupMicrophone()
         endMicrophoneUseLock()
-        realtimeAudioSink.clear()
         return audioURL
     }
 
@@ -1057,17 +1038,13 @@ final class AppState: ObservableObject {
     }
 
     private func cancelRecordingHandle() {
+        recordingEventGeneration += 1
         activeRecordingHandle?.cancel()
         activeRecordingHandle = nil
     }
 
-    private func cancelLiveTranscription(
-        streamingTranscriber: OpenAIRealtimeTranscriber?,
-        recordingHandle: (any RecordingSessionHandle)?
-    ) {
-        if let streamingTranscriber {
-            Task { await streamingTranscriber.cancel() }
-        }
+    private func cancelLiveTranscription(recordingHandle: (any RecordingSessionHandle)?) {
+        recordingEventGeneration += 1
         recordingHandle?.cancel()
     }
 
@@ -1160,10 +1137,7 @@ final class AppState: ObservableObject {
             let transcriptionVocabulary = dictionaryStore.transcriptionVocabularyString
             activeArchiveDraft = archiveDraft
             let recordingMode = transcriptionMode
-            let shouldPrepareRealtime = recordingMode == .fastest
-            let shouldBufferRealtimeAudio = shouldPrepareRealtime &&
-                !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            realtimeAudioSink.reset(bufferPendingAudio: shouldBufferRealtimeAudio)
+            let recordingStatus = AIRTranscriberCatalog.recordingStatus(for: recordingMode, apiKeyAtStart: apiKey)
             let recordingHandle = beginRecordingHandle(
                 mode: recordingMode,
                 dictionarySnapshot: transcriptionVocabulary,
@@ -1175,20 +1149,16 @@ final class AppState: ObservableObject {
             silentMicrophoneWarningShown = false
             usedBackupRecording = nil
             let audioURL: URL
-            let audioSink = realtimeAudioSink
             do {
                 let microphoneResolution = try resolveMicrophoneForRecording()
                 audioURL = try startAudioRecorder(
                     at: archiveDraft.audioURL,
                     initialResolution: microphoneResolution,
-                    audioSink: audioSink,
                     recordingHandle: recordingHandle,
                     requestedAt: requestedAt
                 )
             } catch {
-                realtimeAudioSink.clear()
-                recordingHandle.cancel()
-                activeRecordingHandle = nil
+                cancelRecordingHandle()
                 throw error
             }
             guard activeStartID == startID, case .starting = phase else { return }
@@ -1205,13 +1175,7 @@ final class AppState: ObservableObject {
             )
             sessionTranscriptionMode = recordingMode
             showRawTranscript = false
-            if shouldPrepareRealtime {
-                statusMessage = shouldBufferRealtimeAudio
-                    ? "Recording. Preparing OpenAI realtime transcription."
-                    : "Recording for Parakeet fallback."
-            } else {
-                statusMessage = nil
-            }
+            statusMessage = recordingStatus
             phase = .recording(audioURL)
             processingVisualState = .recording
             let beganAt = Date()
@@ -1236,16 +1200,7 @@ final class AppState: ObservableObject {
             startBackupMicrophoneIfEligible(mainRecordingURL: audioURL)
             prewarmEnginesForActiveModes()
 
-            if shouldPrepareRealtime {
-                activeRealtimeStartupTask = Task { [weak self] in
-                    await self?.prepareRealtimeTranscriberForActiveRecording(
-                        recordingID: recordingID,
-                        mode: recordingMode,
-                        dictionarySnapshot: transcriptionVocabulary,
-                        requestedAt: requestedAt
-                    )
-                }
-            }
+            prepareRecordingHandle(recordingHandle)
         } catch {
             recordDiagnosticEvent(
                 subsystem: .microphone,
@@ -1257,8 +1212,6 @@ final class AppState: ObservableObject {
             discardActiveArchiveDraftIfNeeded()
             activeRecordingID = nil
             microphoneRecovery.recordingEnded()
-            activeRealtimeStartupTask = nil
-            realtimeAudioSink.clear()
             cancelRecordingHandle()
             handleRecordingTriggerEvent(.startFailed(startID: startID, error: error.localizedDescription, at: Date()))
             failWithMessage(error.localizedDescription)
@@ -1284,7 +1237,6 @@ final class AppState: ObservableObject {
     private func startAudioRecorder(
         at audioURL: URL,
         initialResolution: MicrophoneResolution,
-        audioSink: OpenAIRealtimeAudioSink,
         recordingHandle: any RecordingSessionHandle,
         requestedAt: Date
     ) throws -> URL {
@@ -1293,7 +1245,6 @@ final class AppState: ObservableObject {
             return try startAudioRecorderOnce(
                 at: audioURL,
                 resolution: initialResolution,
-                audioSink: audioSink,
                 recordingHandle: recordingHandle,
                 requestedAt: requestedAt
             )
@@ -1316,7 +1267,6 @@ final class AppState: ObservableObject {
             return try startAudioRecorderOnce(
                 at: audioURL,
                 resolution: fallbackResolution,
-                audioSink: audioSink,
                 recordingHandle: recordingHandle,
                 requestedAt: requestedAt
             )
@@ -1326,7 +1276,6 @@ final class AppState: ObservableObject {
     private func startAudioRecorderOnce(
         at audioURL: URL,
         resolution: MicrophoneResolution,
-        audioSink: OpenAIRealtimeAudioSink,
         recordingHandle: any RecordingSessionHandle,
         requestedAt: Date
     ) throws -> URL {
@@ -1356,15 +1305,12 @@ final class AppState: ObservableObject {
                                 event,
                                 resolution: resolution,
                                 audioURL: audioURL,
-                                audioSink: audioSink,
                                 requestedAt: requestedAt
                             )
                         }
                     }
-                    audioSink.appendAudioBuffer(captured)
                     recordingHandle.receive(captureEvent)
                 case .failure(let failure):
-                    audioSink.recordCaptureFailure(failure)
                     recordingHandle.receive(captureEvent)
                     Task { @MainActor [weak self] in
                         guard let self, case .recording = self.phase else { return }
@@ -1450,23 +1396,28 @@ final class AppState: ObservableObject {
         dictionarySnapshot: String,
         attachedToCapture: Bool
     ) -> any RecordingSessionHandle {
-        environment.transcription.beginRecording(
+        let generation = recordingEventGeneration
+        return environment.transcription.beginRecording(
             RecordingTranscriptionRequest(
                 mode: mode,
                 dictionarySnapshot: dictionarySnapshot,
                 attachedToCapture: attachedToCapture,
+                apiKeyAtStart: apiKey,
                 apiKey: { [weak self] in
                     await MainActor.run { self?.apiKey ?? "" }
                 }
             ),
-            status: { [weak self] message in
+            events: { [weak self] event in
                 await MainActor.run {
-                    self?.statusMessage = message
-                }
-            },
-            recordDiagnostics: { [weak self] diagnostics in
-                await MainActor.run {
-                    self?.recordOpenAIRealtimeDiagnostics(diagnostics)
+                    guard let self, self.recordingEventGeneration == generation else { return }
+                    switch event {
+                    case .status(let message):
+                        self.statusMessage = message
+                    case .diagnostic(let diagnostic):
+                        self.recordOpenAIRealtimeDiagnostics(
+                            OpenAIRealtimeDiagnostics(summary: diagnostic.summary, details: diagnostic.details)
+                        )
+                    }
                 }
             }
         )
@@ -1483,7 +1434,6 @@ final class AppState: ObservableObject {
         _ event: MicrophoneHealthEvent,
         resolution: MicrophoneResolution,
         audioURL: URL,
-        audioSink: OpenAIRealtimeAudioSink,
         requestedAt: Date
     ) {
         // A recording with a backup keeps its main microphone; the backup holds the audio.
@@ -1504,7 +1454,6 @@ final class AppState: ObservableObject {
             event: event,
             quarantinedUntil: quarantinedUntil,
             audioURL: audioURL,
-            audioSink: audioSink,
             requestedAt: requestedAt
         )
     }
@@ -1514,7 +1463,6 @@ final class AppState: ObservableObject {
         event: MicrophoneHealthEvent,
         quarantinedUntil: Date,
         audioURL: URL,
-        audioSink: OpenAIRealtimeAudioSink,
         requestedAt: Date
     ) {
         defer { microphoneRecovery.recoveryFinished() }
@@ -1532,24 +1480,11 @@ final class AppState: ObservableObject {
                 return
             }
 
-            cancelRealtimeStartupTask()
-            if let streamingTranscriber = activeStreamingTranscriber {
-                activeStreamingTranscriber = nil
-                Task { await streamingTranscriber.cancel() }
-            }
-
-            _ = environment.recording.stopRecording()
-            realtimeAudioSink.clear()
-
-            let recordingMode = self.recordingMode
-            let shouldPrepareRealtime = recordingMode == .fastest
-            let shouldBufferRealtimeAudio = shouldPrepareRealtime &&
-                !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            audioSink.reset(bufferPendingAudio: shouldBufferRealtimeAudio)
-
             // The old handle only heard digital silence; start a new one in
             // the same mode alongside the fallback microphone.
-            activeRecordingHandle?.cancel()
+            cancelRecordingHandle()
+            _ = environment.recording.stopRecording()
+
             let recordingHandle = beginRecordingHandle(
                 mode: recordingMode,
                 dictionarySnapshot: session.transcriptionVocabulary,
@@ -1562,7 +1497,6 @@ final class AppState: ObservableObject {
             _ = try startAudioRecorderOnce(
                 at: audioURL,
                 resolution: fallbackResolution,
-                audioSink: audioSink,
                 recordingHandle: recordingHandle,
                 requestedAt: requestedAt
             )
@@ -1570,17 +1504,7 @@ final class AppState: ObservableObject {
                 "Recovered from exact-silent microphone id=\(resolution.device.id, privacy: .public) fallbackID=\(fallbackResolution.device.id, privacy: .public) fallbackName=\(fallbackResolution.device.name, privacy: .public)"
             )
 
-            if shouldPrepareRealtime, let recordingID = activeRecordingID {
-                let dictionarySnapshot = session.transcriptionVocabulary
-                activeRealtimeStartupTask = Task { [weak self] in
-                    await self?.prepareRealtimeTranscriberForActiveRecording(
-                        recordingID: recordingID,
-                        mode: recordingMode,
-                        dictionarySnapshot: dictionarySnapshot,
-                        requestedAt: requestedAt
-                    )
-                }
-            }
+            prepareRecordingHandle(recordingHandle)
         } catch {
             failWithMessage(error.localizedDescription)
         }
@@ -1608,61 +1532,22 @@ final class AppState: ObservableObject {
         )
     }
 
-    private func prepareRealtimeTranscriberForActiveRecording(
-        recordingID: UUID,
-        mode selectedMode: TranscriptionMode,
-        dictionarySnapshot: String,
-        requestedAt: Date
-    ) async {
-        let selectedAPIKey = apiKey
-        let streamingTranscriber = await environment.transcription.prepareRealtimeIfNeeded(
-            mode: selectedMode,
-            apiKey: selectedAPIKey,
-            dictionarySnapshot: dictionarySnapshot,
-            status: { [weak self] message in
-                await MainActor.run {
-                    self?.statusMessage = message
-                }
-            },
-            recordDiagnostics: { [weak self] diagnostics in
-                await MainActor.run {
-                    self?.recordOpenAIRealtimeDiagnostics(diagnostics)
-                }
+    /// Lets the handle start the work that needs capture to be running. The status it returns is
+    /// shown only while the same handle is still recording.
+    private func prepareRecordingHandle(_ recordingHandle: any RecordingSessionHandle) {
+        Task { [weak self] in
+            guard let status = await recordingHandle.prepare(),
+                  let self,
+                  self.activeRecordingHandle === recordingHandle,
+                  case .recording = self.phase else {
+                return
             }
-        )
-
-        guard !Task.isCancelled,
-              activeRecordingID == recordingID,
-              case .recording = phase else {
-            if let streamingTranscriber {
-                await streamingTranscriber.cancel()
-            }
-            return
+            self.statusMessage = status
         }
-
-        activeRealtimeStartupTask = nil
-        guard let streamingTranscriber else {
-            realtimeAudioSink.discardPendingAudio()
-            return
-        }
-
-        activeStreamingTranscriber = streamingTranscriber
-        let replayedBufferCount = realtimeAudioSink.setTranscriber(streamingTranscriber)
-        if let captureFailure = realtimeAudioSink.captureFailureSnapshot() {
-            statusMessage = "Recording degraded. Stop and try again. \(captureFailure.localizedDescription)"
-        } else {
-            statusMessage = "Recording with OpenAI realtime transcription."
-        }
-        NSLog(
-            "Recording startup: OpenAI realtime ready after %.3fs; replayed %d buffered audio buffers.",
-            Date().timeIntervalSince(requestedAt),
-            replayedBufferCount
-        )
     }
 
     private func processRecording(
         audioURL: URL,
-        streamingTranscriber: OpenAIRealtimeTranscriber?,
         recordingHandle: (any RecordingSessionHandle)? = nil,
         backup: StoppedBackupMicrophone? = nil
     ) async {
@@ -1670,7 +1555,6 @@ final class AppState: ObservableObject {
             let dictionarySnapshot = session.dictionarySnapshot
             let result = try await transcribeChoosingBackup(
                 audioURL: audioURL,
-                streamingTranscriber: streamingTranscriber,
                 recordingHandle: recordingHandle,
                 backup: backup
             )
@@ -1736,7 +1620,6 @@ final class AppState: ObservableObject {
     /// words. A backup that is not needed is deleted without waiting for its file.
     private func transcribeChoosingBackup(
         audioURL: URL,
-        streamingTranscriber: OpenAIRealtimeTranscriber?,
         recordingHandle: (any RecordingSessionHandle)?,
         backup: StoppedBackupMicrophone?
     ) async throws -> TranscriptionResult {
@@ -1745,7 +1628,6 @@ final class AppState: ObservableObject {
         do {
             main = .success(try await transcribe(
                 audioURL: audioURL,
-                streamingTranscriber: streamingTranscriber,
                 recordingHandle: recordingHandle,
                 dictionarySnapshot: vocabulary
             ))
@@ -1764,7 +1646,6 @@ final class AppState: ObservableObject {
             // No streaming transcriber and no live session: the backup is read from its file.
             let backupResult = try await transcribe(
                 audioURL: backupURL,
-                streamingTranscriber: nil,
                 recordingHandle: nil,
                 dictionarySnapshot: vocabulary
             )
@@ -1811,7 +1692,6 @@ final class AppState: ObservableObject {
 
     private func transcribe(
         audioURL: URL,
-        streamingTranscriber: OpenAIRealtimeTranscriber?,
         recordingHandle: (any RecordingSessionHandle)?,
         dictionarySnapshot: String
     ) async throws -> TranscriptionResult {
@@ -1822,9 +1702,6 @@ final class AppState: ObservableObject {
             dictionarySnapshot: dictionarySnapshot,
             attachedToCapture: false
         )
-        if let streamingTranscriber {
-            (handle as? RealtimeBridgeRecordingHandle)?.useRealtimeTranscriber(streamingTranscriber)
-        }
         return try await handle.finish(audioURL: audioURL)
     }
 
@@ -1975,14 +1852,6 @@ final class AppState: ObservableObject {
             directoryURL: directoryURL,
             audioURL: audioURL
         )
-    }
-
-    private func transcriptionStatusMessage(streamingTranscriber: OpenAIRealtimeTranscriber?) -> String {
-        if streamingTranscriber != nil {
-            return "Finalizing OpenAI streaming transcript."
-        }
-
-        return AIRTranscriberCatalog.stopStatus(for: recordingMode)
     }
 
     private func finishProcessing() async {

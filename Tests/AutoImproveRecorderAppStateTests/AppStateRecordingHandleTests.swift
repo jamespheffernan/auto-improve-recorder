@@ -195,4 +195,113 @@ final class AppStateRecordingHandleTests: XCTestCase {
         XCTAssertEqual(harness.appState.phase, .failed)
         XCTAssertEqual(harness.appState.statusMessage, failure.localizedDescription)
     }
+
+    // MARK: Fastest
+
+    func testFastestBeginsOneHandlePreparesItAfterTheRecorderStartsAndFinishesIt() async throws {
+        let harness = try makeHarness { $0.transcriptionMode = .fastest }
+        let recorderWasRunningAtPrepare = Recorded<Bool>()
+        harness.transcription.onPrepare = { recorderWasRunningAtPrepare.append(harness.recorder.isRecording) }
+        harness.transcription.prepareStatus = "Recording with OpenAI realtime transcription."
+        harness.transcription.stopStatus = "Finalizing OpenAI streaming transcript."
+
+        await harness.startAndWaitForRecording()
+        await harness.waitUntil("the prepare status to be shown") {
+            harness.appState.statusMessage == "Recording with OpenAI realtime transcription."
+        }
+        harness.appState.stopRecording()
+        XCTAssertEqual(harness.appState.statusMessage, "Finalizing OpenAI streaming transcript.")
+        await harness.waitForDelivery()
+
+        let handle = try onlyHandle(harness)
+        XCTAssertEqual(recorderWasRunningAtPrepare.values, [true])
+        XCTAssertEqual(handle.prepares.count, 1)
+        XCTAssertEqual(handle.captureWillStops.count, 1)
+        XCTAssertEqual(handle.finishedURLs.count, 1)
+        XCTAssertEqual(handle.cancels.count, 0)
+    }
+
+    func testStatusesFromACancelledFastestHandleAreNotShown() async throws {
+        let harness = try makeHarness { $0.transcriptionMode = .fastest }
+        harness.transcription.realtimeGate = Gate(open: false)
+        harness.transcription.prepareStatus = "Recording with OpenAI realtime transcription."
+        await harness.startAndWaitForRecording()
+        await harness.waitUntil("prepare to begin") { harness.transcription.realtimePreparations.count == 1 }
+
+        harness.appState.cancelRecording()
+        harness.transcription.realtimeGate.open()
+        await harness.waitUntil("prepare to return") { harness.transcription.realtimePreparationWasCancelled.count == 1 }
+        let handle = try onlyHandle(harness)
+        await handle.send(.status("late status"))
+        await handle.send(.diagnostic(TranscriptionDiagnostic(summary: "late summary", details: "late details")))
+        await Task.yield()
+
+        XCTAssertEqual(handle.cancels.count, 1)
+        XCTAssertEqual(harness.appState.statusMessage, "Recording cancelled.")
+        XCTAssertNil(harness.appState.lastOpenAIRealtimeDiagnostics)
+    }
+
+    func testDiagnosticFromTheRecordingHandleIsRecorded() async throws {
+        let harness = try makeHarness { $0.transcriptionMode = .fastest }
+        await harness.startAndWaitForRecording()
+
+        await try onlyHandle(harness).send(.diagnostic(TranscriptionDiagnostic(summary: "summary", details: "details")))
+
+        XCTAssertEqual(
+            harness.appState.lastOpenAIRealtimeDiagnostics,
+            OpenAIRealtimeDiagnostics(summary: "summary", details: "details")
+        )
+    }
+
+    func testFastestMicrophoneRestartReplacesTheHandleAndPreparesTheNewOne() async throws {
+        let preferred = AudioInputDevice(
+            id: "mic-preferred", name: "Preferred Mic", coreAudioDeviceID: nil, transportType: nil,
+            isConnected: true, isInputCapable: true, isSystemDefault: false
+        )
+        let builtIn = AudioInputDevice(
+            id: "mic-builtin", name: "Built-in Mic", coreAudioDeviceID: nil, transportType: nil,
+            isConnected: true, isInputCapable: true, isSystemDefault: true
+        )
+        let harness = try makeHarness(devices: [preferred, builtIn], settings: {
+            $0.preferredMicrophoneID = "mic-preferred"
+            $0.transcriptionMode = .fastest
+        })
+        await harness.startAndWaitForRecording()
+
+        let silence = try capturedBuffer()
+        await harness.waitUntil("the recorder to restart on the fallback microphone") {
+            guard harness.recorder.startedMicrophoneIDs.count < 2 else { return true }
+            harness.recorder.streamHandler?(.captured(silence))
+            return false
+        }
+        await harness.waitUntil("both handles to be prepared") { harness.transcription.realtimePreparations.count == 2 }
+
+        let handles = harness.transcription.handles.values
+        XCTAssertEqual(handles.count, 2)
+        XCTAssertEqual(handles[0].cancels.count, 1)
+        XCTAssertEqual(handles[1].request.mode, .fastest)
+        XCTAssertEqual(handles[1].prepares.count, 1)
+        XCTAssertEqual(handles[1].cancels.count, 0)
+        harness.appState.stopRecording()
+        await harness.waitForDelivery()
+        XCTAssertEqual(handles[0].finishedURLs.count, 0)
+        XCTAssertEqual(handles[1].finishedURLs.count, 1)
+    }
+
+    func testCaptureFailureRejectsTheRecordingWithTheSameMessageInFastestAndInAFileMode() async throws {
+        for mode in [TranscriptionMode.fastest, .localParakeetCppRecommended] {
+            let harness = try makeHarness { $0.transcriptionMode = mode }
+            await harness.startAndWaitForRecording()
+            let failure = AudioCaptureFailure.sharedBufferAllocationFailed(sequence: 1)
+            try XCTUnwrap(harness.recorder.streamHandler)(.failure(failure))
+            harness.appState.stopRecording()
+
+            let handle = try onlyHandle(harness)
+            XCTAssertEqual(handle.cancels.count, 1, "\(mode)")
+            XCTAssertEqual(handle.finishedURLs.count, 0, "\(mode)")
+            XCTAssertTrue(harness.transcription.requests.values.isEmpty, "\(mode)")
+            XCTAssertEqual(harness.appState.phase, .failed, "\(mode)")
+            XCTAssertEqual(harness.appState.statusMessage, failure.localizedDescription, "\(mode)")
+        }
+    }
 }
