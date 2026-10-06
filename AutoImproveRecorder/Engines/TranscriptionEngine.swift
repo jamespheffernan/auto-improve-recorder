@@ -1,10 +1,5 @@
 import Foundation
 
-struct TranscriptionResult: Equatable {
-    var text: String
-    var engineName: String
-}
-
 struct TranscriptionContext: Equatable {
     var dictionarySnapshot: String
 

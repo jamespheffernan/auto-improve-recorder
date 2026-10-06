@@ -753,7 +753,7 @@ struct AutoSendOnboardingView: View {
                 ? (true, "Phonon-2 Neural Engine is ready.")
                 : (false, "Phonon-2 needs macOS 15 or newer and its bundled speech models.")
         }
-        let baseURL = ParakeetCppTranscriber.installBaseURL
+        let baseURL = ParakeetRuntimeConfiguration.app.resolveRoot()
         let executable = baseURL.appendingPathComponent("bin/parakeet-cli")
         let model = baseURL.appendingPathComponent("models/tdt-0.6b-v2-q4_k.gguf")
         let ready = FileManager.default.isExecutableFile(atPath: executable.path) &&

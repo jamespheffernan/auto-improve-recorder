@@ -2,7 +2,7 @@
 
 Website release 1.1 installs a versioned runtime at `~/Library/Application Support/AutoSendRecorder/Runtime/20260918`. Setup downloads the pinned models from Hugging Face and checks their size and SHA-256 before an atomic installation. It preserves the legacy AIR runtime at `~/Library/Application Support/AutoImproveRecorder/ParakeetCpp`, which remains the fallback until the new runtime is complete.
 
-`AutoSendRecorder/AutoSendParakeetCompatibility.swift` defines the root. `AutoSendParakeetService.swift` uses its CLI and models; the shared `AutoImproveRecorder/Engines/ParakeetCAPI.swift` resolves the same root in the ASR target.
+`AutoSendRecorder/AutoSendParakeetService.swift` defines the root as `ParakeetRuntimeConfiguration.app` and uses its CLI and models; the shared `AutoImproveRecorder/Engines/ParakeetCAPI.swift` resolves the same root in the ASR target.
 
 Required files by route:
 

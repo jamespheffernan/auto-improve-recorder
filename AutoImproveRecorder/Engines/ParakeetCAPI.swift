@@ -38,14 +38,15 @@ enum ParakeetCAPI {
         let lastError: @convention(c) (OpaquePointer?) -> UnsafePointer<CChar>?
     }
 
-    static var libraryURL: URL {
-        ParakeetCppTranscriber.installBaseURL.appendingPathComponent("capi/libparakeet.dylib")
-    }
+    static var libraryURL: URL { ParakeetResidentRuntime.shared.libraryURL }
 
     static var isInstalled: Bool { symbols != nil }
 
-    static let symbols: Symbols? = {
-        let path = libraryURL.path
+    static var symbols: Symbols? { ParakeetResidentRuntime.shared.symbols }
+
+    /// Opens the library at `path` and resolves every symbol. Returns nil when
+    /// the library cannot be opened or any symbol is missing.
+    static func loadSymbols(libraryPath path: String) -> Symbols? {
         guard let handle = dlopen(path, RTLD_NOW | RTLD_LOCAL) else {
             if FileManager.default.fileExists(atPath: path) {
                 let message = dlerror().map { String(cString: $0) } ?? "unknown dlopen failure"
@@ -87,7 +88,7 @@ enum ParakeetCAPI {
             freeString: freeString,
             lastError: lastError
         )
-    }()
+    }
 }
 
 enum ParakeetCAPIError: LocalizedError {
@@ -228,15 +229,71 @@ final class ParakeetResidentContext: @unchecked Sendable {
 /// Loads each GGUF once and keeps the context resident for the app's
 /// lifetime. The load (~0.5 s warm) happens inside the lock so concurrent
 /// callers wait for one load instead of duplicating it.
+///
+/// The runtime also owns the C symbols for its configured install root.
 final class ParakeetResidentRuntime: @unchecked Sendable {
-    static let shared = ParakeetResidentRuntime()
+    static let shared = ParakeetResidentRuntime(configuration: .app)
 
+    private let configuration: ParakeetRuntimeConfiguration
+    private let loadSymbols: (String) -> ParakeetCAPI.Symbols?
+    private let fileExists: (String) -> Bool
+    private let symbolsLock = NSLock()
+    private var symbolsResolved = false
+    private var resolvedSymbols: ParakeetCAPI.Symbols?
     private let lock = NSLock()
     private var contexts: [String: ParakeetResidentContext] = [:]
     private var failedLoads: [String: String] = [:]
+    private let modelPathLock = NSLock()
+    private var cachedModelPaths: [String: String] = [:]
+
+    init(
+        configuration: ParakeetRuntimeConfiguration,
+        loadSymbols: @escaping (String) -> ParakeetCAPI.Symbols? = ParakeetCAPI.loadSymbols(libraryPath:),
+        fileExists: @escaping (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }
+    ) {
+        self.configuration = configuration
+        self.loadSymbols = loadSymbols
+        self.fileExists = fileExists
+    }
+
+    var libraryURL: URL {
+        configuration.resolveRoot().appendingPathComponent("capi/libparakeet.dylib")
+    }
+
+    /// Loaded on first use and kept for the life of the runtime. A failed
+    /// load is kept too: a library installed later is not loaded until the
+    /// app restarts. Concurrent first callers wait for the one load.
+    var symbols: ParakeetCAPI.Symbols? {
+        symbolsLock.lock()
+        defer { symbolsLock.unlock() }
+        if !symbolsResolved {
+            resolvedSymbols = loadSymbols(libraryURL.path)
+            symbolsResolved = true
+        }
+        return resolvedSymbols
+    }
+
+    /// The model's path under the current root. The root is resolved on
+    /// every call.
+    func modelPath(filename: String) -> String {
+        configuration.resolveRoot().appendingPathComponent("models/\(filename)").path
+    }
+
+    /// The model's path under the root as it was the first time this
+    /// filename was asked for. Later root changes do not affect it.
+    func cachedModelPath(filename: String) -> String {
+        modelPathLock.lock()
+        defer { modelPathLock.unlock() }
+        if let path = cachedModelPaths[filename] {
+            return path
+        }
+        let path = modelPath(filename: filename)
+        cachedModelPaths[filename] = path
+        return path
+    }
 
     func context(modelPath: String) throws -> ParakeetResidentContext {
-        guard let symbols = ParakeetCAPI.symbols else {
+        guard let symbols else {
             throw ParakeetCAPIError.libraryUnavailable
         }
         lock.lock()
@@ -247,7 +304,7 @@ final class ParakeetResidentRuntime: @unchecked Sendable {
         if let failure = failedLoads[modelPath] {
             throw ParakeetCAPIError.loadFailed(failure)
         }
-        guard FileManager.default.fileExists(atPath: modelPath) else {
+        guard fileExists(modelPath) else {
             throw ParakeetCAPIError.modelMissing(modelPath)
         }
         let loadStartedAt = Date()
@@ -267,61 +324,18 @@ final class ParakeetResidentRuntime: @unchecked Sendable {
     }
 }
 
-/// Option A: the 0.6B TDT model held resident in-process. Same model and
-/// output as the `parakeet-cli` path, minus the ~1.1 s per-invocation model
-/// load: stop-to-transcript drops from ~1.4 s to ~0.3 s.
-struct ParakeetResidentTranscriber: TranscriptionEngine {
-    static var modelPath: String {
-        ParakeetCppTranscriber.installBaseURL
-            .appendingPathComponent("models/\(ParakeetCppVariant.recommended06B.modelFilename)")
-            .path
-    }
-
-    static var isAvailable: Bool {
-        ParakeetCAPI.isInstalled && FileManager.default.fileExists(atPath: modelPath)
-    }
-
-    private let providerName = "parakeet.cpp 0.6B v2 resident"
-    private let engineName = "parakeet.cpp 0.6B v2 Q4_K Metal resident"
-
-    func transcribe(audioURL: URL) async throws -> TranscriptionResult {
-        guard FileManager.default.fileExists(atPath: audioURL.path) else {
-            throw TranscriptionEngineError.audioMissing(audioURL.path)
-        }
-        let provider = providerName
-        let text = try await Task.detached(priority: .userInitiated) {
-            let context = try ParakeetResidentRuntime.shared.context(modelPath: Self.modelPath)
-            return try context.transcribe(wavPath: audioURL.path, provider: provider)
-        }.value
-        guard !text.isEmpty else {
-            throw TranscriptionEngineError.emptyLocalTranscript(provider: providerName)
-        }
-        return TranscriptionResult(text: text, engineName: engineName)
-    }
-
-    func warmUp() async {
-        guard Self.isAvailable else { return }
-        await Task.detached(priority: .utility) {
-            guard let context = try? ParakeetResidentRuntime.shared.context(modelPath: Self.modelPath) else { return }
-            context.warmUpOnce()
-        }.value
-    }
-}
-
 /// Option B: live streaming transcription for one dictation. The shared tap
 /// copy is converted to 16 kHz mono float and fed to a cache-aware streaming
 /// model (nemotron 0.6B: capitalized + punctuated output) on a serial queue, so
 /// the transcript is already complete ~30 ms after the last chunk when the
 /// user stops recording.
 final class ParakeetLiveStreamSession: LocalLiveTranscriptionSession, @unchecked Sendable {
-    static let modelFilename = LocalModelInventory.liveRecommendedModelFilename
+    static let modelFilename = ParakeetModelFilename.liveRecommended
     static let engineName = "parakeet.cpp nemotron 0.6B streaming Q8_0 Metal"
     static let providerName = "parakeet.cpp nemotron streaming"
 
     static var modelPath: String {
-        ParakeetCppTranscriber.installBaseURL
-            .appendingPathComponent("models/\(modelFilename)")
-            .path
+        ParakeetResidentRuntime.shared.modelPath(filename: modelFilename)
     }
 
     static var isAvailable: Bool {

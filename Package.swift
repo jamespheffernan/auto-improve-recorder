@@ -26,7 +26,6 @@ let package = Package(
                 "AutoSendAppDelegate.swift",
                 "AutoSendDeliveryAdapter.swift",
                 "AutoSendHotKeyCenter.swift",
-                "AutoSendParakeetCompatibility.swift",
                 "AutoSendParakeetService.swift",
                 "AutoSendRecorderApp.swift",
                 "AutoSendRecordingService.swift",

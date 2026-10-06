@@ -250,6 +250,11 @@ enum ParakeetCppVariant: Sendable {
     }
 }
 
+extension ParakeetRuntimeConfiguration {
+    /// AIR's Parakeet root is its fixed install directory.
+    static let app = ParakeetRuntimeConfiguration { ParakeetCppTranscriber.installBaseURL }
+}
+
 struct ParakeetCppTranscriber: TranscriptionEngine {
     private let variant: ParakeetCppVariant
     private let timeout: TimeInterval = 180

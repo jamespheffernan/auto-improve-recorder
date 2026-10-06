@@ -15,6 +15,9 @@ final class AutoSendTargetManifestTests: XCTestCase {
             "MicrophoneRecovery.swift",
             "ArchiveAudioWriter.swift",
             "ParakeetCAPI.swift",
+            "ParakeetRuntimeConfiguration.swift",
+            "ParakeetLiveSafety.swift",
+            "TranscriptionTypes.swift",
             "AccessibilityPasteController.swift",
             "AppDeliveryRules.swift",
             "DeliveryOptimization.swift",
@@ -37,6 +40,10 @@ final class AutoSendTargetManifestTests: XCTestCase {
             "OpenAIRealtimeTranscriber.swift",
             "OpenAIAudioTranscriber.swift",
             "AppleLocalEngines.swift",
+            "TranscriptionEngine.swift",
+            "ParakeetTranscriber.swift",
+            "ParakeetResidentTranscriber.swift",
+            "LocalRuntimeHealth.swift",
             "SharedNetworkClient.swift",
             "AppState.swift",
             "AppEnvironment.swift",
@@ -148,8 +155,19 @@ final class AutoSendTargetManifestTests: XCTestCase {
                 XCTAssertFalse(normalized.contains("field" + "theory"), file.path)
             }
         }
-        let compatibility = try String(contentsOf: root.appendingPathComponent("AutoSendRecorder/AutoSendParakeetCompatibility.swift"))
-        XCTAssertTrue(compatibility.contains("Library/Application Support/AutoImproveRecorder/ParakeetCpp"))
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: root.appendingPathComponent("AutoSendRecorder/AutoSendParakeetCompatibility.swift").path
+        ))
+        let service = try String(contentsOf: root.appendingPathComponent("AutoSendRecorder/AutoSendParakeetService.swift"))
+        XCTAssertTrue(service.contains("static let app = ParakeetRuntimeConfiguration.preferring("))
+        XCTAssertTrue(service.contains("{ AutoSendRuntimeInstaller.destination },"))
+        XCTAssertTrue(service.contains("whenReady: { AutoSendRuntimeInstaller.isReady() },"))
+        XCTAssertTrue(service.contains("Library/Application Support/AutoImproveRecorder/ParakeetCpp"))
+        let appConfigurations = try names.filter { name in
+            let file = try XCTUnwrap(files.first { $0.lastPathComponent == name })
+            return try String(contentsOf: file).contains("static let app = ParakeetRuntimeConfiguration")
+        }
+        XCTAssertEqual(appConfigurations, ["AutoSendParakeetService.swift"])
     }
 
     private var projectURL: URL {

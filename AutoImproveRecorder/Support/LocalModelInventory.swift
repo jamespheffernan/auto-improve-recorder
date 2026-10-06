@@ -19,7 +19,7 @@ struct LocalModelInventory: Sendable {
     static let defaultParakeetCppBasePath = "~/Library/Application Support/AutoImproveRecorder/ParakeetCpp"
     static let recommendedModelFilename = "tdt-0.6b-v2-q4_k.gguf"
     static let fastModelFilename = "tdt_ctc-110m-q4_k.gguf"
-    static let liveRecommendedModelFilename = "nemotron-3.5-asr-streaming-0.6b-q8_0.gguf"
+    static let liveRecommendedModelFilename = ParakeetModelFilename.liveRecommended
 
     private let probe: any LocalRuntimeProbe
     private let now: @Sendable () -> Date

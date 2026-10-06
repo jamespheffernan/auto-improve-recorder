@@ -22,7 +22,7 @@ struct AutoSendOneShotParakeet: AutoSendOneShotTranscribing {
     }
 
     private func run(audioURL: URL, timeout: TimeInterval) throws -> String {
-        let baseURL = ParakeetCppTranscriber.installBaseURL
+        let baseURL = ParakeetRuntimeConfiguration.app.resolveRoot()
         let executableURL = baseURL.appendingPathComponent("bin/parakeet-cli")
         let modelURL = baseURL.appendingPathComponent("models/tdt-0.6b-v2-q4_k.gguf")
         guard FileManager.default.fileExists(atPath: audioURL.path) else {
@@ -93,10 +93,24 @@ struct AutoSendOneShotParakeet: AutoSendOneShotTranscribing {
     }
 }
 
+extension ParakeetRuntimeConfiguration {
+    /// ASR's Parakeet root: its own versioned runtime once the installer
+    /// reports it ready, otherwise AIR's install root.
+    static let app = ParakeetRuntimeConfiguration.preferring(
+        { AutoSendRuntimeInstaller.destination },
+        whenReady: { AutoSendRuntimeInstaller.isReady() },
+        otherwise: {
+            FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Application Support/AutoImproveRecorder/ParakeetCpp")
+        }
+    )
+}
+
 struct AutoSendFastResidentParakeet: AutoSendOneShotTranscribing {
-    private static let modelPath = ParakeetCppTranscriber.installBaseURL
-        .appendingPathComponent("models/tdt_ctc-110m-q4_k.gguf")
-        .path
+    /// Resolved on first use and then fixed for the life of the process.
+    private static var modelPath: String {
+        ParakeetResidentRuntime.shared.cachedModelPath(filename: "tdt_ctc-110m-q4_k.gguf")
+    }
     private let provider = "parakeet.cpp 110M resident"
 
     func transcribe(audioURL: URL) async throws -> String {
@@ -153,7 +167,7 @@ final class AutoSendParakeetService: AutoSendTranscriptService, @unchecked Senda
     }
 
     var liveModeIsSafe: Bool {
-        let baseURL = ParakeetCppTranscriber.installBaseURL
+        let baseURL = ParakeetRuntimeConfiguration.app.resolveRoot()
         let cli = baseURL.appendingPathComponent("bin/parakeet-cli").path
         let fallbackModel = baseURL.appendingPathComponent("models/tdt-0.6b-v2-q4_k.gguf").path
         return ProcessInfo.processInfo.physicalMemory >= 16 * 1_024 * 1_024 * 1_024 &&

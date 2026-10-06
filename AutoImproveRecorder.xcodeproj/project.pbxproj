@@ -75,6 +75,10 @@
 		AIRMIC000000000000000002 /* MicrophoneDevice.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRMIC000000000000000000 /* MicrophoneDevice.swift */; };
 		AIRMICHEALTH0000000001 /* MicrophoneHealthMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRMICHEALTH0000000000 /* MicrophoneHealthMonitor.swift */; };
 		AIRMICRECOVERY00000001 /* MicrophoneRecovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRMICRECOVERY00000000 /* MicrophoneRecovery.swift */; };
+		AIRPKLIVESAFETY000001 /* ParakeetLiveSafety.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRPKLIVESAFETY000000 /* ParakeetLiveSafety.swift */; };
+		AIRPKRESIDENT000000001 /* ParakeetResidentTranscriber.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRPKRESIDENT000000000 /* ParakeetResidentTranscriber.swift */; };
+		AIRPKRUNTIMECONFIG0001 /* ParakeetRuntimeConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRPKRUNTIMECONFIG0000 /* ParakeetRuntimeConfiguration.swift */; };
+		AIRTRANSCRIPTTYPES0001 /* TranscriptionTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRTRANSCRIPTTYPES0000 /* TranscriptionTypes.swift */; };
 		AIRMICOBS00000000000001 /* MicrophoneDeviceObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRMICOBS00000000000000 /* MicrophoneDeviceObserver.swift */; };
 		AIRPERM00000000000000001 /* PermissionsClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRPERM00000000000000000 /* PermissionsClient.swift */; };
 		AIRRECCLIENT000000000001 /* RecordingClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRRECCLIENT000000000000 /* RecordingClient.swift */; };
@@ -95,7 +99,6 @@
 		ASR0000000000000000000012 /* AutoSendCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = ASR0000000000000000000003 /* AutoSendCore.swift */; };
 		ASR0000000000000000000013 /* AutoSendDeliveryAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = ASR0000000000000000000004 /* AutoSendDeliveryAdapter.swift */; };
 		ASR0000000000000000000014 /* AutoSendHotKeyCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = ASR0000000000000000000005 /* AutoSendHotKeyCenter.swift */; };
-		ASR0000000000000000000015 /* AutoSendParakeetCompatibility.swift in Sources */ = {isa = PBXBuildFile; fileRef = ASR0000000000000000000006 /* AutoSendParakeetCompatibility.swift */; };
 		ASR0000000000000000000016 /* AutoSendParakeetService.swift in Sources */ = {isa = PBXBuildFile; fileRef = ASR0000000000000000000007 /* AutoSendParakeetService.swift */; };
 		ASR0000000000000000000017 /* AutoSendRecordingService.swift in Sources */ = {isa = PBXBuildFile; fileRef = ASR0000000000000000000008 /* AutoSendRecordingService.swift */; };
 		ASR0000000000000000000018 /* AutoSendSettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = ASR0000000000000000000009 /* AutoSendSettingsStore.swift */; };
@@ -119,6 +122,10 @@
 		ASRICON0000000000000002 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = ASRICON0000000000000001 /* Assets.xcassets */; };
 		ASRMICHEALTH00000000001 /* MicrophoneHealthMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRMICHEALTH0000000000 /* MicrophoneHealthMonitor.swift */; };
 		ASRMICRECOVERY000000001 /* MicrophoneRecovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRMICRECOVERY00000000 /* MicrophoneRecovery.swift */; };
+		ASRPKLIVESAFETY000001 /* ParakeetLiveSafety.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRPKLIVESAFETY000000 /* ParakeetLiveSafety.swift */; };
+		ASRPKRUNTIMECONFIG0001 /* ParakeetRuntimeConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRPKRUNTIMECONFIG0000 /* ParakeetRuntimeConfiguration.swift */; };
+		ASRTRANSCRIPTTYPES0001 /* TranscriptionTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRTRANSCRIPTTYPES0000 /* TranscriptionTypes.swift */; };
+		IOSTRANSCRIPTTYPES0001 /* TranscriptionTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRTRANSCRIPTTYPES0000 /* TranscriptionTypes.swift */; };
 		ASRWIRELESS00000000000001 /* AutoSendWirelessBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = ASRWIRELESS00000000000000 /* AutoSendWirelessBridge.swift */; };
 		ASRSETUP0000000000000001 /* AutoSendRuntimeInstaller.swift in Sources */ = {isa = PBXBuildFile; fileRef = ASRSETUP0000000000000002 /* AutoSendRuntimeInstaller.swift */; };
 		PHONON000000000000000001 /* PhononTranscriber.swift in Sources */ = {isa = PBXBuildFile; fileRef = PHONON000000000000000000 /* PhononTranscriber.swift */; };
@@ -183,6 +190,10 @@
 		AIRMIC000000000000000000 /* MicrophoneDevice.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicrophoneDevice.swift; sourceTree = "<group>"; };
 		AIRMICHEALTH0000000000 /* MicrophoneHealthMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicrophoneHealthMonitor.swift; sourceTree = "<group>"; };
 		AIRMICRECOVERY00000000 /* MicrophoneRecovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicrophoneRecovery.swift; sourceTree = "<group>"; };
+		AIRPKLIVESAFETY000000 /* ParakeetLiveSafety.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ParakeetLiveSafety.swift; sourceTree = "<group>"; };
+		AIRPKRESIDENT000000000 /* ParakeetResidentTranscriber.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ParakeetResidentTranscriber.swift; sourceTree = "<group>"; };
+		AIRPKRUNTIMECONFIG0000 /* ParakeetRuntimeConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ParakeetRuntimeConfiguration.swift; sourceTree = "<group>"; };
+		AIRTRANSCRIPTTYPES0000 /* TranscriptionTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptionTypes.swift; sourceTree = "<group>"; };
 		AIRMICOBS00000000000000 /* MicrophoneDeviceObserver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicrophoneDeviceObserver.swift; sourceTree = "<group>"; };
 		AIRPERM00000000000000000 /* PermissionsClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionsClient.swift; sourceTree = "<group>"; };
 		AIRRECCLIENT000000000000 /* RecordingClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingClient.swift; sourceTree = "<group>"; };
@@ -200,7 +211,6 @@
 		ASR0000000000000000000003 /* AutoSendCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoSendCore.swift; sourceTree = "<group>"; };
 		ASR0000000000000000000004 /* AutoSendDeliveryAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoSendDeliveryAdapter.swift; sourceTree = "<group>"; };
 		ASR0000000000000000000005 /* AutoSendHotKeyCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoSendHotKeyCenter.swift; sourceTree = "<group>"; };
-		ASR0000000000000000000006 /* AutoSendParakeetCompatibility.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoSendParakeetCompatibility.swift; sourceTree = "<group>"; };
 		ASR0000000000000000000007 /* AutoSendParakeetService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoSendParakeetService.swift; sourceTree = "<group>"; };
 		ASR0000000000000000000008 /* AutoSendRecordingService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoSendRecordingService.swift; sourceTree = "<group>"; };
 		ASR0000000000000000000009 /* AutoSendSettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoSendSettingsStore.swift; sourceTree = "<group>"; };
@@ -304,8 +314,11 @@
 			isa = PBXGroup;
 			children = (
 				AIR0000000000000000000006 /* TranscriptionEngine.swift */,
+				AIRTRANSCRIPTTYPES0000 /* TranscriptionTypes.swift */,
 				AIR0000000000000000000007 /* ParakeetTranscriber.swift */,
 				AIR00000000000000000000F1 /* ParakeetCAPI.swift */,
+				AIRPKRESIDENT000000000 /* ParakeetResidentTranscriber.swift */,
+				AIRPKRUNTIMECONFIG0000 /* ParakeetRuntimeConfiguration.swift */,
 				AIR0000000000000000000008 /* ImproveEngine.swift */,
 				AIR0000000000000000000009 /* OpenAIImproveEngine.swift */,
 				AIR000000000000000000002D /* AlternativeImproveEngines.swift */,
@@ -349,6 +362,7 @@
 				AIRMICOBS00000000000000 /* MicrophoneDeviceObserver.swift */,
 				AIRLMINV000000000000000 /* LocalModelInventory.swift */,
 				AIRLMHEALTH000000000000 /* LocalRuntimeHealth.swift */,
+				AIRPKLIVESAFETY000000 /* ParakeetLiveSafety.swift */,
 				AIRLMPROBE0000000000000 /* LocalRuntimeProbe.swift */,
 				AIRTRIG0000000000000000 /* RecordingTrigger/RecordingTriggerModels.swift */,
 				AIRTRIG0000000000000002 /* RecordingTrigger/RecordingTriggerController.swift */,
@@ -386,7 +400,6 @@
 				ASRCLIP000000000000000000 /* AutoSendPasteboardWriter.swift */,
 				ASR0000000000000000000005 /* AutoSendHotKeyCenter.swift */,
 				ASRSETUP0000000000000002 /* AutoSendRuntimeInstaller.swift */,
-				ASR0000000000000000000006 /* AutoSendParakeetCompatibility.swift */,
 				ASR0000000000000000000007 /* AutoSendParakeetService.swift */,
 				ASR0000000000000000000008 /* AutoSendRecordingService.swift */,
 				ASRWIRELESS00000000000000 /* AutoSendWirelessBridge.swift */,
@@ -556,8 +569,11 @@
 				AIRAUD000000000000000007 /* ArchiveAudioWriter.swift in Sources */,
 				AIRAUD000000000000000009 /* AudioCaptureFanout.swift in Sources */,
 				AIR0000000000000000000015 /* TranscriptionEngine.swift in Sources */,
+				AIRTRANSCRIPTTYPES0001 /* TranscriptionTypes.swift in Sources */,
 				AIR0000000000000000000016 /* ParakeetTranscriber.swift in Sources */,
 				AIR00000000000000000000F2 /* ParakeetCAPI.swift in Sources */,
+				AIRPKRESIDENT000000001 /* ParakeetResidentTranscriber.swift in Sources */,
+				AIRPKRUNTIMECONFIG0001 /* ParakeetRuntimeConfiguration.swift in Sources */,
 				AIR0000000000000000000017 /* ImproveEngine.swift in Sources */,
 				AIR0000000000000000000018 /* OpenAIImproveEngine.swift in Sources */,
 				AIR000000000000000000002C /* AlternativeImproveEngines.swift in Sources */,
@@ -582,6 +598,7 @@
 				AIRMICOBS00000000000001 /* MicrophoneDeviceObserver.swift in Sources */,
 				AIRLMINV000000000000001 /* LocalModelInventory.swift in Sources */,
 				AIRLMHEALTH000000000001 /* LocalRuntimeHealth.swift in Sources */,
+				AIRPKLIVESAFETY000001 /* ParakeetLiveSafety.swift in Sources */,
 				AIRLMPROBE0000000000001 /* LocalRuntimeProbe.swift in Sources */,
 				AIRTRIG0000000000000001 /* RecordingTrigger/RecordingTriggerModels.swift in Sources */,
 				AIRTRIG0000000000000003 /* RecordingTrigger/RecordingTriggerController.swift in Sources */,
@@ -617,6 +634,7 @@
 				AIRAUD00000000000000000D /* ArchiveAudioWriter.swift in Sources */,
 				AIRAUD00000000000000000E /* AudioCaptureFanout.swift in Sources */,
 				AIR0000000000000000000095 /* TranscriptionEngine.swift in Sources */,
+				IOSTRANSCRIPTTYPES0001 /* TranscriptionTypes.swift in Sources */,
 				AIR0000000000000000000096 /* ImproveEngine.swift in Sources */,
 				AIR0000000000000000000097 /* OpenAIImproveEngine.swift in Sources */,
 				AIR000000000000000000009B /* AlternativeImproveEngines.swift in Sources */,
@@ -638,7 +656,6 @@
 				ASRCLIP000000000000000001 /* AutoSendPasteboardWriter.swift in Sources */,
 				ASR0000000000000000000014 /* AutoSendHotKeyCenter.swift in Sources */,
 				ASRSETUP0000000000000001 /* AutoSendRuntimeInstaller.swift in Sources */,
-				ASR0000000000000000000015 /* AutoSendParakeetCompatibility.swift in Sources */,
 				ASR0000000000000000000016 /* AutoSendParakeetService.swift in Sources */,
 				ASR0000000000000000000017 /* AutoSendRecordingService.swift in Sources */,
 				ASRWIRELESS00000000000001 /* AutoSendWirelessBridge.swift in Sources */,
@@ -649,6 +666,9 @@
 				ASR000000000000000000001C /* AudioPipelineTypes.swift in Sources */,
 				ASR000000000000000000001D /* ArchiveAudioWriter.swift in Sources */,
 				ASR000000000000000000001E /* ParakeetCAPI.swift in Sources */,
+				ASRPKLIVESAFETY000001 /* ParakeetLiveSafety.swift in Sources */,
+				ASRPKRUNTIMECONFIG0001 /* ParakeetRuntimeConfiguration.swift in Sources */,
+				ASRTRANSCRIPTTYPES0001 /* TranscriptionTypes.swift in Sources */,
 				ASR000000000000000000001F /* AccessibilityPasteController.swift in Sources */,
 				ASR0000000000000000000020 /* AppDeliveryRules.swift in Sources */,
 				ASRDELOPT000000000000001 /* DeliveryOptimization.swift in Sources */,
