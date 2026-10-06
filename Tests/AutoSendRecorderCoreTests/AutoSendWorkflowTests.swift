@@ -411,6 +411,28 @@ final class AutoSendWorkflowTests: XCTestCase {
         }
     }
 
+    func testArchiveKeepsTheTextOfAPasteFailureOnlyWhenItReachedTheClipboard() async {
+        let cases: [(AutoSendDeliveryDisposition, String?)] = [
+            (.copiedAfterPasteFailed("Copied to clipboard. Paste failed."), "hello"),
+            (.pasteFailed("Could not paste or copy the transcript. Paste failed."), nil)
+        ]
+
+        for (disposition, expectedDeliveredText) in cases {
+            let archived = EvidenceCollector()
+            let workflow = AutoSendWorkflow(environment: AutoSendWorkflowEnvironment(
+                capture: FakeCapture(),
+                transcription: FakeTranscript(text: "hello"),
+                delivery: FakeDelivery(disposition: disposition),
+                archive: { archived.append($0) }
+            ))
+            await workflow.start()
+            await workflow.stop()
+
+            XCTAssertEqual(archived.values.map(\.deliveredText), [expectedDeliveredText], "\(disposition)")
+            XCTAssertEqual(archived.values.map(\.disposition), [disposition])
+        }
+    }
+
     func testWorkflowPublishesDeliveringBeforeReady() async {
         let phases = PhaseCollector()
         let workflow = AutoSendWorkflow(environment: AutoSendWorkflowEnvironment(
@@ -715,6 +737,11 @@ final class AutoSendRunSnapshotTests: XCTestCase {
             (.copied("Copied to clipboard."), .pastedWithoutSend, "Copied to clipboard."),
             (.permissionRequired("Allow access."), .permissionNeeded("Allow access."), "Allow access."),
             (.pasteFailed("Paste failed."), .failed("Paste failed."), "Paste failed."),
+            (
+                .copiedAfterPasteFailed("Copied to clipboard. Paste failed."),
+                .failed("Copied to clipboard. Paste failed."),
+                "Copied to clipboard. Paste failed."
+            ),
             (nil, .pastedWithoutSend, "Transcript ready.")
         ]
 
@@ -890,6 +917,23 @@ private actor FakeDelivery: AutoSendDeliveryService {
         deliverCallCount += 1
         deliveredText = text
         return disposition
+    }
+}
+
+private final class EvidenceCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedValues: [AutoSendTranscriptEvidence] = []
+
+    var values: [AutoSendTranscriptEvidence] {
+        lock.lock()
+        defer { lock.unlock() }
+        return storedValues
+    }
+
+    func append(_ evidence: AutoSendTranscriptEvidence) {
+        lock.lock()
+        storedValues.append(evidence)
+        lock.unlock()
     }
 }
 

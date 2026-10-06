@@ -28,7 +28,7 @@ final class AutoSendDeliveryDispositionTests: XCTestCase {
     func testCopiedTextAfterAPasteErrorDependsOnAccessibilityPermission() {
         XCTAssertEqual(
             resolve(report(.copied, errorSummary: "Paste failed.")).disposition,
-            .pasteFailed("Paste failed.")
+            .copiedAfterPasteFailed("Paste failed.")
         )
         XCTAssertEqual(
             resolve(
@@ -65,7 +65,7 @@ final class AutoSendDeliveryDispositionTests: XCTestCase {
     func testUndeliveredTextAfterAPasteErrorReportsTheErrorAndTheClipboardResult() {
         XCTAssertEqual(
             resolve(report(.ready, errorSummary: "Paste failed.")).disposition,
-            .pasteFailed("Copied to clipboard. Paste failed.")
+            .copiedAfterPasteFailed("Copied to clipboard. Paste failed.")
         )
         XCTAssertEqual(
             resolve(
@@ -77,6 +77,22 @@ final class AutoSendDeliveryDispositionTests: XCTestCase {
             resolve(report(.ready, errorSummary: "Paste failed."), clipboardWriteSucceeds: false).disposition,
             .pasteFailed("Could not paste or copy the transcript. Paste failed.")
         )
+    }
+
+    func testAPasteFailureCountsAsDeliveredOnlyWhenTheTextReachedTheClipboard() {
+        let copiedByDelivery = resolve(report(.copied, errorSummary: "Paste failed.")).disposition
+        let copiedByFallback = resolve(report(.ready, errorSummary: "Paste failed.")).disposition
+        for disposition in [copiedByDelivery, copiedByFallback] {
+            XCTAssertTrue(disposition.delivered, "\(disposition)")
+            XCTAssertEqual(disposition.archiveLabel, "copied-paste-failed", "\(disposition)")
+        }
+
+        let notCopied = resolve(
+            report(.ready, errorSummary: "Paste failed."),
+            clipboardWriteSucceeds: false
+        ).disposition
+        XCTAssertFalse(notCopied.delivered)
+        XCTAssertEqual(notCopied.archiveLabel, "paste-failed")
     }
 
     func testClipboardIsWrittenOnlyWhenTheTextIsUndelivered() {

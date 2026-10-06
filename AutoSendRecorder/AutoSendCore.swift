@@ -211,12 +211,16 @@ enum AutoSendDeliveryDisposition: Equatable, Sendable {
     case copied(String)
     case noPasteTarget(String)
     case permissionRequired(String)
+    /// Pasting failed and the text is on the clipboard.
+    case copiedAfterPasteFailed(String)
+    /// Pasting failed and the text is not on the clipboard.
     case pasteFailed(String)
 
     /// Whether the text reached a destination: a text field or the clipboard.
     var delivered: Bool {
         switch self {
-        case .sent, .pastedWithoutSending, .sendSuppressed, .copied, .permissionRequired:
+        case .sent, .pastedWithoutSending, .sendSuppressed, .copied, .permissionRequired,
+             .copiedAfterPasteFailed:
             return true
         case .noPasteTarget, .pasteFailed:
             return false
@@ -232,6 +236,7 @@ enum AutoSendDeliveryDisposition: Equatable, Sendable {
         case .copied: return "copied"
         case .noPasteTarget: return "no-paste-target"
         case .permissionRequired: return "copied-permission-required"
+        case .copiedAfterPasteFailed: return "copied-paste-failed"
         case .pasteFailed: return "paste-failed"
         }
     }
@@ -288,7 +293,7 @@ extension AutoSendDeliveryDisposition {
         case .copied:
             if let error = report.errorSummary {
                 return report.accessibilityTrusted
-                    ? .pasteFailed(error)
+                    ? .copiedAfterPasteFailed(error)
                     : .permissionRequired(report.statusMessage)
             }
             return .copied(report.statusMessage)
@@ -299,7 +304,7 @@ extension AutoSendDeliveryDisposition {
                     return .pasteFailed("Could not paste or copy the transcript. \(error)")
                 }
                 return report.accessibilityTrusted
-                    ? .pasteFailed("Copied to clipboard. \(error)")
+                    ? .copiedAfterPasteFailed("Copied to clipboard. \(error)")
                     : .permissionRequired("Copied to clipboard. \(report.statusMessage)")
             }
             return AutoSendClipboardFallback.disposition(
@@ -1100,7 +1105,7 @@ extension AutoSendRunSnapshot {
                 experienceState: .permissionNeeded(message),
                 statusMessage: message
             )
-        case .pasteFailed(let message):
+        case .copiedAfterPasteFailed(let message), .pasteFailed(let message):
             return AutoSendRunPresentation(experienceState: .failed(message), statusMessage: message)
         case .none:
             return AutoSendRunPresentation(
