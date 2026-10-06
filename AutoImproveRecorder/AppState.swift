@@ -848,7 +848,19 @@ final class AppState: ObservableObject {
                 backup,
                 stoppedRecordingID: stoppedRecordingID,
                 unusedAudioURL: nil,
-                reportFailure: { [weak self] in self?.failWithMessage(message) }
+                reportFailure: { [weak self] keptBackupURL in
+                    guard let self else { return }
+                    guard let keptBackupURL else {
+                        self.discardActiveArchiveDraftIfNeeded()
+                        self.failWithMessage(message)
+                        return
+                    }
+                    // The backup's audio stays on disk. The record names it and its microphone.
+                    self.usedBackupRecording = (backup.microphone, keptBackupURL)
+                    self.session.audioURL = keptBackupURL
+                    self.failWithMessage(message)
+                    self.persistTranscriptArchive()
+                }
             )
             return
         }
@@ -894,7 +906,7 @@ final class AppState: ObservableObject {
                 backup,
                 stoppedRecordingID: stoppedRecordingID,
                 unusedAudioURL: audioURL,
-                reportFailure: reportFailure
+                reportFailure: { _ in reportFailure() }
             )
             return
         }
@@ -917,12 +929,14 @@ final class AppState: ObservableObject {
 
     /// The main recording failed at stop and a backup exists. Shows the transcribing state, then
     /// continues the run on the backup's text when it has any. Otherwise it runs `reportFailure`,
-    /// which reports the main recording's failure.
+    /// which reports the main recording's failure. `reportFailure` receives the backup file's
+    /// URL when that file is kept because it could not be transcribed, and nil when no backup
+    /// file remains.
     private func processBackupAfterFailedStop(
         _ backup: StoppedBackupMicrophone,
         stoppedRecordingID: UUID?,
         unusedAudioURL: URL?,
-        reportFailure: @escaping @MainActor () -> Void
+        reportFailure: @escaping @MainActor (_ keptBackupURL: URL?) -> Void
     ) {
         recordingStartedAt = nil
         activeProcessingRecordingID = stoppedRecordingID
@@ -935,7 +949,7 @@ final class AppState: ObservableObject {
             let dictionarySnapshot = session.dictionarySnapshot
             guard let backupURL = await backup.stop.finishedFile() else {
                 activeProcessingRecordingID = nil
-                reportFailure()
+                reportFailure(nil)
                 return
             }
             let result: TranscriptionResult
@@ -949,13 +963,13 @@ final class AppState: ObservableObject {
                 // The backup file stays when it could not be read, so no audio is lost.
                 NSLog("Backup microphone recording could not be transcribed: %@", error.localizedDescription)
                 activeProcessingRecordingID = nil
-                reportFailure()
+                reportFailure(backupURL)
                 return
             }
             guard BackupTranscriptChoice.wordCount(finalTranscript(of: result)) > 0 else {
                 try? FileManager.default.removeItem(at: backupURL)
                 activeProcessingRecordingID = nil
-                reportFailure()
+                reportFailure(nil)
                 return
             }
             useBackupRecording(backupURL, microphone: backup.microphone, replacing: unusedAudioURL)

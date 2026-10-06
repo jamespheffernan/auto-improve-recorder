@@ -638,6 +638,66 @@ final class AppStateBackupMicrophoneTests: XCTestCase {
         assertNoBackupRunning(harness)
     }
 
+    func testStopWithNoAudioFileAndEmptyBackupDiscardsTheArchiveDraft() async throws {
+        let harness = try makeHarness()
+        setTranscripts(harness, main: "never read", backup: "")
+        await harness.startAndWaitForRecording()
+        let draft = try XCTUnwrap(harness.archive.preparedDrafts.first)
+        harness.recorder.stopReturnsFile = false
+
+        harness.appState.stopRecording()
+        await harness.waitUntil("the failure") { harness.appState.phase == .failed }
+
+        // The backup file was deleted with its empty text, so nothing is left to describe.
+        XCTAssertEqual(harness.archive.deletedDraftIDs, [draft.id])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: draft.directoryURL.path))
+        XCTAssertTrue(harness.archive.savedRecords.isEmpty)
+    }
+
+    func testStopWithNoAudioFileAndNoBackupFileDiscardsTheArchiveDraft() async throws {
+        let harness = try makeHarness()
+        harness.backupRecorder.stopGivesFile = false
+        await harness.startAndWaitForRecording()
+        let draft = try XCTUnwrap(harness.archive.preparedDrafts.first)
+        harness.recorder.stopReturnsFile = false
+
+        harness.appState.stopRecording()
+        await harness.waitUntil("the failure") { harness.appState.phase == .failed }
+
+        XCTAssertEqual(harness.archive.deletedDraftIDs, [draft.id])
+        XCTAssertTrue(harness.archive.savedRecords.isEmpty)
+    }
+
+    func testStopWithNoAudioFileAndBackupThatCannotBeTranscribedArchivesTheKeptBackupAudio() async throws {
+        let harness = try makeHarness()
+        setTranscripts(harness, main: "never read", backup: nil)
+        await harness.startAndWaitForRecording()
+        let draft = try XCTUnwrap(harness.archive.preparedDrafts.first)
+        let backupURL = try XCTUnwrap(harness.backupRecorder.startedURLs.first)
+        harness.recorder.stopReturnsFile = false
+
+        harness.appState.stopRecording()
+        await harness.waitUntil("the failure") { harness.appState.phase == .failed }
+
+        XCTAssertEqual(harness.appState.statusMessage, "Recording stopped before an audio file was created.")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: backupURL.path))
+        XCTAssertTrue(harness.archive.deletedDraftIDs.isEmpty)
+        XCTAssertEqual(harness.archive.savedRecords.count, 1)
+        let record = try XCTUnwrap(harness.archive.savedRecords.last)
+        XCTAssertEqual(record.id, draft.id)
+        XCTAssertEqual(record.message, "Recording stopped before an audio file was created.")
+        XCTAssertEqual(record.audioPath, backupURL.path)
+        XCTAssertEqual(record.microphoneResolvedID, "mic-builtin")
+        XCTAssertEqual(record.microphoneResolvedName, "Built-in Mic")
+        XCTAssertEqual(record.microphoneFallbackReason, "backupMicrophone")
+
+        // The next recording's draft is its own; the kept record is not deleted with it.
+        harness.recorder.stopReturnsFile = true
+        await harness.startAndWaitForRecording()
+        harness.appState.cancelRecording()
+        XCTAssertFalse(harness.archive.deletedDraftIDs.contains(draft.id))
+    }
+
     func testFastestCaptureFailureAtStopReadsTheBackupWithAHandleThatIsNotAttachedToCapture() async throws {
         let harness = try makeHarness()
         harness.appState.transcriptionMode = .fastest
