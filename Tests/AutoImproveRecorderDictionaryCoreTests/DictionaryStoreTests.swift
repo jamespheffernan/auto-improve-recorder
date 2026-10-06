@@ -68,6 +68,46 @@ final class DictionaryStoreTests: XCTestCase {
         XCTAssertEqual(reloaded.replacementRules.map(\.replacement), ["AIR"])
     }
 
+    func testMalformedEntriesFileLeavesValidReplacementRulesLoaded() throws {
+        let directory = try makeDirectoryWithOneEntryAndOneRule()
+        try Data("{ not json".utf8).write(to: directory.appendingPathComponent("dictionary.json"))
+
+        let reloaded = UserDictionaryStore(directoryURL: directory)
+
+        XCTAssertEqual(reloaded.entries, [])
+        XCTAssertEqual(reloaded.replacementRules.map(\.replacement), ["AIR"])
+        let loadError = try XCTUnwrap(reloaded.lastLoadError)
+        XCTAssertTrue(loadError.contains("dictionary.json"), loadError)
+        XCTAssertFalse(loadError.contains(ManualDictionaryFiles.rulesFileName), loadError)
+    }
+
+    func testMalformedRulesFileLeavesValidEntriesLoaded() throws {
+        let directory = try makeDirectoryWithOneEntryAndOneRule()
+        try Data("{ not json".utf8).write(to: directory.appendingPathComponent(ManualDictionaryFiles.rulesFileName))
+
+        let reloaded = UserDictionaryStore(directoryURL: directory)
+
+        XCTAssertEqual(reloaded.entries.map(\.text), ["Parakeet.cpp"])
+        XCTAssertEqual(reloaded.replacementRules, [])
+        let loadError = try XCTUnwrap(reloaded.lastLoadError)
+        XCTAssertTrue(loadError.contains(ManualDictionaryFiles.rulesFileName), loadError)
+        XCTAssertFalse(loadError.contains("dictionary.json"), loadError)
+    }
+
+    func testBothFilesMalformedReportsBothInLoadError() throws {
+        let directory = try makeDirectoryWithOneEntryAndOneRule()
+        try Data("{ not json".utf8).write(to: directory.appendingPathComponent("dictionary.json"))
+        try Data("{ not json".utf8).write(to: directory.appendingPathComponent(ManualDictionaryFiles.rulesFileName))
+
+        let reloaded = UserDictionaryStore(directoryURL: directory)
+
+        XCTAssertEqual(reloaded.entries, [])
+        XCTAssertEqual(reloaded.replacementRules, [])
+        let loadError = try XCTUnwrap(reloaded.lastLoadError)
+        XCTAssertTrue(loadError.contains("dictionary.json"), loadError)
+        XCTAssertTrue(loadError.contains(ManualDictionaryFiles.rulesFileName), loadError)
+    }
+
     func testSuperwhisperImportParsesDictionaryAndReplacementData() throws {
         let store = try makeStore()
         let sourceURL = try makeTemporaryDirectory().appendingPathComponent("settings.json")
@@ -305,6 +345,25 @@ final class DictionaryStoreTests: XCTestCase {
 
     private func makeStore() throws -> UserDictionaryStore {
         UserDictionaryStore(directoryURL: try makeTemporaryDirectory())
+    }
+
+    /// A directory whose two files a store wrote: one entry, "Parakeet.cpp", and one rule, "air" to "AIR".
+    private func makeDirectoryWithOneEntryAndOneRule() throws -> URL {
+        let directory = try makeTemporaryDirectory()
+        let store = UserDictionaryStore(directoryURL: directory)
+        _ = try store.addEntry(
+            "Parakeet.cpp",
+            source: "manual",
+            id: UUID(uuidString: "00000000-0000-0000-0000-000000000006")!,
+            createdAt: Date(timeIntervalSince1970: 100)
+        )
+        _ = try store.addReplacementRule(
+            phrase: "air",
+            replacement: "AIR",
+            id: UUID(uuidString: "00000000-0000-0000-0000-000000000007")!,
+            createdAt: Date(timeIntervalSince1970: 200)
+        )
+        return directory
     }
 
     private func makeTemporaryDirectory() throws -> URL {

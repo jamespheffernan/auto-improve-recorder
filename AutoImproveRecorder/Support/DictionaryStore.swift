@@ -232,16 +232,24 @@ final class UserDictionaryStore: ObservableObject {
         ManualDictionaryFiles.defaultDirectoryURL()
     }
 
+    /// Loads the entries file and the rules file separately, so a failure in one leaves the other loaded.
     private func load() {
+        var failures: [String] = []
         do {
             entries = try loadEntries()
-            replacementRules = try loadReplacementRules()
-            lastLoadError = nil
         } catch {
             entries = []
+            failures.append("\(entriesURL.lastPathComponent): \(error.localizedDescription)")
+        }
+        do {
+            replacementRules = try loadReplacementRules()
+        } catch {
             replacementRules = []
-            lastLoadError = error.localizedDescription
-            NSLog("UserDictionaryStore load failed: \(error.localizedDescription)")
+            failures.append("\(replacementRulesURL.lastPathComponent): \(error.localizedDescription)")
+        }
+        lastLoadError = failures.isEmpty ? nil : failures.joined(separator: "\n")
+        if let lastLoadError {
+            NSLog("UserDictionaryStore load failed: \(lastLoadError)")
         }
     }
 
