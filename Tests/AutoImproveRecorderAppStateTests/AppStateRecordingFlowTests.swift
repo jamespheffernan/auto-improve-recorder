@@ -345,9 +345,31 @@ final class AppStateRecordingFlowTests: XCTestCase {
         XCTAssertTrue(harness.delivery.requests.values.isEmpty)
         XCTAssertEqual(harness.archive.savedRecords.map(\.message), ["Fake transcription failed."])
         XCTAssertEqual(harness.archive.savedRecords.map(\.rawTranscript), [""])
-        // The preview is not opened on this path; `failWithMessage` is not used.
-        XCTAssertEqual(harness.previewShownCount, 0)
         harness.assertTornDown(recorderStops: 1)
+    }
+
+    func testTranscriptionFailureOpensThePreviewOnce() async throws {
+        let harness = try makeHarness()
+        let appState = harness.appState
+        harness.transcription.result = .failure(FakeError(message: "Fake transcription failed."))
+
+        await harness.startAndWaitForRecording()
+        appState.stopRecording()
+        XCTAssertEqual(harness.previewShownCount, 0)
+        await harness.waitUntil("the failure") { appState.phase == .failed }
+        await harness.waitUntil("the next draft to be prepared") { harness.archive.preparedDrafts.count == 2 }
+
+        XCTAssertEqual(harness.previewShownCount, 1)
+        // The failure is still saved once, with its message.
+        XCTAssertEqual(harness.archive.savedRecords.map(\.message), ["Fake transcription failed."])
+        XCTAssertEqual(appState.session.message, "Fake transcription failed.")
+
+        // The failed run leaves the next recording able to start.
+        harness.transcription.result = .success(TranscriptionResult(text: "hello world", engineName: "Fake Engine"))
+        await harness.startAndWaitForRecording()
+        appState.stopRecording()
+        await harness.waitForDelivery()
+        XCTAssertEqual(harness.previewShownCount, 1)
     }
 
     func testRecorderStartFailureFailsWithoutStoppingRecorder() async throws {

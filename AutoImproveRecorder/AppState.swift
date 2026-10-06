@@ -1577,6 +1577,10 @@ final class AppState: ObservableObject {
             phase = .failed
             processingVisualState = .failed
             statusMessage = error.localizedDescription
+            // Only the preview part of `failWithMessage`: stop already ended the recording's hot
+            // keys, backup and microphone lock, and `finishProcessing` ends the trigger's
+            // processing state and hides the signal.
+            showPreview?()
             await finishProcessing()
         }
     }
