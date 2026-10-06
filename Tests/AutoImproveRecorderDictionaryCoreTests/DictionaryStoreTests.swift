@@ -1,5 +1,5 @@
 import XCTest
-@testable import AutoImproveRecorderDictionaryCore
+@testable import AutoImproveRecorderCore
 
 @MainActor
 final class DictionaryStoreTests: XCTestCase {

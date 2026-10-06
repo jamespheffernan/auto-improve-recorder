@@ -107,7 +107,7 @@ final class AppState: ObservableObject {
     @Published private(set) var deliveryRuleCandidateApps: [FocusedApp] = []
     @Published var availableMicrophones: [AudioInputDevice] = [.systemDefault]
     @Published private(set) var resolvedMicrophoneSummary = "Using system default."
-    let dictionaryStore = UserDictionaryStore(lexiconReader: LexiconReader())
+    let dictionaryStore: UserDictionaryStore
 
     var showPreview: (() -> Void)?
     var showSettings: (() -> Void)?
@@ -123,7 +123,7 @@ final class AppState: ObservableObject {
     var hideProcessingSignal: (() -> Void)?
 
     private let environment: AppEnvironment
-    private let defaults = UserDefaults.standard
+    private let defaults: UserDefaults
     private lazy var recordingTriggerController = RecordingTriggerController { [weak self] in
         self?.recordingTriggerBehavior ?? .holdToTalk
     }
@@ -147,7 +147,7 @@ final class AppState: ObservableObject {
     private var isRevertingRecordingHotKey = false
     private var visualResetToken = UUID()
     private var microphoneUseLockHeartbeatTask: Task<Void, Never>?
-    private var microphoneDeviceObserver: MicrophoneDeviceObserver?
+    private var microphoneDeviceObservation: AnyObject?
     private var microphoneRecovery = MicrophoneRecovery(retryCooldown: 10)
     private var triggerTimerTasks: [RecordingTriggerTimerKind: Task<Void, Never>] = [:]
     private var localModelStatusTask: Task<Void, Never>?
@@ -174,6 +174,8 @@ final class AppState: ObservableObject {
 
     init(environment: AppEnvironment) {
         self.environment = environment
+        dictionaryStore = environment.dictionaryStore
+        defaults = environment.legacyDefaults
         let credentials = environment.secrets.loadCredentials()
         apiKey = credentials.openAIAPIKey
         geminiAPIKey = credentials.geminiAPIKey
@@ -199,12 +201,11 @@ final class AppState: ObservableObject {
         ollamaModel = settings.ollama.model
         refreshMicrophones()
         enforcePreferredMicrophoneDefaultInput(reason: "app launch")
-        microphoneDeviceObserver = MicrophoneDeviceObserver { [weak self] in
+        microphoneDeviceObservation = environment.microphoneDevices.observeDeviceChanges { [weak self] in
             Task { @MainActor [weak self] in
                 self?.handleMicrophoneDevicesChanged()
             }
         }
-        microphoneDeviceObserver?.start()
         refreshDeliveryRuleCandidateApps()
     }
 
@@ -242,7 +243,7 @@ final class AppState: ObservableObject {
 
     func refreshMicrophones() {
         availableMicrophones = microphonesIncludingSavedPreference(
-            AudioInputDeviceDiscovery.inputDevices()
+            environment.microphoneDevices.inputDevices()
         )
         updateResolvedMicrophoneSummary()
     }
@@ -313,7 +314,7 @@ final class AppState: ObservableObject {
         }
 
         do {
-            try AudioInputDeviceDiscovery.setDefaultInputDeviceID(coreAudioDeviceID)
+            try environment.microphoneDevices.setDefaultInputDeviceID(coreAudioDeviceID)
             microphoneDeviceLogger.info(
                 "Pinned macOS default input to preferred microphone id=\(target.id, privacy: .public) name=\(target.name, privacy: .public) coreAudioDeviceID=\(coreAudioDeviceID, privacy: .public) reason=\(reason, privacy: .public)"
             )
@@ -336,21 +337,10 @@ final class AppState: ObservableObject {
         let ownBundleIdentifier = Bundle.main.bundleIdentifier
         var seenBundleIdentifiers = Set<String>()
 
-        deliveryRuleCandidateApps = NSWorkspace.shared.runningApplications.compactMap { app in
-            guard app.activationPolicy == .regular,
-                  let bundleIdentifier = app.bundleIdentifier,
-                  !bundleIdentifier.isEmpty,
-                  bundleIdentifier != ownBundleIdentifier,
-                  !existingBundleIdentifiers.contains(bundleIdentifier),
-                  seenBundleIdentifiers.insert(bundleIdentifier).inserted else {
-                return nil
-            }
-
-            return FocusedApp(
-                bundleIdentifier: bundleIdentifier,
-                displayName: app.localizedName,
-                processIdentifier: app.processIdentifier
-            )
+        deliveryRuleCandidateApps = environment.runningApps().filter { app in
+            app.bundleIdentifier != ownBundleIdentifier &&
+                !existingBundleIdentifiers.contains(app.bundleIdentifier) &&
+                seenBundleIdentifiers.insert(app.bundleIdentifier).inserted
         }
         .sorted { lhs, rhs in
             lhs.displayName.localizedCaseInsensitiveCompare(rhs.displayName) == .orderedAscending
@@ -569,13 +559,8 @@ final class AppState: ObservableObject {
         saveSettings(reason: .general)
         saveCredentials()
         cancelAllRecordingTriggerTimers()
-        activeRealtimeStartupTask?.cancel()
-        activeRealtimeStartupTask = nil
-        activeStartID = nil
-        activeStartIsTriggerManaged = false
-        activeRecordingID = nil
-        activeProcessingRecordingID = nil
-        microphoneRecovery.recordingEnded()
+        cancelRealtimeStartupTask()
+        clearActiveRecordingIdentity()
         discardActiveArchiveDraftIfNeeded()
         discardPreparedRecordingDraft()
         _ = environment.recording.stopRecording()
@@ -594,73 +579,15 @@ final class AppState: ObservableObject {
     /// handshakes are paid while the user is still speaking.
     /// ParakeetCppWarmKeeper throttles repeat warms internally.
     private func prewarmEnginesForActiveModes() {
-        let selectedTranscriptionMode = transcriptionMode
-        let selectedImprovementMode = improvementMode
-        let selectedOllamaBaseURL = ollamaBaseURL
-        let selectedOllamaModel = ollamaModel
-        let hasOpenAIKey = !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let parakeetWarmupTargets = ParakeetWarmupPolicy.targets(
-            transcriptionModeRawValue: selectedTranscriptionMode.rawValue
+        environment.enginePrewarm.prewarm(
+            EnginePrewarmRequest(
+                transcriptionMode: transcriptionMode,
+                improvementMode: improvementMode,
+                ollamaBaseURL: ollamaBaseURL,
+                ollamaModel: ollamaModel,
+                hasOpenAIKey: !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            )
         )
-
-        Task.detached(priority: .utility) {
-            switch selectedTranscriptionMode {
-            case .localPhonon2:
-                await PhononTranscriber.shared.warmUp()
-            case .localWhisper:
-                await WhisperCppTranscriber().warmUp()
-            case .localParakeetCppFast,
-                 .localParakeetCppRecommended,
-                 .localParakeetCppResident,
-                 .localParakeetStreaming,
-                 .fastest:
-                for target in parakeetWarmupTargets {
-                    switch target {
-                    case .fastOneShot:
-                        await ParakeetCppWarmKeeper.shared.warmIfStale(variant: .fast110M)
-                    case .recommendedOneShot:
-                        await Self.warmParakeetCppRecommended()
-                    case .residentRecommended:
-                        await Self.warmParakeetResidentRecommended()
-                    case .liveRecommended:
-                        await RecommendedLiveTranscription.warmUp()
-                    }
-                }
-            case .appleLocal, .openAIAPI:
-                break
-            }
-        }
-
-        Task.detached(priority: .utility) {
-            if selectedTranscriptionMode == .openAIAPI ||
-                (selectedTranscriptionMode == .fastest && hasOpenAIKey) ||
-                selectedImprovementMode == .openAI {
-                await SharedNetworkClient.prewarm(host: URL(string: "https://api.openai.com")!)
-            }
-            switch selectedImprovementMode {
-            case .geminiFlash:
-                await SharedNetworkClient.prewarm(host: URL(string: "https://generativelanguage.googleapis.com")!)
-            case .claudeHaiku:
-                await SharedNetworkClient.prewarm(host: URL(string: "https://api.anthropic.com")!)
-            case .ollamaLocal:
-                await OllamaImproveEngine(
-                    baseURL: selectedOllamaBaseURL,
-                    model: selectedOllamaModel
-                ).warmUp()
-            case .openAI, .appleLocal:
-                break
-            }
-        }
-    }
-
-    /// One-shot CLI path warmed via OS page cache and Metal shader cache.
-    nonisolated private static func warmParakeetCppRecommended() async {
-        await ParakeetCppWarmKeeper.shared.warmIfStale(variant: .recommended06B)
-    }
-
-    /// Explicit resident mode only. This keeps the 0.6B model in process.
-    nonisolated private static func warmParakeetResidentRecommended() async {
-        await ParakeetResidentTranscriber().warmUp()
     }
 
     private func prewarmRecordingStartResources() {
@@ -864,10 +791,8 @@ final class AppState: ObservableObject {
 
     func stopRecording(shouldTranscribe: Bool = true) {
         guard case .recording = phase else { return }
-        unregisterCancelHotKey?()
-        unregisterWalkieTalkieLatchHotKey?()
-        activeRealtimeStartupTask?.cancel()
-        activeRealtimeStartupTask = nil
+        unregisterActiveRecordingHotKeys()
+        cancelRealtimeStartupTask()
         let stoppedRecordingID = activeRecordingID
         let streamingTranscriber = activeStreamingTranscriber
         activeStreamingTranscriber = nil
@@ -878,10 +803,7 @@ final class AppState: ObservableObject {
             microphoneRecovery.recordingEnded()
             endMicrophoneUseLock()
             realtimeAudioSink.clear()
-            if let streamingTranscriber {
-                Task { await streamingTranscriber.cancel() }
-            }
-            parakeetStream?.cancel()
+            cancelLiveTranscription(streamingTranscriber: streamingTranscriber, parakeetStream: parakeetStream)
             failWithMessage("Recording stopped before an audio file was created.")
             return
         }
@@ -891,10 +813,7 @@ final class AppState: ObservableObject {
         activeRecordingID = nil
 
         guard shouldTranscribe else {
-            if let streamingTranscriber {
-                Task { await streamingTranscriber.cancel() }
-            }
-            parakeetStream?.cancel()
+            cancelLiveTranscription(streamingTranscriber: streamingTranscriber, parakeetStream: parakeetStream)
             try? FileManager.default.removeItem(at: audioURL)
             discardActiveArchiveDraftIfNeeded()
             microphoneRecovery.recordingEnded()
@@ -911,10 +830,7 @@ final class AppState: ObservableObject {
         }
 
         if let captureFailure {
-            if let streamingTranscriber {
-                Task { await streamingTranscriber.cancel() }
-            }
-            parakeetStream?.cancel()
+            cancelLiveTranscription(streamingTranscriber: streamingTranscriber, parakeetStream: parakeetStream)
             activeProcessingRecordingID = nil
             recordingStartedAt = nil
             let message = captureFailure.localizedDescription
@@ -946,21 +862,32 @@ final class AppState: ObservableObject {
             return
         }
 
-        unregisterCancelHotKey?()
-        unregisterWalkieTalkieLatchHotKey?()
-        activeRealtimeStartupTask?.cancel()
-        activeRealtimeStartupTask = nil
-        activeStartID = nil
-        activeStartIsTriggerManaged = false
+        unregisterActiveRecordingHotKeys()
+        cancelRealtimeStartupTask()
+        clearActiveRecordingIdentity()
         isStartingRecording = false
-        activeRecordingID = nil
-        activeProcessingRecordingID = nil
-        microphoneRecovery.recordingEnded()
-        let audioURL = environment.recording.stopRecording()
-        endMicrophoneUseLock()
-        realtimeAudioSink.clear()
-        activeParakeetStreamSession?.cancel()
-        activeParakeetStreamSession = nil
+        let audioURL = stopRecorderAndReleaseMicrophone()
+        cancelParakeetStreamSession()
+        finishCancelledRecording(removing: audioURL)
+    }
+
+    private func cancelActiveRecording() {
+        guard case .recording = phase else { return }
+        unregisterActiveRecordingHotKeys()
+        cancelRealtimeStartupTask()
+        clearActiveRecordingIdentity()
+        let streamingTranscriber = activeStreamingTranscriber
+        activeStreamingTranscriber = nil
+        cancelParakeetStreamSession()
+        let audioURL = stopRecorderAndReleaseMicrophone()
+        if let streamingTranscriber {
+            Task { await streamingTranscriber.cancel() }
+        }
+        finishCancelledRecording(removing: audioURL)
+    }
+
+    /// The end of both cancel paths: delete the audio and draft, then show the idle state.
+    private func finishCancelledRecording(removing audioURL: URL?) {
         if let audioURL {
             try? FileManager.default.removeItem(at: audioURL)
         }
@@ -976,40 +903,45 @@ final class AppState: ObservableObject {
         prewarmRecordingStartResources()
     }
 
-    private func cancelActiveRecording() {
-        guard case .recording = phase else { return }
+    private func unregisterActiveRecordingHotKeys() {
         unregisterCancelHotKey?()
         unregisterWalkieTalkieLatchHotKey?()
+    }
+
+    private func cancelRealtimeStartupTask() {
         activeRealtimeStartupTask?.cancel()
         activeRealtimeStartupTask = nil
+    }
+
+    /// Forgets the start and the recording in flight.
+    private func clearActiveRecordingIdentity() {
         activeStartID = nil
         activeStartIsTriggerManaged = false
         activeRecordingID = nil
         activeProcessingRecordingID = nil
         microphoneRecovery.recordingEnded()
-        let streamingTranscriber = activeStreamingTranscriber
-        activeStreamingTranscriber = nil
-        activeParakeetStreamSession?.cancel()
-        activeParakeetStreamSession = nil
+    }
+
+    private func stopRecorderAndReleaseMicrophone() -> URL? {
         let audioURL = environment.recording.stopRecording()
         endMicrophoneUseLock()
         realtimeAudioSink.clear()
+        return audioURL
+    }
+
+    private func cancelParakeetStreamSession() {
+        activeParakeetStreamSession?.cancel()
+        activeParakeetStreamSession = nil
+    }
+
+    private func cancelLiveTranscription(
+        streamingTranscriber: OpenAIRealtimeTranscriber?,
+        parakeetStream: (any LocalLiveTranscriptionSession)?
+    ) {
         if let streamingTranscriber {
             Task { await streamingTranscriber.cancel() }
         }
-        if let audioURL {
-            try? FileManager.default.removeItem(at: audioURL)
-        }
-        discardActiveArchiveDraftIfNeeded()
-        session = .empty
-        showRawTranscript = false
-        phase = .idle
-        processingVisualState = .idle
-        recordingStartedAt = nil
-        walkieTalkieIsLatchedForDisplay = false
-        statusMessage = "Recording cancelled."
-        hideProcessingSignal?()
-        prewarmRecordingStartResources()
+        parakeetStream?.cancel()
     }
 
     func copyDisplayText() {
@@ -1188,8 +1120,7 @@ final class AppState: ObservableObject {
             microphoneRecovery.recordingEnded()
             activeRealtimeStartupTask = nil
             realtimeAudioSink.clear()
-            activeParakeetStreamSession?.cancel()
-            activeParakeetStreamSession = nil
+            cancelParakeetStreamSession()
             handleRecordingTriggerEvent(.startFailed(startID: startID, error: error.localizedDescription, at: Date()))
             failWithMessage(error.localizedDescription)
         }
@@ -1365,8 +1296,7 @@ final class AppState: ObservableObject {
                 return
             }
 
-            activeRealtimeStartupTask?.cancel()
-            activeRealtimeStartupTask = nil
+            cancelRealtimeStartupTask()
             if let streamingTranscriber = activeStreamingTranscriber {
                 activeStreamingTranscriber = nil
                 Task { await streamingTranscriber.cancel() }
@@ -1869,8 +1799,7 @@ final class AppState: ObservableObject {
     }
 
     private func failWithMessage(_ message: String) {
-        unregisterCancelHotKey?()
-        unregisterWalkieTalkieLatchHotKey?()
+        unregisterActiveRecordingHotKeys()
         resetRecordingTriggerState(reason: "terminal failure: \(message)")
         endMicrophoneUseLock()
         session.message = message
@@ -1924,12 +1853,13 @@ final class AppState: ObservableObject {
 
     private func beginMicrophoneUseLock(reason: String) {
         microphoneUseLockHeartbeatTask?.cancel()
-        MicrophoneUseLock.write(reason: reason)
+        let microphoneUseLock = environment.microphoneUseLock
+        microphoneUseLock.write(reason: reason)
         microphoneUseLockHeartbeatTask = Task {
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 10_000_000_000)
                 guard !Task.isCancelled else { return }
-                MicrophoneUseLock.write(reason: reason)
+                microphoneUseLock.write(reason: reason)
             }
         }
     }
@@ -1937,7 +1867,7 @@ final class AppState: ObservableObject {
     private func endMicrophoneUseLock() {
         microphoneUseLockHeartbeatTask?.cancel()
         microphoneUseLockHeartbeatTask = nil
-        MicrophoneUseLock.clear()
+        environment.microphoneUseLock.clear()
     }
 
     private func latestOpenAIRealtimeDiagnostics() -> OpenAIRealtimeDiagnostics? {
@@ -2186,37 +2116,4 @@ private final class OpenAIRealtimeAudioSink {
         return lines
     }
 
-}
-
-private enum MicrophoneUseLock {
-    private static var directoryURL: URL {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first ??
-            FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support", isDirectory: true)
-        return base.appendingPathComponent("AutoImproveRecorder", isDirectory: true)
-    }
-
-    static var url: URL {
-        directoryURL.appendingPathComponent("mic-active.lock")
-    }
-
-    static func write(reason: String) {
-        let body = """
-        pid=\(ProcessInfo.processInfo.processIdentifier)
-        reason=\(reason)
-        updatedAt=\(ISO8601DateFormatter().string(from: Date()))
-        """
-        let fileManager = FileManager.default
-        try? fileManager.createDirectory(
-            at: directoryURL,
-            withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700]
-        )
-        try? fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directoryURL.path)
-        try? body.write(to: url, atomically: true, encoding: .utf8)
-        try? fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
-    }
-
-    static func clear() {
-        try? FileManager.default.removeItem(at: url)
-    }
 }

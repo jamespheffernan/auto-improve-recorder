@@ -1,5 +1,5 @@
 import XCTest
-@testable import AutoImproveRecorderDictionaryCore
+@testable import AutoImproveRecorderCore
 
 final class MicrophoneRecoveryTests: XCTestCase {
     private let startedAt = Date(timeIntervalSince1970: 1_000)

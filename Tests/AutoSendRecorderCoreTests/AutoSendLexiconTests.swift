@@ -1,6 +1,6 @@
 import Foundation
 import XCTest
-@testable import AutoImproveRecorderDictionaryCore
+@testable import AutoImproveRecorderCore
 @testable import AutoSendRecorderCore
 
 /// ASR wiring as AutoSendState builds it: SharedReplacementRules.process feeds `processTranscript`,

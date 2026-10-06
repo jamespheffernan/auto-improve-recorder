@@ -1,6 +1,6 @@
 import CoreGraphics
 import XCTest
-@testable import AutoImproveRecorderDictionaryCore
+@testable import AutoImproveRecorderCore
 
 final class DeliveryCommandTests: XCTestCase {
     func testEnterDescriptorHasNoModifierFlags() {

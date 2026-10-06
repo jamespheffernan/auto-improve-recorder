@@ -1,6 +1,6 @@
 import Foundation
 import XCTest
-@testable import AutoImproveRecorderDictionaryCore
+@testable import AutoImproveRecorderCore
 
 final class PhononTranscriberTests: XCTestCase {
     func testValidResponsePreservesPunctuation() throws {

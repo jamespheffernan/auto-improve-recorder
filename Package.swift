@@ -8,59 +8,13 @@ let package = Package(
     ],
     targets: [
         .target(
-            name: "AutoImproveRecorderDictionaryCore",
-            path: "AutoImproveRecorder/Support",
+            name: "AutoImproveRecorderCore",
+            path: "AutoImproveRecorder",
             exclude: [
-                "AudioInputDeviceDiscovery.swift",
-                "HotKeyCenter.swift",
-                "KeychainStore.swift",
-                "MicrophoneDeviceObserver.swift",
-                "RecordingTrigger",
-                "SecretsStore.swift"
-            ],
-            sources: [
-                "AccessibilityPasteController.swift",
-                "AppDeliveryRules.swift",
-                "DeliveryOptimization.swift",
-                "DeliveryService.swift",
-                "DiagnosticsStore.swift",
-                "DictionaryLexicon.swift",
-                "DictionaryStore.swift",
-                "LocalModelInventory.swift",
-                "LocalRuntimeHealth.swift",
-                "LocalRuntimeProbe.swift",
-                "PhononTranscriber.swift",
-                "MicrophoneDevice.swift",
-                "MicrophoneHealthMonitor.swift",
-                "MicrophoneRecovery.swift",
-                "RealtimeDiagnosticsRedactor.swift",
-                "TranscriptEditValueGate.swift",
-                "TranscriptTextNormalizer.swift",
-                "TranscriptArchiveStore.swift",
-                "TranscriptArchiveClient.swift"
-            ]
-        ),
-        .target(
-            name: "AutoImproveRecorderAudioPipeline",
-            path: "AutoImproveRecorder/Recording",
-            exclude: [
-                "AudioRecorder.swift",
-                "RecordingClient.swift"
-            ],
-            sources: [
-                "AudioPipelineTypes.swift",
-                "RealtimePCMChunker.swift",
-                "BoundedAudioQueue.swift",
-                "ArchiveAudioWriter.swift",
-                "AudioCaptureFanout.swift"
-            ]
-        ),
-        .target(
-            name: "AutoImproveRecorderTriggerCore",
-            path: "AutoImproveRecorder/Support/RecordingTrigger",
-            sources: [
-                "RecordingTriggerModels.swift",
-                "RecordingTriggerController.swift"
+                "AppIcon.icns",
+                "Assets.xcassets",
+                "AutoImproveRecorderApp.swift",
+                "Info.plist"
             ]
         ),
         .target(
@@ -87,28 +41,33 @@ let package = Package(
             ]
         ),
         .testTarget(
+            name: "AutoImproveRecorderAppStateTests",
+            dependencies: ["AutoImproveRecorderCore"],
+            path: "Tests/AutoImproveRecorderAppStateTests"
+        ),
+        .testTarget(
             name: "AutoImproveRecorderDictionaryCoreTests",
-            dependencies: ["AutoImproveRecorderDictionaryCore"],
+            dependencies: ["AutoImproveRecorderCore"],
             path: "Tests/AutoImproveRecorderDictionaryCoreTests"
         ),
         .testTarget(
             name: "AutoImproveRecorderLocalModelTests",
-            dependencies: ["AutoImproveRecorderDictionaryCore"],
+            dependencies: ["AutoImproveRecorderCore"],
             path: "Tests/AutoImproveRecorderLocalModelTests"
         ),
         .testTarget(
             name: "AutoImproveRecorderAudioPipelineTests",
-            dependencies: ["AutoImproveRecorderAudioPipeline"],
+            dependencies: ["AutoImproveRecorderCore"],
             path: "Tests/AutoImproveRecorderAudioPipelineTests"
         ),
         .testTarget(
             name: "AutoImproveRecorderTriggerCoreTests",
-            dependencies: ["AutoImproveRecorderTriggerCore"],
+            dependencies: ["AutoImproveRecorderCore"],
             path: "Tests/AutoImproveRecorderTriggerCoreTests"
         ),
         .testTarget(
             name: "AutoSendRecorderCoreTests",
-            dependencies: ["AutoSendRecorderCore", "AutoImproveRecorderDictionaryCore"],
+            dependencies: ["AutoSendRecorderCore", "AutoImproveRecorderCore"],
             path: "Tests/AutoSendRecorderCoreTests"
         )
     ]

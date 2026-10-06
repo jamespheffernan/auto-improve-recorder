@@ -1,5 +1,5 @@
 import XCTest
-@testable import AutoImproveRecorderDictionaryCore
+@testable import AutoImproveRecorderCore
 
 final class LocalModelModeTests: XCTestCase {
     func testPresetActionMappings() {

@@ -1,5 +1,5 @@
 import XCTest
-@testable import AutoImproveRecorderDictionaryCore
+@testable import AutoImproveRecorderCore
 
 enum LexiconFixture {
     /// The seed rule as the generator writes it, plus terms at different scores, one inactive term

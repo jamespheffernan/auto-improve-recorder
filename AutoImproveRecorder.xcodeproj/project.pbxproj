@@ -66,6 +66,7 @@
 		AIRDR0000000000000000001 /* AppDeliveryRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRDR0000000000000000000 /* AppDeliveryRules.swift */; };
 		AIREDITGATE000000000001 /* TranscriptEditValueGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIREDITGATE000000000000 /* TranscriptEditValueGate.swift */; };
 		AIRENV0000000000000000001 /* AppEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRENV0000000000000000000 /* AppEnvironment.swift */; };
+		AIRENVCLIENTS00000000001 /* AppEnvironmentClients.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRENVCLIENTS00000000000 /* AppEnvironmentClients.swift */; };
 		AIRIS0000000000000000001 /* ImprovementService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRIS0000000000000000000 /* ImprovementService.swift */; };
 		AIRLMHEALTH000000000001 /* LocalRuntimeHealth.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRLMHEALTH000000000000 /* LocalRuntimeHealth.swift */; };
 		AIRLMINV000000000000001 /* LocalModelInventory.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRLMINV000000000000000 /* LocalModelInventory.swift */; };
@@ -174,6 +175,7 @@
 		AIRDR0000000000000000000 /* AppDeliveryRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDeliveryRules.swift; sourceTree = "<group>"; };
 		AIREDITGATE000000000000 /* TranscriptEditValueGate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptEditValueGate.swift; sourceTree = "<group>"; };
 		AIRENV0000000000000000000 /* AppEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppEnvironment.swift; sourceTree = "<group>"; };
+		AIRENVCLIENTS00000000000 /* AppEnvironmentClients.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppEnvironmentClients.swift; sourceTree = "<group>"; };
 		AIRIS0000000000000000000 /* ImprovementService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImprovementService.swift; sourceTree = "<group>"; };
 		AIRLMHEALTH000000000000 /* LocalRuntimeHealth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalRuntimeHealth.swift; sourceTree = "<group>"; };
 		AIRLMINV000000000000000 /* LocalModelInventory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalModelInventory.swift; sourceTree = "<group>"; };
@@ -258,6 +260,7 @@
 				AIR0000000000000000000003 /* AppState.swift */,
 				AIR0000000000000000000004 /* Models.swift */,
 				AIRENV0000000000000000000 /* AppEnvironment.swift */,
+				AIRENVCLIENTS00000000000 /* AppEnvironmentClients.swift */,
 				AIRSET0000000000000000000 /* AppSettingsStore.swift */,
 				AIRPERM00000000000000000 /* PermissionsClient.swift */,
 				AIRTS0000000000000000000 /* TranscriptionService.swift */,
@@ -540,6 +543,7 @@
 				AIR0000000000000000000012 /* AppState.swift in Sources */,
 				AIR0000000000000000000013 /* Models.swift in Sources */,
 				AIRENV0000000000000000001 /* AppEnvironment.swift in Sources */,
+				AIRENVCLIENTS00000000001 /* AppEnvironmentClients.swift in Sources */,
 				AIRSET0000000000000000001 /* AppSettingsStore.swift in Sources */,
 				AIRPERM00000000000000001 /* PermissionsClient.swift in Sources */,
 				AIRTS0000000000000000001 /* TranscriptionService.swift in Sources */,

@@ -1,5 +1,5 @@
 import XCTest
-@testable import AutoImproveRecorderDictionaryCore
+@testable import AutoImproveRecorderCore
 
 final class TranscriptTextNormalizerTests: XCTestCase {
     func testNormalizesCommonCardinalNumbers() {

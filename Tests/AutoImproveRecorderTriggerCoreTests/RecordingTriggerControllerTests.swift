@@ -1,5 +1,5 @@
 import XCTest
-@testable import AutoImproveRecorderTriggerCore
+@testable import AutoImproveRecorderCore
 
 final class RecordingTriggerControllerTests: XCTestCase {
     private let base = Date(timeIntervalSince1970: 1_000)

@@ -1,6 +1,6 @@
 import AVFoundation
 import XCTest
-@testable import AutoImproveRecorderAudioPipeline
+@testable import AutoImproveRecorderCore
 
 final class AudioPipelineComponentTests: XCTestCase {
     func testBoundedAudioQueueDropsOldestElementsWhenByteCapIsExceeded() {

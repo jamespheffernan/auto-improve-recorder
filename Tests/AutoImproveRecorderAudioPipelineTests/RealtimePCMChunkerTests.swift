@@ -1,7 +1,7 @@
 import AVFoundation
 import CryptoKit
 import XCTest
-@testable import AutoImproveRecorderAudioPipeline
+@testable import AutoImproveRecorderCore
 
 final class RealtimePCMChunkerTests: XCTestCase {
     func testEmitsExactDefault100msChunkWhenInputAlreadyMatchesRealtimeFormat() throws {

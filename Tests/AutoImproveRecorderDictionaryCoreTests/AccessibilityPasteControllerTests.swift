@@ -1,6 +1,6 @@
 import AppKit
 import XCTest
-@testable import AutoImproveRecorderDictionaryCore
+@testable import AutoImproveRecorderCore
 
 @MainActor
 final class AccessibilityPasteControllerTests: XCTestCase {
