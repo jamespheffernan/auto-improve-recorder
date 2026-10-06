@@ -132,6 +132,44 @@ struct AutoSendRunSnapshot: Equatable, Sendable {
     var failureKind: AutoSendFailureKind?
     /// True when the run ended because the user cancelled it.
     var wasCancelled = false
+    /// Set when the capture side reports that the main microphone delivers no sound in this run.
+    var microphoneWarning: AutoSendMicrophoneWarning?
+    /// The backup microphone's name when this run's text came from the backup recording.
+    var backupMicrophoneUsed: String?
+}
+
+/// The main microphone is delivering exact silence during a recording.
+struct AutoSendMicrophoneWarning: Equatable, Sendable {
+    var microphoneName: String
+    /// The backup microphone that is recording, or nil when there is none.
+    var backupMicrophoneName: String?
+
+    var message: String {
+        guard let backupMicrophoneName else {
+            return "No sound from \(microphoneName)."
+        }
+        return "No sound from \(microphoneName). Recording from \(backupMicrophoneName)."
+    }
+}
+
+/// A second recording of the same run, made from another microphone.
+struct AutoSendBackupRecording: Equatable, Sendable {
+    var audioURL: URL
+    var microphoneName: String
+    /// True when the silence watch reported the main microphone during this recording.
+    var primaryWasSilent: Bool
+}
+
+/// Decides which of a run's two texts to use.
+enum AutoSendBackupTranscript {
+    /// True when the backup's text has more words than the main text.
+    static func prefersBackup(mainText: String, backupText: String) -> Bool {
+        wordCount(backupText) > wordCount(mainText)
+    }
+
+    private static func wordCount(_ text: String) -> Int {
+        text.split(whereSeparator: { $0.isWhitespace }).count
+    }
 }
 
 struct AutoSendOperationID: Equatable, Hashable, Sendable {
@@ -287,6 +325,14 @@ protocol AutoSendCaptureService {
     ) async throws
     func stop(operationID: AutoSendOperationID) async throws -> URL
     func cancel(operationID: AutoSendOperationID) async
+    /// The backup recording of a run whose `stop` has returned, or nil when it has none.
+    func backupRecording(operationID: AutoSendOperationID) async -> AutoSendBackupRecording?
+}
+
+extension AutoSendCaptureService {
+    func backupRecording(operationID: AutoSendOperationID) async -> AutoSendBackupRecording? {
+        nil
+    }
 }
 
 protocol AutoSendTranscriptService {
@@ -323,6 +369,8 @@ struct AutoSendWorkflowEnvironment: @unchecked Sendable {
     /// Replacement rules and spoken-number normalisation, applied to the recogniser's output.
     let processTranscript: @Sendable (String) -> AutoSendProcessedTranscript
     let archive: @Sendable (AutoSendTranscriptEvidence) -> Void
+    /// Deletes the one of a run's two recordings whose text was not used.
+    let discardRecording: @Sendable (URL) -> Void
     let runDidChange: @Sendable (AutoSendRunSnapshot) -> Void
 
     init(
@@ -333,6 +381,7 @@ struct AutoSendWorkflowEnvironment: @unchecked Sendable {
             AutoSendProcessedTranscript(afterRules: $0, final: $0)
         },
         archive: @escaping @Sendable (AutoSendTranscriptEvidence) -> Void = { _ in },
+        discardRecording: @escaping @Sendable (URL) -> Void = { _ in },
         runDidChange: @escaping @Sendable (AutoSendRunSnapshot) -> Void = { _ in }
     ) {
         self.capture = capture
@@ -340,6 +389,7 @@ struct AutoSendWorkflowEnvironment: @unchecked Sendable {
         self.delivery = delivery
         self.processTranscript = processTranscript
         self.archive = archive
+        self.discardRecording = discardRecording
         self.runDidChange = runDidChange
     }
 }
@@ -373,6 +423,8 @@ actor AutoSendWorkflow {
         snapshot.deliveryDisposition = nil
         snapshot.failureKind = nil
         snapshot.wasCancelled = false
+        snapshot.microphoneWarning = nil
+        snapshot.backupMicrophoneUsed = nil
         publish(.starting)
 
         do {
@@ -413,19 +465,83 @@ actor AutoSendWorkflow {
             }
             lastAudioURL = audioURL
 
-            let transcript = try await environment.transcription.transcribe(
-                audioURL: audioURL,
-                operationID: operationID
-            )
+            var mainFailure: Error?
+            var transcript = ""
+            do {
+                transcript = try await environment.transcription.transcribe(
+                    audioURL: audioURL,
+                    operationID: operationID
+                )
+            } catch {
+                mainFailure = error
+            }
             guard isActive(operationID) else {
                 await environment.transcription.cancel(operationID: operationID)
                 return false
             }
 
-            let processed = environment.processTranscript(transcript)
-            let normalized = processed.final.trimmingCharacters(in: .whitespacesAndNewlines)
+            var processed = AutoSendProcessedTranscript(afterRules: "", final: "")
+            if mainFailure == nil {
+                processed = environment.processTranscript(transcript)
+            }
+            var normalized = processed.final.trimmingCharacters(in: .whitespacesAndNewlines)
+            var usedAudioURL = audioURL
+            // The main recording's handle is spent, so the backup is read from its saved file.
+            let backup = await environment.capture.backupRecording(operationID: operationID)
+            guard isActive(operationID) else {
+                await environment.transcription.cancel(operationID: operationID)
+                return false
+            }
+            if let backup {
+                var backupWasRead = true
+                if mainFailure != nil || normalized.isEmpty || backup.primaryWasSilent {
+                    do {
+                        let backupTranscript = try await environment.transcription.transcribe(
+                            audioURL: backup.audioURL,
+                            operationID: operationID
+                        )
+                        guard isActive(operationID) else {
+                            environment.discardRecording(backup.audioURL)
+                            await environment.transcription.cancel(operationID: operationID)
+                            return false
+                        }
+                        let backupProcessed = environment.processTranscript(backupTranscript)
+                        let backupNormalized = backupProcessed.final
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                        if AutoSendBackupTranscript.prefersBackup(
+                            mainText: normalized,
+                            backupText: backupNormalized
+                        ) {
+                            mainFailure = nil
+                            transcript = backupTranscript
+                            processed = backupProcessed
+                            normalized = backupNormalized
+                            usedAudioURL = backup.audioURL
+                            snapshot.backupMicrophoneUsed = backup.microphoneName
+                        }
+                    } catch {
+                        backupWasRead = false
+                    }
+                }
+                guard isActive(operationID) else {
+                    environment.discardRecording(backup.audioURL)
+                    await environment.transcription.cancel(operationID: operationID)
+                    return false
+                }
+                lastAudioURL = usedAudioURL
+                // Both files stay when the backup could not be read, so no audio is lost.
+                if backupWasRead {
+                    environment.discardRecording(
+                        usedAudioURL == audioURL ? backup.audioURL : audioURL
+                    )
+                }
+            }
+            if let mainFailure {
+                throw mainFailure
+            }
+
             evidence = AutoSendTranscriptEvidence(
-                audioURL: audioURL,
+                audioURL: usedAudioURL,
                 recognizerText: transcript,
                 afterRulesText: processed.afterRules,
                 finalText: normalized
@@ -481,6 +597,21 @@ actor AutoSendWorkflow {
         publish(.idle)
         await environment.capture.cancel(operationID: operationID)
         await environment.transcription.cancel(operationID: operationID)
+    }
+
+    /// The capture side reports that the main microphone delivers no sound. The first report of
+    /// a run is published; the recording continues.
+    func reportMicrophoneWarning(
+        _ warning: AutoSendMicrophoneWarning,
+        operationID: AutoSendOperationID
+    ) {
+        guard isActive(operationID),
+              snapshot.microphoneWarning == nil,
+              phase == .starting || phase == .recording else {
+            return
+        }
+        snapshot.microphoneWarning = warning
+        publish(phase)
     }
 
     private func makeOperationID() -> AutoSendOperationID {
@@ -627,6 +758,8 @@ enum AutoSendExperienceState: Equatable, Sendable, Identifiable {
     case idle
     case starting
     case recording
+    /// Recording while the main microphone delivers no sound. The message names the microphones.
+    case recordingWarning(String)
     case finalizing
     case delivering
     case sent
@@ -643,6 +776,7 @@ enum AutoSendExperienceState: Equatable, Sendable, Identifiable {
         case .idle: return "idle"
         case .starting: return "starting"
         case .recording: return "recording"
+        case .recordingWarning: return "recording-warning"
         case .finalizing: return "finalizing"
         case .delivering: return "delivering"
         case .sent: return "sent"
@@ -661,6 +795,7 @@ enum AutoSendExperienceState: Equatable, Sendable, Identifiable {
         case .idle: return "Ready"
         case .starting: return "Listening"
         case .recording: return "Recording"
+        case .recordingWarning: return "No sound"
         case .finalizing: return "Finishing"
         case .delivering: return "Sending"
         case .sent: return "Sent"
@@ -694,7 +829,8 @@ enum AutoSendExperienceState: Equatable, Sendable, Identifiable {
             return "Your app rule disabled sending"
         case .suppressed:
             return "The destination was not safe to send to"
-        case .noTarget(let message), .failed(let message), .permissionNeeded(let message):
+        case .recordingWarning(let message), .noTarget(let message), .failed(let message),
+             .permissionNeeded(let message):
             return message
         case .hotKeyConflict:
             return "Another app uses the recording shortcut"
@@ -706,6 +842,7 @@ enum AutoSendExperienceState: Equatable, Sendable, Identifiable {
         case .idle: return "paperplane"
         case .starting: return "mic"
         case .recording: return "waveform"
+        case .recordingWarning: return "mic.slash.fill"
         case .finalizing: return "paperplane"
         case .delivering: return "paperplane.fill"
         case .sent: return "checkmark.circle.fill"
@@ -729,7 +866,7 @@ enum AutoSendExperienceState: Equatable, Sendable, Identifiable {
             return .success
         case .cancelled, .pastedWithoutSend:
             return .informational
-        case .suppressed, .noTarget, .hotKeyConflict, .permissionNeeded:
+        case .recordingWarning, .suppressed, .noTarget, .hotKeyConflict, .permissionNeeded:
             return .warning
         case .failed:
             return .failure
@@ -750,7 +887,7 @@ enum AutoSendExperienceState: Equatable, Sendable, Identifiable {
             return .seconds(2)
         case .failed, .hotKeyConflict, .permissionNeeded:
             return .seconds(4)
-        case .idle, .starting, .recording, .finalizing, .delivering:
+        case .idle, .starting, .recording, .recordingWarning, .finalizing, .delivering:
             return nil
         }
     }
@@ -760,6 +897,7 @@ enum AutoSendExperienceState: Equatable, Sendable, Identifiable {
         .idle,
         .starting,
         .recording,
+        .recordingWarning("No sound from BOYA mini 2. Recording from Anker PowerConf C200."),
         .finalizing,
         .delivering,
         .sent,
@@ -839,13 +977,20 @@ extension AutoSendRunSnapshot {
         case .starting:
             return AutoSendRunPresentation(experienceState: .starting, statusMessage: "Listening...")
         case .recording:
+            let recordingMessage = AutoSendRunPresentation.recordingMessage(
+                triggerMode: triggerMode,
+                shortcutName: shortcutName,
+                isLatched: isLatched
+            )
+            if let microphoneWarning {
+                return AutoSendRunPresentation(
+                    experienceState: .recordingWarning(microphoneWarning.message),
+                    statusMessage: "\(microphoneWarning.message) \(recordingMessage)"
+                )
+            }
             return AutoSendRunPresentation(
                 experienceState: .recording,
-                statusMessage: AutoSendRunPresentation.recordingMessage(
-                    triggerMode: triggerMode,
-                    shortcutName: shortcutName,
-                    isLatched: isLatched
-                )
+                statusMessage: recordingMessage
             )
         case .transcribing:
             return AutoSendRunPresentation(
@@ -858,39 +1003,48 @@ extension AutoSendRunSnapshot {
                 statusMessage: "Pasting transcript..."
             )
         case .ready:
-            switch deliveryDisposition {
-            case .sent:
-                return AutoSendRunPresentation(experienceState: .sent, statusMessage: "Pasted and sent.")
-            case .pastedWithoutSending:
-                return AutoSendRunPresentation(
-                    experienceState: .pastedWithoutSend,
-                    statusMessage: "Pasted. Sending is off for this app."
-                )
-            case .sendSuppressed(let message):
-                return AutoSendRunPresentation(experienceState: .suppressed, statusMessage: message)
-            case .noPasteTarget(let message):
-                return AutoSendRunPresentation(experienceState: .noTarget(message), statusMessage: message)
-            case .copied(let message):
-                return AutoSendRunPresentation(experienceState: .pastedWithoutSend, statusMessage: message)
-            case .permissionRequired(let message):
-                return AutoSendRunPresentation(
-                    experienceState: .permissionNeeded(message),
-                    statusMessage: message
-                )
-            case .pasteFailed(let message):
-                return AutoSendRunPresentation(experienceState: .failed(message), statusMessage: message)
-            case .none:
-                return AutoSendRunPresentation(
-                    experienceState: .pastedWithoutSend,
-                    statusMessage: "Transcript ready."
-                )
+            var presentation = deliveredPresentation
+            if let backupMicrophoneUsed {
+                presentation.statusMessage += " Used the backup microphone (\(backupMicrophoneUsed))."
             }
+            return presentation
         case .failed(let message):
             return AutoSendRunPresentation(
                 experienceState: failureKind == .microphonePermission
                     ? .permissionNeeded(message)
                     : .failed(message),
                 statusMessage: message
+            )
+        }
+    }
+
+    /// What a finished run shows for its delivery disposition.
+    private var deliveredPresentation: AutoSendRunPresentation {
+        switch deliveryDisposition {
+        case .sent:
+            return AutoSendRunPresentation(experienceState: .sent, statusMessage: "Pasted and sent.")
+        case .pastedWithoutSending:
+            return AutoSendRunPresentation(
+                experienceState: .pastedWithoutSend,
+                statusMessage: "Pasted. Sending is off for this app."
+            )
+        case .sendSuppressed(let message):
+            return AutoSendRunPresentation(experienceState: .suppressed, statusMessage: message)
+        case .noPasteTarget(let message):
+            return AutoSendRunPresentation(experienceState: .noTarget(message), statusMessage: message)
+        case .copied(let message):
+            return AutoSendRunPresentation(experienceState: .pastedWithoutSend, statusMessage: message)
+        case .permissionRequired(let message):
+            return AutoSendRunPresentation(
+                experienceState: .permissionNeeded(message),
+                statusMessage: message
+            )
+        case .pasteFailed(let message):
+            return AutoSendRunPresentation(experienceState: .failed(message), statusMessage: message)
+        case .none:
+            return AutoSendRunPresentation(
+                experienceState: .pastedWithoutSend,
+                statusMessage: "Transcript ready."
             )
         }
     }

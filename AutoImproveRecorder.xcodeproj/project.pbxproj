@@ -74,6 +74,12 @@
 		AIRMIC000000000000000001 /* MicrophoneDevice.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRMIC000000000000000000 /* MicrophoneDevice.swift */; };
 		AIRMIC000000000000000002 /* MicrophoneDevice.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRMIC000000000000000000 /* MicrophoneDevice.swift */; };
 		AIRMICHEALTH0000000001 /* MicrophoneHealthMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRMICHEALTH0000000000 /* MicrophoneHealthMonitor.swift */; };
+		AIRBACKUPMIC00000001 /* BackupMicrophone.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRBACKUPMIC00000000 /* BackupMicrophone.swift */; };
+		ASRBACKUPMIC00000001 /* BackupMicrophone.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRBACKUPMIC00000000 /* BackupMicrophone.swift */; };
+		AIRBACKUPMICREC00000001 /* BackupMicrophoneRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRBACKUPMICREC00000000 /* BackupMicrophoneRecorder.swift */; };
+		ASRBACKUPMICREC00000001 /* BackupMicrophoneRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRBACKUPMICREC00000000 /* BackupMicrophoneRecorder.swift */; };
+		AIRSILENCEWATCH00000001 /* MicrophoneSilenceWatch.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRSILENCEWATCH00000000 /* MicrophoneSilenceWatch.swift */; };
+		ASRSILENCEWATCH00000001 /* MicrophoneSilenceWatch.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRSILENCEWATCH00000000 /* MicrophoneSilenceWatch.swift */; };
 		AIRMICRECOVERY00000001 /* MicrophoneRecovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRMICRECOVERY00000000 /* MicrophoneRecovery.swift */; };
 		AIRPKLIVESAFETY000001 /* ParakeetLiveSafety.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRPKLIVESAFETY000000 /* ParakeetLiveSafety.swift */; };
 		AIRPKRESIDENT000000001 /* ParakeetResidentTranscriber.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRPKRESIDENT000000000 /* ParakeetResidentTranscriber.swift */; };
@@ -199,6 +205,9 @@
 		AIRLMPROBE0000000000000 /* LocalRuntimeProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalRuntimeProbe.swift; sourceTree = "<group>"; };
 		AIRMIC000000000000000000 /* MicrophoneDevice.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicrophoneDevice.swift; sourceTree = "<group>"; };
 		AIRMICHEALTH0000000000 /* MicrophoneHealthMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicrophoneHealthMonitor.swift; sourceTree = "<group>"; };
+		AIRBACKUPMIC00000000 /* BackupMicrophone.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackupMicrophone.swift; sourceTree = "<group>"; };
+		AIRBACKUPMICREC00000000 /* BackupMicrophoneRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackupMicrophoneRecorder.swift; sourceTree = "<group>"; };
+		AIRSILENCEWATCH00000000 /* MicrophoneSilenceWatch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicrophoneSilenceWatch.swift; sourceTree = "<group>"; };
 		AIRMICRECOVERY00000000 /* MicrophoneRecovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicrophoneRecovery.swift; sourceTree = "<group>"; };
 		AIRPKLIVESAFETY000000 /* ParakeetLiveSafety.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ParakeetLiveSafety.swift; sourceTree = "<group>"; };
 		AIRPKRESIDENT000000000 /* ParakeetResidentTranscriber.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ParakeetResidentTranscriber.swift; sourceTree = "<group>"; };
@@ -379,6 +388,9 @@
 				AIRMIC000000000000000000 /* MicrophoneDevice.swift */,
 				AIRMICHEALTH0000000000 /* MicrophoneHealthMonitor.swift */,
 				AIRMICRECOVERY00000000 /* MicrophoneRecovery.swift */,
+				AIRBACKUPMIC00000000 /* BackupMicrophone.swift */,
+				AIRBACKUPMICREC00000000 /* BackupMicrophoneRecorder.swift */,
+				AIRSILENCEWATCH00000000 /* MicrophoneSilenceWatch.swift */,
 				AIRMICOBS00000000000000 /* MicrophoneDeviceObserver.swift */,
 				AIRLMINV000000000000000 /* LocalModelInventory.swift */,
 				AIRLMHEALTH000000000000 /* LocalRuntimeHealth.swift */,
@@ -620,6 +632,9 @@
 				AIRMIC000000000000000001 /* MicrophoneDevice.swift in Sources */,
 				AIRMICHEALTH0000000001 /* MicrophoneHealthMonitor.swift in Sources */,
 				AIRMICRECOVERY00000001 /* MicrophoneRecovery.swift in Sources */,
+				AIRBACKUPMIC00000001 /* BackupMicrophone.swift in Sources */,
+				AIRBACKUPMICREC00000001 /* BackupMicrophoneRecorder.swift in Sources */,
+				AIRSILENCEWATCH00000001 /* MicrophoneSilenceWatch.swift in Sources */,
 				AIRMICOBS00000000000001 /* MicrophoneDeviceObserver.swift in Sources */,
 				AIRLMINV000000000000001 /* LocalModelInventory.swift in Sources */,
 				AIRLMHEALTH000000000001 /* LocalRuntimeHealth.swift in Sources */,
@@ -710,6 +725,9 @@
 				ASR0000000000000000000024 /* MicrophoneDevice.swift in Sources */,
 				ASRMICHEALTH00000000001 /* MicrophoneHealthMonitor.swift in Sources */,
 				ASRMICRECOVERY000000001 /* MicrophoneRecovery.swift in Sources */,
+				ASRBACKUPMIC00000001 /* BackupMicrophone.swift in Sources */,
+				ASRBACKUPMICREC00000001 /* BackupMicrophoneRecorder.swift in Sources */,
+				ASRSILENCEWATCH00000001 /* MicrophoneSilenceWatch.swift in Sources */,
 				ASR0000000000000000000025 /* RealtimePCMChunker.swift in Sources */,
 				ASR0000000000000000000026 /* AutoSendHUD.swift in Sources */,
 				ASR0000000000000000000027 /* AutoSendStatePlayground.swift in Sources */,

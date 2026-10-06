@@ -226,6 +226,8 @@ final class AutoSendAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
         switch state.experienceState {
         case .recording:
             announcement = ("recording", "Recording started.")
+        case .recordingWarning(let message):
+            announcement = ("recording-warning:\(message)", message)
         case .sent:
             announcement = ("sent", "Transcript sent.")
         case .cancelled:

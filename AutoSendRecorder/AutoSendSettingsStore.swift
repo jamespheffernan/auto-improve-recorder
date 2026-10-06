@@ -130,6 +130,16 @@ final class AutoSendSettingsStore: ObservableObject {
     private static let onboardingCompletedKey = "onboardingCompleted"
     private static let wirelessRecorderEnabledKey = "wirelessRecorderEnabled"
     private static let transcriptionModelKey = "transcriptionModel"
+    /// Read at the start of every recording; it has no control in the settings window.
+    nonisolated static let backupMicrophoneRecordingEnabledKey = "backupMicrophoneRecordingEnabled"
+
+    /// Whether an external microphone's recording gets a backup recording. On unless set to false.
+    nonisolated static func backupMicrophoneRecordingEnabled(in defaults: UserDefaults? = nil) -> Bool {
+        let defaults = defaults ?? applicationDefaults
+        guard defaults.object(forKey: backupMicrophoneRecordingEnabledKey) != nil else { return true }
+        return defaults.bool(forKey: backupMicrophoneRecordingEnabledKey)
+    }
+
     @Published var transcriptionModel: AutoSendTranscriptionModel {
         didSet {
             defaults.set(transcriptionModel.rawValue, forKey: Self.transcriptionModelKey)
@@ -214,7 +224,7 @@ final class AutoSendSettingsStore: ObservableObject {
         defaults.object(forKey: Self.preferredMicrophoneIDKey) != nil
     }
 
-    private static var applicationDefaults: UserDefaults {
+    private nonisolated static var applicationDefaults: UserDefaults {
         if Bundle.main.bundleIdentifier == defaultsSuiteName { return .standard }
         return UserDefaults(suiteName: AutoSendSettingsStore.defaultsSuiteName) ?? .standard
     }

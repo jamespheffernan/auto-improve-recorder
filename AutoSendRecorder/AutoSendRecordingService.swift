@@ -18,9 +18,28 @@ final class AutoSendRecordingService: AutoSendCaptureService, @unchecked Sendabl
     private var preferredMicrophoneID: String
     private var microphoneRecovery = MicrophoneRecovery(retryCooldown: 30)
     private let microphoneUseLock = AutoSendMicrophoneUseLock()
+    private let backupRecorder: BackupMicrophoneRecorder
+    private let backupMicrophoneEnabled: @Sendable () -> Bool
+    private var microphoneWarningHandler: (@Sendable (AutoSendOperationID, AutoSendMicrophoneWarning) -> Void)?
+    /// The current recording's backup, from the moment its start is requested. `isRunning`
+    /// becomes true when the backup microphone has opened.
+    private var activeBackup: (operationID: AutoSendOperationID, microphoneName: String, isRunning: Bool)?
+    /// The stopped recording's backup, held until the workflow asks for it.
+    private var stoppedBackup: (
+        operationID: AutoSendOperationID,
+        stop: BackupMicrophoneStop,
+        microphoneName: String,
+        primaryWasSilent: Bool
+    )?
+    /// The newest operation whose main microphone the silence watch reported.
+    private var silenceReportedOperationID: AutoSendOperationID?
 
     init(
         recorder: AudioRecorder = AudioRecorder(),
+        backupRecorder: BackupMicrophoneRecorder = BackupMicrophoneRecorder(),
+        backupMicrophoneEnabled: @escaping @Sendable () -> Bool = {
+            AutoSendSettingsStore.backupMicrophoneRecordingEnabled()
+        },
         wirelessProvider: @escaping @Sendable () -> AutoSendWirelessBridge = { .shared },
         transcription: AutoSendParakeetService,
         preferredMicrophoneID: String = "",
@@ -30,6 +49,8 @@ final class AutoSendRecordingService: AutoSendCaptureService, @unchecked Sendabl
         }
     ) {
         self.recorder = recorder
+        self.backupRecorder = backupRecorder
+        self.backupMicrophoneEnabled = backupMicrophoneEnabled
         self.wirelessProvider = wirelessProvider
         self.transcription = transcription
         self.preferredMicrophoneID = preferredMicrophoneID
@@ -40,6 +61,15 @@ final class AutoSendRecordingService: AutoSendCaptureService, @unchecked Sendabl
     func updatePreferredMicrophoneID(_ id: String) {
         stateLock.lock()
         preferredMicrophoneID = id
+        stateLock.unlock()
+    }
+
+    /// Receives the first silent-microphone report of each recording. It runs on the audio thread.
+    func setMicrophoneWarningHandler(
+        _ handler: @escaping @Sendable (AutoSendOperationID, AutoSendMicrophoneWarning) -> Void
+    ) {
+        stateLock.lock()
+        microphoneWarningHandler = handler
         stateLock.unlock()
     }
 
@@ -104,8 +134,14 @@ final class AutoSendRecordingService: AutoSendCaptureService, @unchecked Sendabl
                     throw AutoSendRecordingError.operationSuperseded
                 }
                 let url = try makeRecordingURL()
-                let resolution = try resolveMicrophone()
+                let devices = AudioInputDeviceDiscovery.inputDevices()
+                let resolution = try resolveMicrophone(devices: devices)
                 let healthMonitor = healthMonitor(for: resolution, source: source)
+                let silenceWatch = MicrophoneSilenceWatch()
+                let primaryName = BackupMicrophoneChooser.resolvedPrimary(
+                    resolution.device,
+                    devices: devices
+                )?.name ?? resolution.device.name
                 setActiveMicrophoneResolution(resolution)
                 rememberRecordingURL(url, operationID: operationID)
                 microphoneUseLock.start()
@@ -117,6 +153,10 @@ final class AutoSendRecordingService: AutoSendCaptureService, @unchecked Sendabl
                     bufferSize: AudioRecorder.fastStartBufferSize,
                     streamHandler: { [weak self, weak transcription] event in
                         guard let self, self.isCurrent(operationID) else { return }
+                        if case .captured(let captured) = event,
+                           silenceWatch.observePrimary(captured.buffer) != nil {
+                            self.reportSilentMicrophone(named: primaryName, operationID: operationID)
+                        }
                         if case .captured(let captured) = event,
                            let healthEvent = healthMonitor?.observe(captured.buffer) {
                             Task { [weak self] in
@@ -134,6 +174,20 @@ final class AutoSendRecordingService: AutoSendCaptureService, @unchecked Sendabl
                         transcription?.handleCaptureEvent(event, operationID: operationID)
                     }
                 )
+                // The main recorder is running. The backup is chosen now and opens on its own queue.
+                if let backupDevice = BackupMicrophoneChooser.chooseBackup(
+                    primary: resolution.device,
+                    devices: devices,
+                    isEnabled: backupMicrophoneEnabled(),
+                    preferredName: AutoSendMicrophoneSelection.ankerMicrophoneName
+                ) {
+                    startBackup(
+                        on: backupDevice,
+                        mainRecordingURL: url,
+                        silenceWatch: silenceWatch,
+                        operationID: operationID
+                    )
+                }
             }
         } catch {
             microphoneUseLock.stop()
@@ -158,6 +212,8 @@ final class AutoSendRecordingService: AutoSendCaptureService, @unchecked Sendabl
             clearIfCurrent(operationID)
             return result
         }
+        // The main recorder has stopped. The backup stops on its own queue.
+        beginBackupStop(operationID: operationID)
         let rememberedURL = takeRecordingURL(operationID: operationID)
         guard let url = result.audioURL ?? rememberedURL else {
             throw AutoSendRecordingError.noActiveRecording
@@ -203,6 +259,107 @@ final class AutoSendRecordingService: AutoSendCaptureService, @unchecked Sendabl
             clearRecordingURL(operationID: operationID)
             resetRecoveryFailure(operationID: operationID)
         }
+        discardBackup(operationID: operationID)
+    }
+
+    func backupRecording(operationID: AutoSendOperationID) async -> AutoSendBackupRecording? {
+        stateLock.lock()
+        guard let stopped = stoppedBackup, stopped.operationID == operationID else {
+            stateLock.unlock()
+            return nil
+        }
+        stoppedBackup = nil
+        stateLock.unlock()
+        guard let url = stopped.stop.wait() else { return nil }
+        return AutoSendBackupRecording(
+            audioURL: url,
+            microphoneName: stopped.microphoneName,
+            primaryWasSilent: stopped.primaryWasSilent
+        )
+    }
+
+    private func startBackup(
+        on device: MicrophoneDevice,
+        mainRecordingURL: URL,
+        silenceWatch: MicrophoneSilenceWatch,
+        operationID: AutoSendOperationID
+    ) {
+        stateLock.lock()
+        activeBackup = (operationID, device.name, false)
+        stateLock.unlock()
+        backupRecorder.start(
+            at: BackupMicrophoneRecorder.backupURL(forMainRecording: mainRecordingURL),
+            microphone: device,
+            onBuffer: { silenceWatch.observeBackup($0) },
+            onResult: { [weak self] started in
+                guard let self else { return }
+                self.stateLock.lock()
+                if self.activeBackup?.operationID == operationID {
+                    if started {
+                        self.activeBackup?.isRunning = true
+                        silenceWatch.backupStarted()
+                    } else {
+                        self.activeBackup = nil
+                    }
+                }
+                self.stateLock.unlock()
+            }
+        )
+    }
+
+    private func takeActiveBackup(
+        operationID: AutoSendOperationID
+    ) -> (microphoneName: String, primaryWasSilent: Bool)? {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        guard let backup = activeBackup, backup.operationID == operationID else { return nil }
+        activeBackup = nil
+        return (backup.microphoneName, silenceReportedOperationID == operationID)
+    }
+
+    private func beginBackupStop(operationID: AutoSendOperationID) {
+        guard let backup = takeActiveBackup(operationID: operationID) else { return }
+        let stop = backupRecorder.stop()
+        stateLock.lock()
+        stoppedBackup = (operationID, stop, backup.microphoneName, backup.primaryWasSilent)
+        stateLock.unlock()
+    }
+
+    /// Deletes the backup of a cancelled recording, whether it is still running or already stopped.
+    private func discardBackup(operationID: AutoSendOperationID) {
+        if takeActiveBackup(operationID: operationID) != nil {
+            backupRecorder.stop().discard()
+        }
+        stateLock.lock()
+        let stopped = stoppedBackup?.operationID == operationID ? stoppedBackup : nil
+        if stopped != nil {
+            stoppedBackup = nil
+        }
+        stateLock.unlock()
+        stopped?.stop.discard()
+    }
+
+    private func reportSilentMicrophone(named primaryName: String, operationID: AutoSendOperationID) {
+        stateLock.lock()
+        guard currentOperationID == operationID, silenceReportedOperationID != operationID else {
+            stateLock.unlock()
+            return
+        }
+        silenceReportedOperationID = operationID
+        let backupName = activeBackup?.operationID == operationID && activeBackup?.isRunning == true
+            ? activeBackup?.microphoneName
+            : nil
+        let handler = microphoneWarningHandler
+        stateLock.unlock()
+        NSLog(
+            "Auto Send Recorder: %@ is delivering exact digital silence; backup microphone: %@.",
+            primaryName,
+            backupName ?? "none"
+        )
+        handler?(
+            operationID,
+            AutoSendMicrophoneWarning(microphoneName: primaryName, backupMicrophoneName: backupName)
+        )
     }
 
     private func claim(
@@ -349,8 +506,9 @@ final class AutoSendRecordingService: AutoSendCaptureService, @unchecked Sendabl
             .appendingPathExtension("wav")
     }
 
-    private func resolveMicrophone() throws -> MicrophoneResolution {
-        let devices = AudioInputDeviceDiscovery.inputDevices()
+    private func resolveMicrophone(
+        devices: [MicrophoneDevice] = AudioInputDeviceDiscovery.inputDevices()
+    ) throws -> MicrophoneResolution {
         stateLock.lock()
         let preferredID = preferredMicrophoneID
         let recovery = microphoneRecovery
@@ -462,7 +620,9 @@ final class AutoSendRecordingService: AutoSendCaptureService, @unchecked Sendabl
         silentResolution: MicrophoneResolution
     ) {
         stateLock.lock()
+        // A recording with a backup keeps its main microphone; the backup holds the audio.
         guard currentOperationID == operationID,
+              activeBackup?.operationID != operationID,
               case .recover = microphoneRecovery.silentMicrophoneReported(
                   event,
                   on: silentResolution,

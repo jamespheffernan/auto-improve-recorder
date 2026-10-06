@@ -77,7 +77,8 @@ final class MicrophoneHealthMonitor: @unchecked Sendable {
         return TimeInterval(buffer.frameLength) / sampleRate
     }
 
-    private static func isExactlySilent(_ buffer: AVAudioPCMBuffer) -> Bool {
+    /// True when every byte of the buffer is zero. The silence watch uses the same check.
+    static func isExactlySilent(_ buffer: AVAudioPCMBuffer) -> Bool {
         guard buffer.frameLength > 0 else { return true }
         let buffers = UnsafeMutableAudioBufferListPointer(buffer.mutableAudioBufferList)
         for audioBuffer in buffers {

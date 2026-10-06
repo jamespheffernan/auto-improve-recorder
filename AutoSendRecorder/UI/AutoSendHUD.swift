@@ -295,7 +295,7 @@ private enum AutoSendHUDPositioner {
 private extension AutoSendExperienceState {
     var usesExpandedHUD: Bool {
         switch self {
-        case .noTarget, .failed, .permissionNeeded:
+        case .recordingWarning, .noTarget, .failed, .permissionNeeded:
             return true
         case .idle, .starting, .recording, .finalizing, .delivering, .sent, .cancelled,
              .pastedWithoutSend, .suppressed, .hotKeyConflict:

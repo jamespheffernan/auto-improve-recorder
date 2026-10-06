@@ -85,6 +85,7 @@ final class AutoSendState: ObservableObject {
                 return AutoSendProcessedTranscript(afterRules: outcome.afterRules, final: outcome.final)
             },
             archive: { AutoSendTranscriptArchive.save($0) },
+            discardRecording: { try? FileManager.default.removeItem(at: $0) },
             runDidChange: { [weak runRelay] snapshot in
                 Task { @MainActor in
                     runRelay?.publish(snapshot)
@@ -92,6 +93,9 @@ final class AutoSendState: ObservableObject {
             }
         ))
         runRelay.state = self
+        recording.setMicrophoneWarningHandler { [weak workflow] operationID, warning in
+            Task { await workflow?.reportMicrophoneWarning(warning, operationID: operationID) }
+        }
     }
 
     func refreshMicrophones() {
@@ -262,10 +266,16 @@ final class AutoSendState: ObservableObject {
         appRememberedForSettings = app
     }
 
+    static let microphoneWarningSoundName = NSSound.Name("Funk")
+
     /// Shows a snapshot from the workflow. Snapshots can arrive out of order, so only one newer
     /// than the last counts.
     fileprivate func receive(_ newSnapshot: AutoSendRunSnapshot) {
         guard newSnapshot.sequence > snapshot.sequence else { return }
+        // One sound when a run's microphone warning first appears, for when the HUD is not in view.
+        if newSnapshot.microphoneWarning != nil, snapshot.microphoneWarning == nil {
+            NSSound(named: AutoSendState.microphoneWarningSoundName)?.play()
+        }
         snapshot = newSnapshot
         phase = newSnapshot.phase
         lastText = newSnapshot.lastText
