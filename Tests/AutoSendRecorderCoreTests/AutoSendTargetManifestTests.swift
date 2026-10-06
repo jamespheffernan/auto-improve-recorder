@@ -12,6 +12,7 @@ final class AutoSendTargetManifestTests: XCTestCase {
             "AudioRecorder.swift",
             "AudioPipelineTypes.swift",
             "MicrophoneHealthMonitor.swift",
+            "MicrophoneRecovery.swift",
             "ArchiveAudioWriter.swift",
             "ParakeetCAPI.swift",
             "AccessibilityPasteController.swift",

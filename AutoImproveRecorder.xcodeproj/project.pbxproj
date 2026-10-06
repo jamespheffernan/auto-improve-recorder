@@ -73,6 +73,7 @@
 		AIRMIC000000000000000001 /* MicrophoneDevice.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRMIC000000000000000000 /* MicrophoneDevice.swift */; };
 		AIRMIC000000000000000002 /* MicrophoneDevice.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRMIC000000000000000000 /* MicrophoneDevice.swift */; };
 		AIRMICHEALTH0000000001 /* MicrophoneHealthMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRMICHEALTH0000000000 /* MicrophoneHealthMonitor.swift */; };
+		AIRMICRECOVERY00000001 /* MicrophoneRecovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRMICRECOVERY00000000 /* MicrophoneRecovery.swift */; };
 		AIRMICOBS00000000000001 /* MicrophoneDeviceObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRMICOBS00000000000000 /* MicrophoneDeviceObserver.swift */; };
 		AIRPERM00000000000000001 /* PermissionsClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRPERM00000000000000000 /* PermissionsClient.swift */; };
 		AIRRECCLIENT000000000001 /* RecordingClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRRECCLIENT000000000000 /* RecordingClient.swift */; };
@@ -116,6 +117,7 @@
 		ASRDELOPT000000000000001 /* DeliveryOptimization.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRDELOPT000000000000000 /* DeliveryOptimization.swift */; };
 		ASRICON0000000000000002 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = ASRICON0000000000000001 /* Assets.xcassets */; };
 		ASRMICHEALTH00000000001 /* MicrophoneHealthMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRMICHEALTH0000000000 /* MicrophoneHealthMonitor.swift */; };
+		ASRMICRECOVERY000000001 /* MicrophoneRecovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRMICRECOVERY00000000 /* MicrophoneRecovery.swift */; };
 		ASRWIRELESS00000000000001 /* AutoSendWirelessBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = ASRWIRELESS00000000000000 /* AutoSendWirelessBridge.swift */; };
 		ASRSETUP0000000000000001 /* AutoSendRuntimeInstaller.swift in Sources */ = {isa = PBXBuildFile; fileRef = ASRSETUP0000000000000002 /* AutoSendRuntimeInstaller.swift */; };
 		PHONON000000000000000001 /* PhononTranscriber.swift in Sources */ = {isa = PBXBuildFile; fileRef = PHONON000000000000000000 /* PhononTranscriber.swift */; };
@@ -178,6 +180,7 @@
 		AIRLMPROBE0000000000000 /* LocalRuntimeProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalRuntimeProbe.swift; sourceTree = "<group>"; };
 		AIRMIC000000000000000000 /* MicrophoneDevice.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicrophoneDevice.swift; sourceTree = "<group>"; };
 		AIRMICHEALTH0000000000 /* MicrophoneHealthMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicrophoneHealthMonitor.swift; sourceTree = "<group>"; };
+		AIRMICRECOVERY00000000 /* MicrophoneRecovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicrophoneRecovery.swift; sourceTree = "<group>"; };
 		AIRMICOBS00000000000000 /* MicrophoneDeviceObserver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicrophoneDeviceObserver.swift; sourceTree = "<group>"; };
 		AIRPERM00000000000000000 /* PermissionsClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionsClient.swift; sourceTree = "<group>"; };
 		AIRRECCLIENT000000000000 /* RecordingClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingClient.swift; sourceTree = "<group>"; };
@@ -339,6 +342,7 @@
 				AIR000000000000000000000D /* AudioInputDeviceDiscovery.swift */,
 				AIRMIC000000000000000000 /* MicrophoneDevice.swift */,
 				AIRMICHEALTH0000000000 /* MicrophoneHealthMonitor.swift */,
+				AIRMICRECOVERY00000000 /* MicrophoneRecovery.swift */,
 				AIRMICOBS00000000000000 /* MicrophoneDeviceObserver.swift */,
 				AIRLMINV000000000000000 /* LocalModelInventory.swift */,
 				AIRLMHEALTH000000000000 /* LocalRuntimeHealth.swift */,
@@ -570,6 +574,7 @@
 				AIR000000000000000000001C /* AudioInputDeviceDiscovery.swift in Sources */,
 				AIRMIC000000000000000001 /* MicrophoneDevice.swift in Sources */,
 				AIRMICHEALTH0000000001 /* MicrophoneHealthMonitor.swift in Sources */,
+				AIRMICRECOVERY00000001 /* MicrophoneRecovery.swift in Sources */,
 				AIRMICOBS00000000000001 /* MicrophoneDeviceObserver.swift in Sources */,
 				AIRLMINV000000000000001 /* LocalModelInventory.swift in Sources */,
 				AIRLMHEALTH000000000001 /* LocalRuntimeHealth.swift in Sources */,
@@ -650,6 +655,7 @@
 				ASR0000000000000000000023 /* AudioInputDeviceDiscovery.swift in Sources */,
 				ASR0000000000000000000024 /* MicrophoneDevice.swift in Sources */,
 				ASRMICHEALTH00000000001 /* MicrophoneHealthMonitor.swift in Sources */,
+				ASRMICRECOVERY000000001 /* MicrophoneRecovery.swift in Sources */,
 				ASR0000000000000000000025 /* RealtimePCMChunker.swift in Sources */,
 				ASR0000000000000000000026 /* AutoSendHUD.swift in Sources */,
 				ASR0000000000000000000027 /* AutoSendStatePlayground.swift in Sources */,

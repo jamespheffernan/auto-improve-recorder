@@ -16,11 +16,7 @@ final class AutoSendRecordingService: AutoSendCaptureService, @unchecked Sendabl
     private var terminalRecoveryFailure: (AutoSendOperationID, String)?
     private var activeRecordingURL: (AutoSendOperationID, URL)?
     private var preferredMicrophoneID: String
-    private var activeMicrophoneResolution: MicrophoneResolution?
-    private var activeMicrophoneHealthMonitor: MicrophoneHealthMonitor?
-    private var quarantinedMicrophoneIDs: [String: Date] = [:]
-    private var microphoneRecoveryInProgress = false
-    private let microphoneRetryCooldown: TimeInterval = 30
+    private var microphoneRecovery = MicrophoneRecovery(retryCooldown: 30)
     private let microphoneUseLock = AutoSendMicrophoneUseLock()
 
     init(
@@ -110,8 +106,7 @@ final class AutoSendRecordingService: AutoSendCaptureService, @unchecked Sendabl
                 let url = try makeRecordingURL()
                 let resolution = try resolveMicrophone()
                 let healthMonitor = healthMonitor(for: resolution, source: source)
-                activeMicrophoneResolution = resolution
-                activeMicrophoneHealthMonitor = healthMonitor
+                setActiveMicrophoneResolution(resolution)
                 rememberRecordingURL(url, operationID: operationID)
                 microphoneUseLock.start()
                 transcription.beginRecording(operationID: operationID, source: source)
@@ -240,10 +235,14 @@ final class AutoSendRecordingService: AutoSendCaptureService, @unchecked Sendabl
         if currentOperationID == operationID {
             currentOperationID = nil
             currentSource = nil
-            activeMicrophoneResolution = nil
-            activeMicrophoneHealthMonitor = nil
-            microphoneRecoveryInProgress = false
+            microphoneRecovery.recordingEnded()
         }
+        stateLock.unlock()
+    }
+
+    private func setActiveMicrophoneResolution(_ resolution: MicrophoneResolution) {
+        stateLock.lock()
+        microphoneRecovery.recordingStarted(on: resolution)
         stateLock.unlock()
     }
 
@@ -354,7 +353,7 @@ final class AutoSendRecordingService: AutoSendCaptureService, @unchecked Sendabl
         let devices = AudioInputDeviceDiscovery.inputDevices()
         stateLock.lock()
         let preferredID = preferredMicrophoneID
-        let quarantined = quarantinedMicrophoneIDs
+        let recovery = microphoneRecovery
         stateLock.unlock()
         let preferences = MicrophonePreferences.fromPreferredMicrophoneID(preferredID)
         if let automaticRoute = automaticBoyaRoute(
@@ -367,10 +366,9 @@ final class AutoSendRecordingService: AutoSendCaptureService, @unchecked Sendabl
             devices,
             preferredMicrophoneID: preferredID
         )
-        return try MicrophoneResolver.resolve(
+        return try recovery.resolve(
             preferences: preferences,
             devices: orderedDevices,
-            quarantinedUntil: quarantined,
             now: Date()
         )
     }
@@ -440,9 +438,7 @@ final class AutoSendRecordingService: AutoSendCaptureService, @unchecked Sendabl
         for resolution: MicrophoneResolution,
         source: AutoSendRecordingSource
     ) -> MicrophoneHealthMonitor? {
-        guard source == .macHotKey,
-              !resolution.usedFallback,
-              !resolution.device.id.isEmpty else { return nil }
+        guard source == .macHotKey else { return nil }
         if resolution.device.name.compare(
             AutoSendMicrophoneSelection.boyaMicrophoneName,
             options: .caseInsensitive
@@ -452,7 +448,10 @@ final class AutoSendRecordingService: AutoSendCaptureService, @unchecked Sendabl
         stateLock.lock()
         let selectedID = preferredMicrophoneID
         stateLock.unlock()
-        guard selectedID == resolution.device.id else { return nil }
+        guard MicrophoneRecovery.shouldMonitor(
+            resolution,
+            preferredMicrophoneID: selectedID
+        ) else { return nil }
         return MicrophoneHealthMonitor(configuration: .startupFallback)
     }
 
@@ -464,19 +463,20 @@ final class AutoSendRecordingService: AutoSendCaptureService, @unchecked Sendabl
     ) {
         stateLock.lock()
         guard currentOperationID == operationID,
-              !microphoneRecoveryInProgress,
-              activeMicrophoneResolution == silentResolution else {
+              case .recover = microphoneRecovery.silentMicrophoneReported(
+                  event,
+                  on: silentResolution,
+                  recheckingPreferredMicrophoneID: nil,
+                  now: Date()
+              ) else {
             stateLock.unlock()
             return
         }
-        microphoneRecoveryInProgress = true
-        let expiresAt = Date().addingTimeInterval(microphoneRetryCooldown)
-        quarantinedMicrophoneIDs[silentResolution.device.id] = expiresAt
         stateLock.unlock()
 
         defer {
             stateLock.lock()
-            microphoneRecoveryInProgress = false
+            microphoneRecovery.recoveryFinished()
             stateLock.unlock()
         }
 
@@ -493,13 +493,15 @@ final class AutoSendRecordingService: AutoSendCaptureService, @unchecked Sendabl
 
             do {
                 let fallback = try resolveMicrophone()
-                guard fallback.device.id != silentResolution.device.id else {
+                guard case .restart = MicrophoneRecovery.restartCommand(
+                    replacing: silentResolution,
+                    with: fallback
+                ) else {
                     throw MicrophoneResolverError.noUsableMicrophone
                 }
                 transcription.beginRecording(operationID: operationID, source: source)
                 resetCaptureFailure(operationID: operationID)
-                activeMicrophoneResolution = fallback
-                activeMicrophoneHealthMonitor = nil
+                setActiveMicrophoneResolution(fallback)
                 _ = try recorder.start(
                     at: url,
                     microphone: fallback.device,

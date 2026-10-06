@@ -32,6 +32,7 @@ let package = Package(
                 "PhononTranscriber.swift",
                 "MicrophoneDevice.swift",
                 "MicrophoneHealthMonitor.swift",
+                "MicrophoneRecovery.swift",
                 "RealtimeDiagnosticsRedactor.swift",
                 "TranscriptEditValueGate.swift",
                 "TranscriptTextNormalizer.swift",

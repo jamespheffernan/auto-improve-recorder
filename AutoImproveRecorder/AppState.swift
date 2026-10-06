@@ -148,11 +148,7 @@ final class AppState: ObservableObject {
     private var visualResetToken = UUID()
     private var microphoneUseLockHeartbeatTask: Task<Void, Never>?
     private var microphoneDeviceObserver: MicrophoneDeviceObserver?
-    private var quarantinedMicrophoneIDs: [String: Date] = [:]
-    private var activeMicrophoneResolution: MicrophoneResolution?
-    private var activeMicrophoneHealthMonitor: MicrophoneHealthMonitor?
-    private var microphoneRecoveryInProgress = false
-    private let microphoneRetryCooldown: TimeInterval = 10
+    private var microphoneRecovery = MicrophoneRecovery(retryCooldown: 10)
     private var triggerTimerTasks: [RecordingTriggerTimerKind: Task<Void, Never>] = [:]
     private var localModelStatusTask: Task<Void, Never>?
     private var recordingHotKeyCaptureIsActive = false
@@ -280,10 +276,9 @@ final class AppState: ObservableObject {
 
     private func updateResolvedMicrophoneSummary() {
         do {
-            let resolution = try MicrophoneResolver.resolve(
+            let resolution = try microphoneRecovery.resolve(
                 preferences: .fromPreferredMicrophoneID(preferredMicrophoneID),
                 devices: availableMicrophones,
-                quarantinedUntil: quarantinedMicrophoneIDs,
                 now: Date()
             )
             resolvedMicrophoneSummary = microphoneSummary(for: resolution)
@@ -310,7 +305,7 @@ final class AppState: ObservableObject {
         guard let target = MicrophoneDefaultInputPinningPolicy.targetDeviceToPin(
             preferences: preferences,
             devices: availableMicrophones,
-            quarantinedUntil: quarantinedMicrophoneIDs,
+            quarantinedUntil: microphoneRecovery.quarantinedUntil,
             now: Date()
         ),
               let coreAudioDeviceID = target.coreAudioDeviceID else {
@@ -580,7 +575,7 @@ final class AppState: ObservableObject {
         activeStartIsTriggerManaged = false
         activeRecordingID = nil
         activeProcessingRecordingID = nil
-        activeMicrophoneResolution = nil
+        microphoneRecovery.recordingEnded()
         discardActiveArchiveDraftIfNeeded()
         discardPreparedRecordingDraft()
         _ = environment.recording.stopRecording()
@@ -880,8 +875,7 @@ final class AppState: ObservableObject {
         activeParakeetStreamSession = nil
         guard let audioURL = environment.recording.stopRecording() else {
             activeRecordingID = nil
-            activeMicrophoneResolution = nil
-            activeMicrophoneHealthMonitor = nil
+            microphoneRecovery.recordingEnded()
             endMicrophoneUseLock()
             realtimeAudioSink.clear()
             if let streamingTranscriber {
@@ -892,7 +886,6 @@ final class AppState: ObservableObject {
             return
         }
         endMicrophoneUseLock()
-        activeMicrophoneHealthMonitor = nil
         let captureFailure = realtimeAudioSink.captureFailureSnapshot()
         realtimeAudioSink.clear()
         activeRecordingID = nil
@@ -904,8 +897,7 @@ final class AppState: ObservableObject {
             parakeetStream?.cancel()
             try? FileManager.default.removeItem(at: audioURL)
             discardActiveArchiveDraftIfNeeded()
-            activeMicrophoneResolution = nil
-            activeMicrophoneHealthMonitor = nil
+            microphoneRecovery.recordingEnded()
             session = .empty
             showRawTranscript = false
             recordingStartedAt = nil
@@ -928,7 +920,7 @@ final class AppState: ObservableObject {
             let message = captureFailure.localizedDescription
             failWithMessage(message)
             persistTranscriptArchive(transcriptionEngineName: nil)
-            activeMicrophoneResolution = nil
+            microphoneRecovery.recordingEnded()
             return
         }
 
@@ -963,8 +955,7 @@ final class AppState: ObservableObject {
         isStartingRecording = false
         activeRecordingID = nil
         activeProcessingRecordingID = nil
-        activeMicrophoneResolution = nil
-        activeMicrophoneHealthMonitor = nil
+        microphoneRecovery.recordingEnded()
         let audioURL = environment.recording.stopRecording()
         endMicrophoneUseLock()
         realtimeAudioSink.clear()
@@ -995,8 +986,7 @@ final class AppState: ObservableObject {
         activeStartIsTriggerManaged = false
         activeRecordingID = nil
         activeProcessingRecordingID = nil
-        activeMicrophoneResolution = nil
-        activeMicrophoneHealthMonitor = nil
+        microphoneRecovery.recordingEnded()
         let streamingTranscriber = activeStreamingTranscriber
         activeStreamingTranscriber = nil
         activeParakeetStreamSession?.cancel()
@@ -1195,8 +1185,7 @@ final class AppState: ObservableObject {
             )
             discardActiveArchiveDraftIfNeeded()
             activeRecordingID = nil
-            activeMicrophoneResolution = nil
-            activeMicrophoneHealthMonitor = nil
+            microphoneRecovery.recordingEnded()
             activeRealtimeStartupTask = nil
             realtimeAudioSink.clear()
             activeParakeetStreamSession?.cancel()
@@ -1208,10 +1197,9 @@ final class AppState: ObservableObject {
 
     private func resolveMicrophoneForRecording() throws -> MicrophoneResolution {
         refreshMicrophones()
-        let resolution = try MicrophoneResolver.resolve(
+        let resolution = try microphoneRecovery.resolve(
             preferences: .fromPreferredMicrophoneID(preferredMicrophoneID),
             devices: availableMicrophones,
-            quarantinedUntil: quarantinedMicrophoneIDs,
             now: Date()
         )
         microphoneDeviceLogger.info(
@@ -1231,7 +1219,7 @@ final class AppState: ObservableObject {
         requestedAt: Date
     ) throws -> URL {
         do {
-            activeMicrophoneResolution = initialResolution
+            microphoneRecovery.recordingStarted(on: initialResolution)
             return try startAudioRecorderOnce(
                 at: audioURL,
                 resolution: initialResolution,
@@ -1246,12 +1234,15 @@ final class AppState: ObservableObject {
 
             quarantineMicrophone(initialResolution.device.id, reason: error.localizedDescription)
             let fallbackResolution = try resolveMicrophoneForRecording()
-            guard fallbackResolution.device.id != initialResolution.device.id else {
+            guard case .restart = MicrophoneRecovery.restartCommand(
+                replacing: initialResolution,
+                with: fallbackResolution
+            ) else {
                 throw error
             }
 
             statusMessage = "Could not use \(initialResolution.device.name); using \(fallbackResolution.device.name)."
-            activeMicrophoneResolution = fallbackResolution
+            microphoneRecovery.recordingStarted(on: fallbackResolution)
             return try startAudioRecorderOnce(
                 at: audioURL,
                 resolution: fallbackResolution,
@@ -1272,7 +1263,6 @@ final class AppState: ObservableObject {
         let healthMonitor = shouldMonitorForPreferredMicrophoneHealth(resolution)
             ? MicrophoneHealthMonitor(configuration: .startupFallback)
             : nil
-        activeMicrophoneHealthMonitor = healthMonitor
         return try environment.recording.startRecording(
             at: audioURL,
             microphone: resolution.device,
@@ -1318,9 +1308,10 @@ final class AppState: ObservableObject {
     }
 
     private func shouldMonitorForPreferredMicrophoneHealth(_ resolution: MicrophoneResolution) -> Bool {
-        !resolution.usedFallback &&
-            !resolution.device.id.isEmpty &&
-            preferredMicrophoneID.trimmingCharacters(in: .whitespacesAndNewlines) == resolution.device.id
+        MicrophoneRecovery.shouldMonitor(
+            resolution,
+            preferredMicrophoneID: preferredMicrophoneID.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
     }
 
     private func handleMicrophoneHealthEvent(
@@ -1330,17 +1321,21 @@ final class AppState: ObservableObject {
         audioSink: OpenAIRealtimeAudioSink,
         requestedAt: Date
     ) {
-        guard event.kind == .exactSilentStartup,
-              !microphoneRecoveryInProgress,
-              case .recording = phase,
-              activeMicrophoneResolution == resolution,
-              shouldMonitorForPreferredMicrophoneHealth(resolution) else {
+        guard case .recording = phase,
+              case .recover(let quarantinedUntil) = microphoneRecovery.silentMicrophoneReported(
+                  event,
+                  on: resolution,
+                  recheckingPreferredMicrophoneID: preferredMicrophoneID
+                      .trimmingCharacters(in: .whitespacesAndNewlines),
+                  now: Date()
+              ) else {
             return
         }
 
         recoverFromSilentPreferredMicrophone(
             resolution,
             event: event,
+            quarantinedUntil: quarantinedUntil,
             audioURL: audioURL,
             audioSink: audioSink,
             requestedAt: requestedAt
@@ -1350,20 +1345,23 @@ final class AppState: ObservableObject {
     private func recoverFromSilentPreferredMicrophone(
         _ resolution: MicrophoneResolution,
         event: MicrophoneHealthEvent,
+        quarantinedUntil: Date,
         audioURL: URL,
         audioSink: OpenAIRealtimeAudioSink,
         requestedAt: Date
     ) {
-        microphoneRecoveryInProgress = true
-        defer { microphoneRecoveryInProgress = false }
+        defer { microphoneRecovery.recoveryFinished() }
 
         let observedMS = Int(event.observedDuration * 1000)
         let reason = "Exact digital silence for \(observedMS)ms across \(event.silentBufferCount) startup buffers."
-        quarantineMicrophone(resolution.device.id, reason: reason)
+        noteMicrophoneQuarantined(resolution.device.id, until: quarantinedUntil, reason: reason)
 
         do {
             let fallbackResolution = try resolveMicrophoneForRecording()
-            guard fallbackResolution.device.id != resolution.device.id else {
+            guard case .restart = MicrophoneRecovery.restartCommand(
+                replacing: resolution,
+                with: fallbackResolution
+            ) else {
                 return
             }
 
@@ -1375,7 +1373,6 @@ final class AppState: ObservableObject {
             }
 
             _ = environment.recording.stopRecording()
-            activeMicrophoneHealthMonitor = nil
             realtimeAudioSink.clear()
 
             let shouldPrepareRealtime = transcriptionMode == .fastest
@@ -1390,7 +1387,7 @@ final class AppState: ObservableObject {
             activeParakeetStreamSession = parakeetStream
 
             statusMessage = "Could not hear \(resolution.device.name); using \(fallbackResolution.device.name)."
-            activeMicrophoneResolution = fallbackResolution
+            microphoneRecovery.recordingStarted(on: fallbackResolution)
             _ = try startAudioRecorderOnce(
                 at: audioURL,
                 resolution: fallbackResolution,
@@ -1413,7 +1410,6 @@ final class AppState: ObservableObject {
                 }
             }
         } catch {
-            activeMicrophoneHealthMonitor = nil
             failWithMessage(error.localizedDescription)
         }
     }
@@ -1429,9 +1425,11 @@ final class AppState: ObservableObject {
     }
 
     private func quarantineMicrophone(_ id: String, reason: String) {
-        guard !id.isEmpty else { return }
-        let expiresAt = Date().addingTimeInterval(microphoneRetryCooldown)
-        quarantinedMicrophoneIDs[id] = expiresAt
+        guard let expiresAt = microphoneRecovery.quarantine(id, now: Date()) else { return }
+        noteMicrophoneQuarantined(id, until: expiresAt, reason: reason)
+    }
+
+    private func noteMicrophoneQuarantined(_ id: String, until expiresAt: Date, reason: String) {
         updateResolvedMicrophoneSummary()
         microphoneDeviceLogger.info(
             "Quarantined microphone id=\(id, privacy: .public) until=\(expiresAt.ISO8601Format(), privacy: .public) reason=\(reason, privacy: .public)"
@@ -1669,7 +1667,7 @@ final class AppState: ObservableObject {
 
     private func persistTranscriptArchive(transcriptionEngineName: String?) {
         guard let archiveDraft = activeArchiveDraft ?? archiveDraftFromSession() else { return }
-        let microphoneResolution = activeMicrophoneResolution
+        let microphoneResolution = microphoneRecovery.activeResolution
         let content = TranscriptArchiveContent(
             rawTranscript: session.rawTranscript,
             cleanedTranscript: session.improvedText,
