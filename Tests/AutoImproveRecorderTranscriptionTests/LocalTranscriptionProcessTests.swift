@@ -95,6 +95,51 @@ final class LocalTranscriptionProcessTests: XCTestCase {
         await assertFailure(of: process, "Parakeet transcription failed. The recording was kept.")
     }
 
+    func testOutputWithOkFalseIsAFailureWithTheReportedError() async throws {
+        XCTAssertThrowsError(try ParakeetOneShotProcess.transcript(
+            fromOutput: Data(#"{"ok": false, "error": "model file is corrupt", "text": "partial"}"#.utf8)
+        )) {
+            XCTAssertEqual($0.localizedDescription, "Parakeet transcription failed: model file is corrupt")
+        }
+        XCTAssertThrowsError(try ParakeetOneShotProcess.transcript(fromOutput: Data(#"{"ok": false}"#.utf8))) {
+            XCTAssertEqual($0.localizedDescription, "Parakeet transcription failed: Unknown parakeet.cpp error.")
+        }
+        XCTAssertEqual(
+            try ParakeetOneShotProcess.transcript(fromOutput: Data(#"{"ok": true, "text": "fine"}"#.utf8)),
+            "fine"
+        )
+
+        // The same through a CLI run that exits with status 0.
+        try Data().write(to: audioURL)
+        try Data().write(to: root.appendingPathComponent("models/tdt-0.6b-v2-q4_k.gguf"))
+        try writeCLI(#"echo '{"ok": false, "error": "model file is corrupt", "text": "partial"}'"#)
+        await assertFailure(
+            of: ParakeetOneShotProcess(configuration: configuration),
+            "Parakeet transcription failed: model file is corrupt"
+        )
+    }
+
+    func testARunThatIgnoresSIGTERMPastItsDeadlineIsKilled() async throws {
+        try Data().write(to: audioURL)
+        try Data().write(to: root.appendingPathComponent("models/tdt-0.6b-v2-q4_k.gguf"))
+        // The CLI writes its process ID into the install root, ignores SIGTERM and never exits.
+        try writeCLI("trap '' TERM\necho $$ > pid\nwhile :; do :; done")
+        let process = ParakeetOneShotProcess(configuration: configuration, timeout: 1, terminationGrace: 0.2)
+
+        await assertFailure(of: process, "Parakeet transcription timed out. The recording was kept.")
+
+        let recorded = try String(contentsOf: root.appendingPathComponent("pid"))
+        let pid = try XCTUnwrap(Int32(recorded.trimmingCharacters(in: .whitespacesAndNewlines)))
+        // Signal 0 sends nothing and reports whether the process exists.
+        let result = Darwin.kill(pid, 0)
+        let code = errno
+        if result == 0 {
+            Darwin.kill(pid, SIGKILL)
+        }
+        XCTAssertEqual(result, -1, "the CLI process is still running")
+        XCTAssertEqual(code, ESRCH)
+    }
+
     func testRuntimeIsInstalledNeedsTheCLITheModelAndAGgmlLibrary() throws {
         let process = ParakeetOneShotProcess(configuration: configuration)
         XCTAssertFalse(process.runtimeIsInstalled)

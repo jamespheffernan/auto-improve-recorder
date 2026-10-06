@@ -8,10 +8,19 @@ struct ParakeetOneShotProcess: Sendable {
     static let modelPath = "models/tdt-0.6b-v2-q4_k.gguf"
 
     let configuration: ParakeetRuntimeConfiguration
-    private let timeout: TimeInterval = 180
+    private let timeout: TimeInterval
+    /// How long a run that passed its deadline has to exit after SIGTERM
+    /// before it is sent SIGKILL.
+    private let terminationGrace: TimeInterval
 
-    init(configuration: ParakeetRuntimeConfiguration) {
+    init(
+        configuration: ParakeetRuntimeConfiguration,
+        timeout: TimeInterval = 180,
+        terminationGrace: TimeInterval = 2
+    ) {
         self.configuration = configuration
+        self.timeout = timeout
+        self.terminationGrace = terminationGrace
     }
 
     /// True when the CLI, its model and a ggml library are all present under
@@ -82,6 +91,12 @@ struct ParakeetOneShotProcess: Sendable {
         let deadline = DispatchTime.now() + timeout
         if process.waitUntilExitOrTimeout(deadline: deadline) == false {
             process.terminate()
+            if process.waitUntilExitOrTimeout(deadline: .now() + terminationGrace) == false,
+               process.isRunning {
+                Darwin.kill(process.processIdentifier, SIGKILL)
+                _ = process.waitUntilExitOrTimeout(deadline: .now() + 1)
+            }
+            _ = readGroup.wait(timeout: .now() + 1)
             throw ParakeetRunnerError.timedOut
         }
         readGroup.wait()
@@ -94,10 +109,18 @@ struct ParakeetOneShotProcess: Sendable {
         return try Self.transcript(fromOutput: stdout)
     }
 
-    /// Reads the `text` field of the CLI's JSON output and trims it.
+    /// Reads the `text` field of the CLI's JSON output and trims it. Output
+    /// with `"ok": false` is a failure with the error the CLI reported.
     static func transcript(fromOutput stdout: Data) throws -> String {
-        guard let object = try? JSONSerialization.jsonObject(with: stdout) as? [String: Any],
-              let text = object["text"] as? String else {
+        guard let object = try? JSONSerialization.jsonObject(with: stdout) as? [String: Any] else {
+            throw ParakeetRunnerError.invalidOutput
+        }
+        if let ok = object["ok"] as? Bool, !ok {
+            throw ParakeetRunnerError.processFailed(
+                object["error"] as? String ?? "Unknown parakeet.cpp error."
+            )
+        }
+        guard let text = object["text"] as? String else {
             throw ParakeetRunnerError.invalidOutput
         }
         let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
