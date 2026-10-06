@@ -303,6 +303,7 @@ final class AutoSendRecordingService: AutoSendCaptureService, @unchecked Sendabl
             onBuffer: { silenceWatch.observeBackup($0) },
             onResult: { [weak self] started in
                 guard let self else { return }
+                var skippedRecovery: (silence: SkippedMicrophoneSilence, source: AutoSendRecordingSource)?
                 self.stateLock.lock()
                 if self.activeBackup?.operationID == operationID {
                     if started {
@@ -310,9 +311,25 @@ final class AutoSendRecordingService: AutoSendCaptureService, @unchecked Sendabl
                         silenceWatch.backupStarted()
                     } else {
                         self.activeBackup = nil
+                        if self.currentOperationID == operationID,
+                           let source = self.currentSource,
+                           let silence = self.microphoneRecovery.backupFailedToOpen() {
+                            skippedRecovery = (silence, source)
+                        }
                     }
                 }
                 self.stateLock.unlock()
+                // A startup recovery that was skipped because of this backup runs now.
+                if let skippedRecovery {
+                    Task { [weak self] in
+                        self?.recoverFromSilentPreferredMicrophone(
+                            skippedRecovery.silence.event,
+                            operationID: operationID,
+                            source: skippedRecovery.source,
+                            silentResolution: skippedRecovery.silence.resolution
+                        )
+                    }
+                }
             }
         )
     }
@@ -630,9 +647,14 @@ final class AutoSendRecordingService: AutoSendCaptureService, @unchecked Sendabl
         silentResolution: MicrophoneResolution
     ) {
         stateLock.lock()
-        // A recording with a backup keeps its main microphone; the backup holds the audio.
+        // A recording with a backup keeps its main microphone; the backup holds the audio. The
+        // event is kept, and the recovery runs if that backup then fails to open.
+        if currentOperationID == operationID, activeBackup?.operationID == operationID {
+            microphoneRecovery.silentMicrophoneSkippedForBackup(event, on: silentResolution)
+            stateLock.unlock()
+            return
+        }
         guard currentOperationID == operationID,
-              activeBackup?.operationID != operationID,
               case .recover = microphoneRecovery.silentMicrophoneReported(
                   event,
                   on: silentResolution,

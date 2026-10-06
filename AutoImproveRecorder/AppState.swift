@@ -173,6 +173,8 @@ final class AppState: ObservableObject {
         let microphone: AudioInputDevice
         /// True once the backup has opened.
         var isRunning = false
+        /// What the startup recovery needs, set when it is skipped because of this backup.
+        var skippedRecovery: (recordingID: UUID, audioURL: URL, requestedAt: Date)?
     }
 
     /// The backup of a recording that has stopped.
@@ -1366,14 +1368,25 @@ final class AppState: ObservableObject {
         )
     }
 
-    /// A backup that failed to open is forgotten; the recording continues without one.
+    /// A backup that failed to open is forgotten; the recording continues without one. A startup
+    /// recovery that was skipped because of that backup runs now.
     private func backupMicrophoneStartFinished(id: UUID, started: Bool, silenceWatch: MicrophoneSilenceWatch) {
         guard activeBackupMicrophone?.id == id else { return }
         if started {
             activeBackupMicrophone?.isRunning = true
             silenceWatch.backupStarted()
         } else {
+            let skippedRecovery = activeBackupMicrophone?.skippedRecovery
             activeBackupMicrophone = nil
+            if let skippedRecovery, let skipped = microphoneRecovery.backupFailedToOpen() {
+                handleMicrophoneHealthEvent(
+                    skipped.event,
+                    recordingID: skippedRecovery.recordingID,
+                    resolution: skipped.resolution,
+                    audioURL: skippedRecovery.audioURL,
+                    requestedAt: skippedRecovery.requestedAt
+                )
+            }
         }
     }
 
@@ -1453,8 +1466,13 @@ final class AppState: ObservableObject {
         // An event from an earlier recording is dropped, even when that recording used the same
         // microphone and its resolution equals the active one.
         guard recordingID == activeRecordingID else { return }
-        // A recording with a backup keeps its main microphone; the backup holds the audio.
-        guard activeBackupMicrophone == nil else { return }
+        // A recording with a backup keeps its main microphone; the backup holds the audio. The
+        // event is kept, and the recovery runs if that backup then fails to open.
+        guard activeBackupMicrophone == nil else {
+            microphoneRecovery.silentMicrophoneSkippedForBackup(event, on: resolution)
+            activeBackupMicrophone?.skippedRecovery = (recordingID, audioURL, requestedAt)
+            return
+        }
         guard case .recording = phase,
               case .recover(let quarantinedUntil) = microphoneRecovery.silentMicrophoneReported(
                   event,

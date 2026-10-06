@@ -13,6 +13,13 @@ enum MicrophoneRestartCommand: Equatable {
     case giveUp
 }
 
+/// A startup silence event that was not acted on because a backup microphone had been
+/// requested for the recording.
+struct SkippedMicrophoneSilence: Equatable {
+    var event: MicrophoneHealthEvent
+    var resolution: MicrophoneResolution
+}
+
 /// Decides which microphone a recording uses and what to do when that
 /// microphone fails. It has no lock of its own; the caller's isolation
 /// protects it. The caller starts and stops the recorder.
@@ -22,6 +29,7 @@ struct MicrophoneRecovery {
     private(set) var quarantinedUntil: [String: Date] = [:]
     private(set) var activeResolution: MicrophoneResolution?
     private(set) var recoveryInProgress = false
+    private(set) var skippedSilence: SkippedMicrophoneSilence?
 
     init(retryCooldown: TimeInterval) {
         self.retryCooldown = retryCooldown
@@ -53,12 +61,34 @@ struct MicrophoneRecovery {
 
     mutating func recordingStarted(on resolution: MicrophoneResolution) {
         activeResolution = resolution
+        skippedSilence = nil
     }
 
     /// Quarantines stay in place.
     mutating func recordingEnded() {
         activeResolution = nil
         recoveryInProgress = false
+        skippedSilence = nil
+    }
+
+    /// Call in place of `silentMicrophoneReported` when the event is not acted on because a
+    /// backup microphone has been requested for the recording. The event is kept until
+    /// `backupFailedToOpen` returns it or the recording ends or restarts.
+    mutating func silentMicrophoneSkippedForBackup(
+        _ event: MicrophoneHealthEvent,
+        on resolution: MicrophoneResolution
+    ) {
+        guard event.kind == .exactSilentStartup, activeResolution == resolution else { return }
+        skippedSilence = SkippedMicrophoneSilence(event: event, resolution: resolution)
+    }
+
+    /// Call when the recording's backup microphone failed to open. Returns the event that was
+    /// skipped for that backup, once, while its microphone is still the active one. Pass it to
+    /// `silentMicrophoneReported` now, as if it had just arrived.
+    mutating func backupFailedToOpen() -> SkippedMicrophoneSilence? {
+        defer { skippedSilence = nil }
+        guard let skippedSilence, activeResolution == skippedSilence.resolution else { return nil }
+        return skippedSilence
     }
 
     /// Returns when the quarantine ends, or nil for an empty id, which is

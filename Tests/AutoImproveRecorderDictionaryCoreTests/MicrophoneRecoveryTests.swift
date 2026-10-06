@@ -305,6 +305,61 @@ final class MicrophoneRecoveryTests: XCTestCase {
         XCTAssertEqual(recovery.quarantinedUntil, ["boya": startedAt.addingTimeInterval(10)])
     }
 
+    func testSilenceSkippedForABackupIsReturnedOnceWhenTheBackupFailsToOpenAndThenRecovers() throws {
+        var recovery = MicrophoneRecovery(retryCooldown: 10)
+        let preferred = try startRecording(&recovery, devices: builtInAndBoya)
+
+        recovery.silentMicrophoneSkippedForBackup(silence, on: preferred)
+        XCTAssertEqual(recovery.quarantinedUntil, [:])
+        XCTAssertFalse(recovery.recoveryInProgress)
+
+        let skipped = try XCTUnwrap(recovery.backupFailedToOpen())
+        XCTAssertEqual(skipped, SkippedMicrophoneSilence(event: silence, resolution: preferred))
+        XCTAssertNil(recovery.backupFailedToOpen())
+
+        let command = recovery.silentMicrophoneReported(
+            skipped.event,
+            on: skipped.resolution,
+            recheckingPreferredMicrophoneID: nil,
+            now: startedAt
+        )
+        XCTAssertEqual(command, .recover(quarantinedUntil: startedAt.addingTimeInterval(10)))
+    }
+
+    func testBackupFailingToOpenWithNoSkippedSilenceReturnsNothing() throws {
+        var recovery = MicrophoneRecovery(retryCooldown: 10)
+        _ = try startRecording(&recovery, devices: builtInAndBoya)
+
+        XCTAssertNil(recovery.backupFailedToOpen())
+    }
+
+    func testSkippedSilenceIsDroppedWhenTheRecordingEndsOrStartsAgain() throws {
+        var ended = MicrophoneRecovery(retryCooldown: 10)
+        let preferred = try startRecording(&ended, devices: builtInAndBoya)
+        ended.silentMicrophoneSkippedForBackup(silence, on: preferred)
+        ended.recordingEnded()
+        XCTAssertNil(ended.backupFailedToOpen())
+
+        var startedAgain = MicrophoneRecovery(retryCooldown: 10)
+        let first = try startRecording(&startedAgain, devices: builtInAndBoya)
+        startedAgain.silentMicrophoneSkippedForBackup(silence, on: first)
+        _ = try startRecording(&startedAgain, devices: builtInAndBoya)
+        XCTAssertNil(startedAgain.backupFailedToOpen())
+    }
+
+    func testSilenceSkippedForAResolutionThatIsNotActiveIsNotKept() throws {
+        var recovery = MicrophoneRecovery(retryCooldown: 10)
+        let preferred = try recovery.resolve(
+            preferences: boyaPreference,
+            devices: builtInAndBoya,
+            now: startedAt
+        )
+
+        recovery.silentMicrophoneSkippedForBackup(silence, on: preferred)
+
+        XCTAssertNil(recovery.backupFailedToOpen())
+    }
+
     func testEmptyMicrophoneIDIsNotQuarantined() {
         var recovery = MicrophoneRecovery(retryCooldown: 10)
 

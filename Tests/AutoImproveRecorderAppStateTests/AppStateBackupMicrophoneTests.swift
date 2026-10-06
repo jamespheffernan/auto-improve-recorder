@@ -254,6 +254,57 @@ final class AppStateBackupMicrophoneTests: XCTestCase {
         XCTAssertEqual(harness.warningSounds.count, 0)
     }
 
+    func testSilentPreferredMicrophoneRestartsOnFallbackWhenBackupFailsToOpenAfterTheStartupSilence() async throws {
+        let harness = try makeHarness()
+        harness.backupRecorder.startSucceeds = false
+        harness.backupRecorder.reportsStartResultAtOnce = false
+        await harness.startAndWaitForRecording()
+
+        // The startup silence arrives while the backup is still opening, so the recovery is skipped.
+        try feedMain(harness, seconds: 0.1, level: 0, count: 10)
+        try await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertEqual(harness.recorder.startedMicrophoneIDs, ["mic-usb"])
+
+        harness.backupRecorder.reportStartResult()
+        await harness.waitUntil("the restart on the fallback") { harness.recorder.startedMicrophoneIDs.count == 2 }
+
+        XCTAssertEqual(harness.recorder.startedMicrophoneIDs, ["mic-usb", "mic-builtin"])
+        XCTAssertEqual(harness.appState.statusMessage, "Could not hear USB Mic; using Built-in Mic.")
+        XCTAssertTrue(harness.appState.isRecording)
+        XCTAssertEqual(harness.warningSounds.count, 0)
+    }
+
+    func testBackupThatOpensAfterTheStartupSilenceKeepsTheMainMicrophoneRecording() async throws {
+        let harness = try makeHarness()
+        harness.backupRecorder.reportsStartResultAtOnce = false
+        await harness.startAndWaitForRecording()
+
+        try feedMain(harness, seconds: 0.1, level: 0, count: 10)
+        try await Task.sleep(nanoseconds: 100_000_000)
+        harness.backupRecorder.reportStartResult()
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        XCTAssertEqual(harness.recorder.startedMicrophoneIDs, ["mic-usb"])
+        XCTAssertEqual(harness.recorder.stopCount, 0)
+        XCTAssertTrue(harness.appState.isRecording)
+    }
+
+    func testBackupThatFailsToOpenAfterTheRecordingWasCancelledRestartsNothing() async throws {
+        let harness = try makeHarness()
+        harness.backupRecorder.startSucceeds = false
+        harness.backupRecorder.reportsStartResultAtOnce = false
+        await harness.startAndWaitForRecording()
+
+        try feedMain(harness, seconds: 0.1, level: 0, count: 10)
+        try await Task.sleep(nanoseconds: 100_000_000)
+        harness.appState.cancelRecording()
+        harness.backupRecorder.reportStartResult()
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        XCTAssertEqual(harness.recorder.startedMicrophoneIDs, ["mic-usb"])
+        XCTAssertFalse(harness.appState.isRecording)
+    }
+
     func testSilentPreferredMicrophoneRestartsOnFallbackWithSwitchOff() async throws {
         let harness = try makeHarness(backupMicrophoneEnabled: false)
         await harness.startAndWaitForRecording()
