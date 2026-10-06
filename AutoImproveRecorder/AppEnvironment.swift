@@ -17,6 +17,11 @@ struct AppEnvironment {
     var microphoneDevices: any MicrophoneDeviceClient
     var microphoneUseLock: any MicrophoneUseLockClient
     var enginePrewarm: any EnginePrewarmClient
+    var backupRecording: any BackupRecordingClient
+    /// False turns the backup microphone and the silence watch off. Read when a recording starts.
+    var backupMicrophoneRecordingEnabled: () -> Bool
+    /// Plays the sound that goes with the silent microphone warning.
+    var playMicrophoneWarningSound: () -> Void
     /// Regular running apps that have a bundle identifier.
     var runningApps: () -> [FocusedApp]
 
@@ -50,6 +55,9 @@ struct AppEnvironment {
             microphoneDevices: LiveMicrophoneDeviceClient(),
             microphoneUseLock: FileMicrophoneUseLockClient(),
             enginePrewarm: LiveEnginePrewarmClient(),
+            backupRecording: LiveBackupRecordingClient(),
+            backupMicrophoneRecordingEnabled: { BackupMicrophoneSwitch.isOn() },
+            playMicrophoneWarningSound: { NSSound(named: NSSound.Name("Funk"))?.play() },
             runningApps: {
                 NSWorkspace.shared.runningApplications.compactMap { app in
                     guard app.activationPolicy == .regular,

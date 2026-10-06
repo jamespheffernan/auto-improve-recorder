@@ -17,6 +17,9 @@ final class AppStateHarness {
     let microphoneDevices = FakeMicrophoneDeviceClient()
     let microphoneUseLock = FakeMicrophoneUseLockClient()
     let enginePrewarm = FakeEnginePrewarmClient()
+    let backupRecorder = FakeBackupRecordingClient()
+    /// One entry per silent microphone warning sound.
+    let warningSounds = Recorded<Void>()
     let appState: AppState
 
     private(set) var phases: [RecorderPhase] = []
@@ -33,6 +36,7 @@ final class AppStateHarness {
 
     init(
         devices: [AudioInputDevice] = [.systemDefault],
+        backupMicrophoneEnabled: Bool = true,
         settings configureSettings: (inout AppSettingsSnapshot) -> Void = { _ in }
     ) throws {
         rootURL = FileManager.default.temporaryDirectory
@@ -82,6 +86,9 @@ final class AppStateHarness {
                 microphoneDevices: microphoneDevices,
                 microphoneUseLock: microphoneUseLock,
                 enginePrewarm: enginePrewarm,
+                backupRecording: backupRecorder,
+                backupMicrophoneRecordingEnabled: { backupMicrophoneEnabled },
+                playMicrophoneWarningSound: { [warningSounds] in warningSounds.append(()) },
                 runningApps: { [] }
             )
         )

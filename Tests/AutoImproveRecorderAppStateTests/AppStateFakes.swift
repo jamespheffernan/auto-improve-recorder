@@ -286,6 +286,8 @@ final class FakeTranscriptionService: TranscriptionService, @unchecked Sendable 
     var result: Result<TranscriptionResult, FakeError> = .success(
         TranscriptionResult(text: "hello world", engineName: "Fake Engine")
     )
+    /// Results for requests whose audio file has this name. Other requests get `result`.
+    var resultsByAudioFileName: [String: Result<TranscriptionResult, FakeError>] = [:]
     var gate = Gate()
     let requests = Recorded<TranscriptionServiceRequest>()
     let realtimePreparations = Recorded<TranscriptionMode>()
@@ -314,7 +316,94 @@ final class FakeTranscriptionService: TranscriptionService, @unchecked Sendable 
     ) async throws -> TranscriptionResult {
         requests.append(request)
         await gate.wait()
-        return try result.get()
+        return try (resultsByAudioFileName[request.audioURL.lastPathComponent] ?? result).get()
+    }
+}
+
+/// A backup recorder that writes an empty file and lets the test deliver buffers and the start result.
+final class FakeBackupRecordingClient: BackupRecordingClient {
+    var startSucceeds = true
+    /// When false the start result waits until the test calls `reportStartResult`.
+    var reportsStartResultAtOnce = true
+    /// When false a stop gives no file, as when the backup file could not be finished.
+    var stopGivesFile = true
+    /// Runs at the beginning of every start.
+    var onStart: (() -> Void)?
+    private(set) var startedMicrophoneNames: [String] = []
+    private(set) var startedURLs: [URL] = []
+    private(set) var stops: [FakeBackupRecordingStop] = []
+    private(set) var onBuffer: ((AVAudioPCMBuffer) -> Void)?
+    private var onResult: ((Bool) -> Void)?
+    private var activeURL: URL?
+
+    var isRunning: Bool { activeURL != nil }
+
+    func start(
+        at url: URL,
+        microphone: AudioInputDevice,
+        onBuffer: @escaping (AVAudioPCMBuffer) -> Void,
+        onResult: @escaping (Bool) -> Void
+    ) {
+        onStart?()
+        startedMicrophoneNames.append(microphone.name)
+        startedURLs.append(url)
+        self.onBuffer = onBuffer
+        self.onResult = onResult
+        if startSucceeds {
+            FileManager.default.createFile(atPath: url.path, contents: Data())
+            activeURL = url
+        }
+        if reportsStartResultAtOnce {
+            reportStartResult()
+        }
+    }
+
+    func reportStartResult() {
+        onResult?(startSucceeds)
+        onResult = nil
+    }
+
+    func stop() -> any BackupRecordingStop {
+        let stop = FakeBackupRecordingStop(url: stopGivesFile ? activeURL : nil)
+        activeURL = nil
+        onBuffer = nil
+        stops.append(stop)
+        return stop
+    }
+}
+
+final class FakeBackupRecordingStop: BackupRecordingStop, @unchecked Sendable {
+    private let lock = NSLock()
+    private let url: URL?
+    private var waits = 0
+    private var discards = 0
+
+    init(url: URL?) {
+        self.url = url
+    }
+
+    var waitCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return waits
+    }
+
+    var discardCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return discards
+    }
+
+    func finishedFile() async -> URL? {
+        lock.withLock { waits += 1 }
+        return url
+    }
+
+    func discard() {
+        lock.withLock { discards += 1 }
+        if let url {
+            try? FileManager.default.removeItem(at: url)
+        }
     }
 }
 

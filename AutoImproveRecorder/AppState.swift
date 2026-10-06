@@ -149,9 +149,33 @@ final class AppState: ObservableObject {
     private var microphoneUseLockHeartbeatTask: Task<Void, Never>?
     private var microphoneDeviceObservation: AnyObject?
     private var microphoneRecovery = MicrophoneRecovery(retryCooldown: 10)
+    /// The silence watch of the recording in flight, or nil when the backup microphone switch is off.
+    private var activeSilenceWatch: MicrophoneSilenceWatch?
+    /// True once the silence watch has reported for the recording in flight.
+    private var silentMicrophoneWarningShown = false
+    private var activeBackupMicrophone: ActiveBackupMicrophone?
+    /// The backup recording whose text the current session uses, or nil when it uses the main recording.
+    private var usedBackupRecording: (microphone: AudioInputDevice, audioURL: URL)?
     private var triggerTimerTasks: [RecordingTriggerTimerKind: Task<Void, Never>] = [:]
     private var localModelStatusTask: Task<Void, Never>?
     private var recordingHotKeyCaptureIsActive = false
+
+    /// The backup microphone of the recording in flight. It stays here from the request to open
+    /// it until the recording ends or the open fails.
+    private struct ActiveBackupMicrophone {
+        let id: UUID
+        let microphone: AudioInputDevice
+        /// True once the backup has opened.
+        var isRunning = false
+    }
+
+    /// The backup of a recording that has stopped.
+    private struct StoppedBackupMicrophone {
+        let microphone: AudioInputDevice
+        let stop: any BackupRecordingStop
+        /// True when the silence watch reported for the recording.
+        let primaryWasSilent: Bool
+    }
 
     private enum Keys {
         static let autoImproveMode = "autoImproveMode"
@@ -564,6 +588,7 @@ final class AppState: ObservableObject {
         discardActiveArchiveDraftIfNeeded()
         discardPreparedRecordingDraft()
         _ = environment.recording.stopRecording()
+        discardBackupMicrophone()
         endMicrophoneUseLock()
     }
 
@@ -799,20 +824,34 @@ final class AppState: ObservableObject {
         let parakeetStream = activeParakeetStreamSession
         activeParakeetStreamSession = nil
         guard let audioURL = environment.recording.stopRecording() else {
+            let backup = endBackupMicrophone()
             activeRecordingID = nil
             microphoneRecovery.recordingEnded()
             endMicrophoneUseLock()
             realtimeAudioSink.clear()
             cancelLiveTranscription(streamingTranscriber: streamingTranscriber, parakeetStream: parakeetStream)
-            failWithMessage("Recording stopped before an audio file was created.")
+            let message = "Recording stopped before an audio file was created."
+            guard shouldTranscribe, let backup else {
+                backup?.stop.discard()
+                failWithMessage(message)
+                return
+            }
+            processBackupAfterFailedStop(
+                backup,
+                stoppedRecordingID: stoppedRecordingID,
+                unusedAudioURL: nil,
+                reportFailure: { [weak self] in self?.failWithMessage(message) }
+            )
             return
         }
+        let backup = endBackupMicrophone()
         endMicrophoneUseLock()
         let captureFailure = realtimeAudioSink.captureFailureSnapshot()
         realtimeAudioSink.clear()
         activeRecordingID = nil
 
         guard shouldTranscribe else {
+            backup?.stop.discard()
             cancelLiveTranscription(streamingTranscriber: streamingTranscriber, parakeetStream: parakeetStream)
             try? FileManager.default.removeItem(at: audioURL)
             discardActiveArchiveDraftIfNeeded()
@@ -831,12 +870,25 @@ final class AppState: ObservableObject {
 
         if let captureFailure {
             cancelLiveTranscription(streamingTranscriber: streamingTranscriber, parakeetStream: parakeetStream)
-            activeProcessingRecordingID = nil
-            recordingStartedAt = nil
             let message = captureFailure.localizedDescription
-            failWithMessage(message)
-            persistTranscriptArchive(transcriptionEngineName: nil)
-            microphoneRecovery.recordingEnded()
+            let reportFailure: @MainActor () -> Void = { [weak self] in
+                guard let self else { return }
+                self.activeProcessingRecordingID = nil
+                self.recordingStartedAt = nil
+                self.failWithMessage(message)
+                self.persistTranscriptArchive(transcriptionEngineName: nil)
+                self.microphoneRecovery.recordingEnded()
+            }
+            guard let backup else {
+                reportFailure()
+                return
+            }
+            processBackupAfterFailedStop(
+                backup,
+                stoppedRecordingID: stoppedRecordingID,
+                unusedAudioURL: audioURL,
+                reportFailure: reportFailure
+            )
             return
         }
 
@@ -851,8 +903,58 @@ final class AppState: ObservableObject {
             await processRecording(
                 audioURL: audioURL,
                 streamingTranscriber: streamingTranscriber,
-                parakeetStream: parakeetStream
+                parakeetStream: parakeetStream,
+                backup: backup
             )
+        }
+    }
+
+    /// The main recording failed at stop and a backup exists. Shows the transcribing state, then
+    /// continues the run on the backup's text when it has any. Otherwise it runs `reportFailure`,
+    /// which reports the main recording's failure.
+    private func processBackupAfterFailedStop(
+        _ backup: StoppedBackupMicrophone,
+        stoppedRecordingID: UUID?,
+        unusedAudioURL: URL?,
+        reportFailure: @escaping @MainActor () -> Void
+    ) {
+        recordingStartedAt = nil
+        activeProcessingRecordingID = stoppedRecordingID
+        phase = .transcribing
+        processingVisualState = .transcribing
+        statusMessage = "Transcribing the backup microphone recording."
+        showProcessingSignal?(.transcribing)
+        handleRecordingTriggerEvent(.processingBegan(recordingID: stoppedRecordingID, at: Date()))
+        Task {
+            let dictionarySnapshot = session.dictionarySnapshot
+            guard let backupURL = await backup.stop.finishedFile() else {
+                activeProcessingRecordingID = nil
+                reportFailure()
+                return
+            }
+            let result: TranscriptionResult
+            do {
+                result = try await transcribe(
+                    audioURL: backupURL,
+                    streamingTranscriber: nil,
+                    parakeetStream: nil,
+                    dictionarySnapshot: session.transcriptionVocabulary
+                )
+            } catch {
+                // The backup file stays when it could not be read, so no audio is lost.
+                NSLog("Backup microphone recording could not be transcribed: %@", error.localizedDescription)
+                activeProcessingRecordingID = nil
+                reportFailure()
+                return
+            }
+            guard BackupTranscriptChoice.wordCount(finalTranscript(of: result)) > 0 else {
+                try? FileManager.default.removeItem(at: backupURL)
+                activeProcessingRecordingID = nil
+                reportFailure()
+                return
+            }
+            useBackupRecording(backupURL, microphone: backup.microphone, replacing: unusedAudioURL)
+            await continueRun(with: result, dictionarySnapshot: dictionarySnapshot)
         }
     }
 
@@ -924,9 +1026,31 @@ final class AppState: ObservableObject {
 
     private func stopRecorderAndReleaseMicrophone() -> URL? {
         let audioURL = environment.recording.stopRecording()
+        discardBackupMicrophone()
         endMicrophoneUseLock()
         realtimeAudioSink.clear()
         return audioURL
+    }
+
+    /// Ends the silence watch and the backup microphone of the recording in flight. Returns the
+    /// stopping backup, or nil when the recording had none.
+    private func endBackupMicrophone() -> StoppedBackupMicrophone? {
+        let primaryWasSilent = silentMicrophoneWarningShown
+        activeSilenceWatch = nil
+        silentMicrophoneWarningShown = false
+        guard let backup = activeBackupMicrophone else { return nil }
+        activeBackupMicrophone = nil
+        return StoppedBackupMicrophone(
+            microphone: backup.microphone,
+            stop: environment.backupRecording.stop(),
+            primaryWasSilent: primaryWasSilent
+        )
+    }
+
+    /// Ends the silence watch and the backup microphone of the recording in flight and deletes
+    /// the backup file.
+    private func discardBackupMicrophone() {
+        endBackupMicrophone()?.stop.discard()
     }
 
     private func cancelParakeetStreamSession() {
@@ -1038,6 +1162,10 @@ final class AppState: ObservableObject {
             realtimeAudioSink.reset(bufferPendingAudio: shouldBufferRealtimeAudio)
             let parakeetStream = makeParakeetStreamSessionIfNeeded()
             activeParakeetStreamSession = parakeetStream
+            // With the switch off there is no silence watch and no backup.
+            activeSilenceWatch = environment.backupMicrophoneRecordingEnabled() ? MicrophoneSilenceWatch() : nil
+            silentMicrophoneWarningShown = false
+            usedBackupRecording = nil
             let audioURL: URL
             let audioSink = realtimeAudioSink
             do {
@@ -1096,6 +1224,7 @@ final class AppState: ObservableObject {
             }
             showProcessingSignal?(.recording)
             logRecordingStartup("audio engine started and recording UI shown", requestedAt: requestedAt)
+            startBackupMicrophoneIfEligible(mainRecordingURL: audioURL)
             prewarmEnginesForActiveModes()
 
             if shouldPrepareRealtime {
@@ -1194,6 +1323,11 @@ final class AppState: ObservableObject {
         let healthMonitor = shouldMonitorForPreferredMicrophoneHealth(resolution)
             ? MicrophoneHealthMonitor(configuration: .startupFallback)
             : nil
+        let silenceWatch = activeSilenceWatch
+        let microphoneName = BackupMicrophoneChooser.resolvedPrimary(
+            resolution.device,
+            devices: availableMicrophones
+        )?.name ?? resolution.device.name
         return try environment.recording.startRecording(
             at: audioURL,
             microphone: resolution.device,
@@ -1201,6 +1335,11 @@ final class AppState: ObservableObject {
             streamHandler: { [weak self] captureEvent in
                 switch captureEvent {
                 case .captured(let captured):
+                    if let silenceWatch, silenceWatch.observePrimary(captured.buffer) != nil {
+                        Task { @MainActor [weak self] in
+                            self?.handleSilentMicrophoneReport(from: silenceWatch, microphoneName: microphoneName)
+                        }
+                    }
                     if let event = healthMonitor?.observe(captured.buffer) {
                         Task { @MainActor [weak self] in
                             self?.handleMicrophoneHealthEvent(
@@ -1232,6 +1371,63 @@ final class AppState: ObservableObject {
         )
     }
 
+    /// Opens the backup microphone beside an external main microphone. The main recorder is
+    /// already running; the backup opens on its own queue and this returns at once.
+    private func startBackupMicrophoneIfEligible(mainRecordingURL: URL) {
+        guard let silenceWatch = activeSilenceWatch,
+              let resolution = microphoneRecovery.activeResolution,
+              let microphone = BackupMicrophoneChooser.chooseBackup(
+                  primary: resolution.device,
+                  devices: availableMicrophones,
+                  isEnabled: true
+              ) else {
+            return
+        }
+        let id = UUID()
+        activeBackupMicrophone = ActiveBackupMicrophone(id: id, microphone: microphone)
+        environment.backupRecording.start(
+            at: BackupMicrophoneRecorder.backupURL(forMainRecording: mainRecordingURL),
+            microphone: microphone,
+            onBuffer: { silenceWatch.observeBackup($0) },
+            onResult: { [weak self] started in
+                Task { @MainActor [weak self] in
+                    self?.backupMicrophoneStartFinished(id: id, started: started, silenceWatch: silenceWatch)
+                }
+            }
+        )
+    }
+
+    /// A backup that failed to open is forgotten; the recording continues without one.
+    private func backupMicrophoneStartFinished(id: UUID, started: Bool, silenceWatch: MicrophoneSilenceWatch) {
+        guard activeBackupMicrophone?.id == id else { return }
+        if started {
+            activeBackupMicrophone?.isRunning = true
+            silenceWatch.backupStarted()
+        } else {
+            activeBackupMicrophone = nil
+        }
+    }
+
+    /// Shows the silent microphone warning once per recording. The recording keeps running.
+    private func handleSilentMicrophoneReport(from silenceWatch: MicrophoneSilenceWatch, microphoneName: String) {
+        guard silenceWatch === activeSilenceWatch,
+              !silentMicrophoneWarningShown,
+              case .recording = phase else {
+            return
+        }
+        silentMicrophoneWarningShown = true
+        let backupName = activeBackupMicrophone?.isRunning == true ? activeBackupMicrophone?.microphone.name : nil
+        microphoneDeviceLogger.info(
+            "Exact digital silence from microphone name=\(microphoneName, privacy: .public) backup=\(backupName ?? "none", privacy: .public)"
+        )
+        if let backupName {
+            statusMessage = "No sound from \(microphoneName). Recording from \(backupName)."
+        } else {
+            statusMessage = "No sound from \(microphoneName)."
+        }
+        environment.playMicrophoneWarningSound()
+    }
+
     private func makeParakeetStreamSessionIfNeeded() -> (any LocalLiveTranscriptionSession)? {
         guard transcriptionMode == .localParakeetStreaming,
               RecommendedLiveTranscription.isAvailable else { return nil }
@@ -1252,6 +1448,8 @@ final class AppState: ObservableObject {
         audioSink: OpenAIRealtimeAudioSink,
         requestedAt: Date
     ) {
+        // A recording with a backup keeps its main microphone; the backup holds the audio.
+        guard activeBackupMicrophone == nil else { return }
         guard case .recording = phase,
               case .recover(let quarantinedUntil) = microphoneRecovery.silentMicrophoneReported(
                   event,
@@ -1421,51 +1619,18 @@ final class AppState: ObservableObject {
     private func processRecording(
         audioURL: URL,
         streamingTranscriber: OpenAIRealtimeTranscriber?,
-        parakeetStream: (any LocalLiveTranscriptionSession)? = nil
+        parakeetStream: (any LocalLiveTranscriptionSession)? = nil,
+        backup: StoppedBackupMicrophone? = nil
     ) async {
         do {
             let dictionarySnapshot = session.dictionarySnapshot
-            let result = try await transcribe(
+            let result = try await transcribeChoosingBackup(
                 audioURL: audioURL,
                 streamingTranscriber: streamingTranscriber,
                 parakeetStream: parakeetStream,
-                dictionarySnapshot: session.transcriptionVocabulary
+                backup: backup
             )
-            let outcome = TranscriptPostProcessor.process(
-                result.text,
-                rules: dictionaryStore.effectiveReplacementRules
-            )
-            let transcript = outcome.final
-            session.rawTranscript = transcript
-            session.recognizerTranscript = outcome.recognizer
-            session.postRulesTranscript = outcome.afterRules
-            session.improvedText = ""
-            session.message = nil
-            session.improveFailed = false
-            session.dictionarySnapshot = dictionarySnapshot
-            persistTranscriptArchive(transcriptionEngineName: result.engineName)
-
-            switch autoImproveMode {
-            case .off:
-                phase = .ready
-                showRawTranscript = true
-                statusMessage = "Showing raw transcript."
-                await finishProcessing()
-            case .manual:
-                phase = .ready
-                showRawTranscript = true
-                statusMessage = "Transcript ready."
-                await finishProcessing()
-            case .automatic:
-                if wordCount(transcript) >= thresholdWords {
-                    await improveCurrentTranscript(force: false)
-                } else {
-                    phase = .ready
-                    showRawTranscript = true
-                    statusMessage = "Transcript ready."
-                    await finishProcessing()
-                }
-            }
+            await continueRun(with: result, dictionarySnapshot: dictionarySnapshot)
         } catch {
             session = TranscriptSession(
                 audioURL: audioURL,
@@ -1481,6 +1646,123 @@ final class AppState: ObservableObject {
             statusMessage = error.localizedDescription
             await finishProcessing()
         }
+    }
+
+    /// The run after transcription: replacement rules, the archive save, then improvement or delivery.
+    private func continueRun(with result: TranscriptionResult, dictionarySnapshot: String) async {
+        let outcome = TranscriptPostProcessor.process(
+            result.text,
+            rules: dictionaryStore.effectiveReplacementRules
+        )
+        let transcript = outcome.final
+        session.rawTranscript = transcript
+        session.recognizerTranscript = outcome.recognizer
+        session.postRulesTranscript = outcome.afterRules
+        session.improvedText = ""
+        session.message = nil
+        session.improveFailed = false
+        session.dictionarySnapshot = dictionarySnapshot
+        persistTranscriptArchive(transcriptionEngineName: result.engineName)
+
+        switch autoImproveMode {
+        case .off:
+            phase = .ready
+            showRawTranscript = true
+            statusMessage = "Showing raw transcript."
+            await finishProcessing()
+        case .manual:
+            phase = .ready
+            showRawTranscript = true
+            statusMessage = "Transcript ready."
+            await finishProcessing()
+        case .automatic:
+            if wordCount(transcript) >= thresholdWords {
+                await improveCurrentTranscript(force: false)
+            } else {
+                phase = .ready
+                showRawTranscript = true
+                statusMessage = "Transcript ready."
+                await finishProcessing()
+            }
+        }
+    }
+
+    /// Transcribes the main recording. When that fails, gives no words, or the silence watch
+    /// reported, it transcribes the backup too and returns the backup's result when it has more
+    /// words. A backup that is not needed is deleted without waiting for its file.
+    private func transcribeChoosingBackup(
+        audioURL: URL,
+        streamingTranscriber: OpenAIRealtimeTranscriber?,
+        parakeetStream: (any LocalLiveTranscriptionSession)?,
+        backup: StoppedBackupMicrophone?
+    ) async throws -> TranscriptionResult {
+        let vocabulary = session.transcriptionVocabulary
+        let main: Result<TranscriptionResult, Error>
+        do {
+            main = .success(try await transcribe(
+                audioURL: audioURL,
+                streamingTranscriber: streamingTranscriber,
+                parakeetStream: parakeetStream,
+                dictionarySnapshot: vocabulary
+            ))
+        } catch {
+            main = .failure(error)
+        }
+        guard let backup else { return try main.get() }
+
+        let mainText = (try? main.get()).map(finalTranscript(of:)) ?? ""
+        guard BackupTranscriptChoice.wordCount(mainText) == 0 || backup.primaryWasSilent else {
+            backup.stop.discard()
+            return try main.get()
+        }
+        guard let backupURL = await backup.stop.finishedFile() else { return try main.get() }
+        do {
+            // No streaming transcriber and no live session: the backup is read from its file.
+            let backupResult = try await transcribe(
+                audioURL: backupURL,
+                streamingTranscriber: nil,
+                parakeetStream: nil,
+                dictionarySnapshot: vocabulary
+            )
+            if BackupTranscriptChoice.prefersBackup(
+                mainText: mainText,
+                backupText: finalTranscript(of: backupResult)
+            ) {
+                useBackupRecording(backupURL, microphone: backup.microphone, replacing: audioURL)
+                return backupResult
+            }
+            try? FileManager.default.removeItem(at: backupURL)
+        } catch {
+            // The backup file stays when it could not be read, so no audio is lost.
+            NSLog("Backup microphone recording could not be transcribed: %@", error.localizedDescription)
+        }
+        return try main.get()
+    }
+
+    /// The text the run would use for `result`: the recognizer's text after the replacement rules.
+    private func finalTranscript(of result: TranscriptionResult) -> String {
+        TranscriptPostProcessor.process(result.text, rules: dictionaryStore.effectiveReplacementRules).final
+    }
+
+    /// Makes the backup recording the session's audio and deletes the main recording's file.
+    private func useBackupRecording(_ backupURL: URL, microphone: AudioInputDevice, replacing mainAudioURL: URL?) {
+        usedBackupRecording = (microphone, backupURL)
+        session.audioURL = backupURL
+        if let mainAudioURL {
+            try? FileManager.default.removeItem(at: mainAudioURL)
+        }
+        microphoneDeviceLogger.info(
+            "Using the backup microphone recording name=\(microphone.name, privacy: .public)"
+        )
+    }
+
+    /// Adds the backup microphone note to the status when the session's text came from the backup.
+    private func appendBackupMicrophoneNoteToStatus() {
+        guard let microphone = usedBackupRecording?.microphone else { return }
+        let note = "Used the backup microphone (\(microphone.name))."
+        let current = statusMessage?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !current.hasSuffix(note) else { return }
+        statusMessage = current.isEmpty ? note : "\(current) \(note)"
     }
 
     private func transcribe(
@@ -1596,8 +1878,18 @@ final class AppState: ObservableObject {
     }
 
     private func persistTranscriptArchive(transcriptionEngineName: String?) {
-        guard let archiveDraft = activeArchiveDraft ?? archiveDraftFromSession() else { return }
+        guard var archiveDraft = activeArchiveDraft ?? archiveDraftFromSession() else { return }
         let microphoneResolution = microphoneRecovery.activeResolution
+        // When the text came from the backup, the record names the backup's file and microphone.
+        let backup = usedBackupRecording
+        if let backup {
+            archiveDraft = TranscriptArchiveDraft(
+                id: archiveDraft.id,
+                createdAt: archiveDraft.createdAt,
+                directoryURL: archiveDraft.directoryURL,
+                audioURL: backup.audioURL
+            )
+        }
         let content = TranscriptArchiveContent(
             rawTranscript: session.rawTranscript,
             cleanedTranscript: session.improvedText,
@@ -1619,12 +1911,14 @@ final class AppState: ObservableObject {
             autoImproveMode: autoImproveMode.rawValue,
             thresholdWords: thresholdWords,
             microphonePreferenceID: preferredMicrophoneID,
-            microphoneResolvedID: microphoneResolution?.device.id,
-            microphoneResolvedName: microphoneResolution?.device.name,
-            microphoneUsedFallback: microphoneResolution?.usedFallback ?? false,
-            microphoneFallbackReason: microphoneResolution?.usedFallback == true
-                ? microphoneResolution?.reason.rawValue
-                : nil
+            microphoneResolvedID: backup?.microphone.id ?? microphoneResolution?.device.id,
+            microphoneResolvedName: backup?.microphone.name ?? microphoneResolution?.device.name,
+            microphoneUsedFallback: backup != nil || (microphoneResolution?.usedFallback ?? false),
+            microphoneFallbackReason: backup != nil
+                ? "backupMicrophone"
+                : microphoneResolution?.usedFallback == true
+                    ? microphoneResolution?.reason.rawValue
+                    : nil
         )
         let record = environment.archive.record(
             draft: archiveDraft,
@@ -1699,6 +1993,7 @@ final class AppState: ObservableObject {
             hideProcessingSignal?()
             scheduleVisualReset(after: 0.8)
         }
+        appendBackupMicrophoneNoteToStatus()
     }
 
     @discardableResult
@@ -1801,6 +2096,7 @@ final class AppState: ObservableObject {
     private func failWithMessage(_ message: String) {
         unregisterActiveRecordingHotKeys()
         resetRecordingTriggerState(reason: "terminal failure: \(message)")
+        discardBackupMicrophone()
         endMicrophoneUseLock()
         session.message = message
         phase = .failed

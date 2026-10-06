@@ -1,3 +1,4 @@
+import AVFoundation
 import CoreAudio
 import Foundation
 
@@ -61,6 +62,71 @@ struct FileMicrophoneUseLockClient: MicrophoneUseLockClient {
 
     func clear() {
         try? FileManager.default.removeItem(at: url)
+    }
+}
+
+/// The second recorder that runs beside an external main microphone.
+protocol BackupRecordingClient {
+    /// Starts recording `microphone` to `url` and returns at once. `onBuffer` runs on the audio
+    /// thread for every captured buffer. `onResult` reports whether the recording started.
+    /// Failures are logged and never thrown.
+    func start(
+        at url: URL,
+        microphone: AudioInputDevice,
+        onBuffer: @escaping (AVAudioPCMBuffer) -> Void,
+        onResult: @escaping (Bool) -> Void
+    )
+    /// Begins stopping the backup and returns at once.
+    func stop() -> any BackupRecordingStop
+}
+
+/// A backup recording that is stopping.
+protocol BackupRecordingStop: Sendable {
+    /// The finished backup file, or nil when there is none or it did not finish in time. Call once.
+    func finishedFile() async -> URL?
+    /// Deletes the backup file, now or when it finishes.
+    func discard()
+}
+
+struct LiveBackupRecordingClient: BackupRecordingClient {
+    private let recorder = BackupMicrophoneRecorder()
+
+    func start(
+        at url: URL,
+        microphone: AudioInputDevice,
+        onBuffer: @escaping (AVAudioPCMBuffer) -> Void,
+        onResult: @escaping (Bool) -> Void
+    ) {
+        recorder.start(at: url, microphone: microphone, onBuffer: onBuffer, onResult: onResult)
+    }
+
+    func stop() -> any BackupRecordingStop {
+        LiveBackupRecordingStop(stop: recorder.stop())
+    }
+}
+
+private struct LiveBackupRecordingStop: BackupRecordingStop {
+    let stop: BackupMicrophoneStop
+
+    func finishedFile() async -> URL? {
+        // `wait` blocks its thread for up to `BackupMicrophoneRecorder.stopTimeout`, so it runs
+        // off the caller's actor.
+        await Task.detached(priority: .userInitiated) { stop.wait() }.value
+    }
+
+    func discard() {
+        stop.discard()
+    }
+}
+
+/// The backup microphone switch. It has no user interface and is on unless the key is set to false:
+/// `defaults write com.fieldtheory.autoimproverecorder backupMicrophoneRecordingEnabled -bool false`.
+enum BackupMicrophoneSwitch {
+    static let key = "backupMicrophoneRecordingEnabled"
+
+    static func isOn(in defaults: UserDefaults = .standard) -> Bool {
+        guard defaults.object(forKey: key) != nil else { return true }
+        return defaults.bool(forKey: key)
     }
 }
 
