@@ -172,18 +172,6 @@ final class LocalModelInventoryTests: XCTestCase {
         XCTAssertTrue(statuses[.cloudRealtime]?.detail.contains("streams microphone audio to OpenAI") == true)
     }
 
-    func testFastestModeFallsBackToInstalledParakeetCppRecommended() {
-        let fallback = FastestTranscriptionFallbackSelector.fallback(isParakeetCppRecommendedInstalled: true)
-
-        XCTAssertEqual(fallback, .parakeetCppRecommended)
-    }
-
-    func testFastestModeStillTargetsParakeetCppRecommendedWhenRecommendedInstallIsMissing() {
-        let fallback = FastestTranscriptionFallbackSelector.fallback(isParakeetCppRecommendedInstalled: false)
-
-        XCTAssertEqual(fallback, .parakeetCppRecommended)
-    }
-
     private func statuses(
         files: Set<String> = [],
         executables: Set<String> = [],

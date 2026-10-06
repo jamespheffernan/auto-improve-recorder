@@ -77,24 +77,6 @@ final class AutoSendTargetManifestTests: XCTestCase {
         }
     }
 
-
-    func testNoTextFieldFallbackCopiesTranscript() throws {
-        let sourceURL = projectURL
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .appendingPathComponent("AutoSendRecorder/AutoSendDeliveryAdapter.swift")
-        let source = try String(contentsOf: sourceURL, encoding: .utf8)
-
-        XCTAssertTrue(
-            source.contains("copyToPasteboard(text)"),
-            "A completed transcript must be copied when no editable text field is available"
-        )
-        XCTAssertTrue(
-            source.contains("AutoSendClipboardFallback.disposition("),
-            "The adapter must use the tested clipboard fallback result mapping"
-        )
-    }
-
     func testAutoSendUsesStableDevelopmentSigningInsteadOfAdHocSigning() throws {
         let project = try String(contentsOf: projectURL, encoding: .utf8)
         for marker in [

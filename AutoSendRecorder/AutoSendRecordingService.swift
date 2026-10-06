@@ -108,7 +108,7 @@ final class AutoSendRecordingService: AutoSendCaptureService, @unchecked Sendabl
                     throw AutoSendRecordingError.operationSuperseded
                 }
                 let url = try makeRecordingURL()
-                let resolution = try resolveMicrophone(for: source)
+                let resolution = try resolveMicrophone()
                 let healthMonitor = healthMonitor(for: resolution, source: source)
                 activeMicrophoneResolution = resolution
                 activeMicrophoneHealthMonitor = healthMonitor
@@ -350,23 +350,8 @@ final class AutoSendRecordingService: AutoSendCaptureService, @unchecked Sendabl
             .appendingPathExtension("wav")
     }
 
-    private func resolveMicrophone(
-        for source: AutoSendRecordingSource
-    ) throws -> MicrophoneResolution {
+    private func resolveMicrophone() throws -> MicrophoneResolution {
         let devices = AudioInputDeviceDiscovery.inputDevices()
-        if source == .esp32Button,
-           let selectedIndex = AutoSendMicrophoneSelection.preferredDeviceIndex(
-               source: source,
-               availableDevices: devices.map { ($0.id, $0.name) }
-           ) {
-            return MicrophoneResolution(
-                requestedID: devices[selectedIndex].id,
-                device: devices[selectedIndex],
-                usedFallback: false,
-                reason: .preferredAvailable
-            )
-        }
-
         stateLock.lock()
         let preferredID = preferredMicrophoneID
         let quarantined = quarantinedMicrophoneIDs
@@ -507,7 +492,7 @@ final class AutoSendRecordingService: AutoSendCaptureService, @unchecked Sendabl
             }
 
             do {
-                let fallback = try resolveMicrophone(for: source)
+                let fallback = try resolveMicrophone()
                 guard fallback.device.id != silentResolution.device.id else {
                     throw MicrophoneResolverError.noUsableMicrophone
                 }

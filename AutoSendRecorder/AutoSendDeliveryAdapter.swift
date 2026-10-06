@@ -39,36 +39,31 @@ final class AutoSendDeliveryAdapter: AutoSendDeliveryService, @unchecked Sendabl
         )
 
         let result = await service.deliver(request)
+        return AutoSendDeliveryDisposition.resolving(
+            Self.report(result),
+            copyToClipboard: { Self.copyToPasteboard(text) }
+        )
+    }
+
+    private static func report(_ result: DeliveryResult) -> AutoSendDeliveryReport {
+        let outcome: AutoSendDeliveryReport.Outcome
         switch result.outcome {
         case .submitted:
-            return .sent
+            outcome = .submitted
         case .pasted:
-            return result.policy.sendCommand == nil
-                ? .pastedWithoutSending
-                : .sendSuppressed(result.statusMessage)
+            outcome = .pasted
         case .copied:
-            if let error = result.errorSummary {
-                return result.context.accessibilityTrusted
-                    ? .pasteFailed(error)
-                    : .permissionRequired(result.statusMessage)
-            }
-            return .copied(result.statusMessage)
+            outcome = .copied
         case .ready:
-            let clipboardWriteSucceeded = Self.copyToPasteboard(text)
-            if let error = result.errorSummary {
-                guard clipboardWriteSucceeded else {
-                    return .pasteFailed("Could not paste or copy the transcript. \(error)")
-                }
-                return result.context.accessibilityTrusted
-                    ? .pasteFailed("Copied to clipboard. \(error)")
-                    : .permissionRequired("Copied to clipboard. \(result.statusMessage)")
-            }
-            return AutoSendClipboardFallback.disposition(
-                accessibilityTrusted: result.context.accessibilityTrusted,
-                clipboardWriteSucceeded: clipboardWriteSucceeded,
-                statusMessage: result.statusMessage
-            )
+            outcome = .ready
         }
+        return AutoSendDeliveryReport(
+            outcome: outcome,
+            sendWasRequested: result.policy.sendCommand != nil,
+            statusMessage: result.statusMessage,
+            errorSummary: result.errorSummary,
+            accessibilityTrusted: result.context.accessibilityTrusted
+        )
     }
 
     private static func copyToPasteboard(_ text: String) -> Bool {

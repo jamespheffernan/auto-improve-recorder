@@ -215,6 +215,64 @@ enum AutoSendClipboardFallback {
     }
 }
 
+/// What shared delivery reported, reduced to the facts ASR's disposition depends on.
+struct AutoSendDeliveryReport: Equatable, Sendable {
+    enum Outcome: Equatable, Sendable {
+        case submitted
+        case pasted
+        case copied
+        /// Nothing was pasted or copied; the text is still undelivered.
+        case ready
+    }
+
+    var outcome: Outcome
+    /// False when the app's rule turned sending off.
+    var sendWasRequested: Bool
+    var statusMessage: String
+    var errorSummary: String?
+    var accessibilityTrusted: Bool
+}
+
+extension AutoSendDeliveryDisposition {
+    /// Turns shared delivery's report into ASR's disposition. `copyToClipboard` runs only when
+    /// delivery left the text undelivered, and returns whether the write succeeded.
+    static func resolving(
+        _ report: AutoSendDeliveryReport,
+        copyToClipboard: () -> Bool
+    ) -> AutoSendDeliveryDisposition {
+        switch report.outcome {
+        case .submitted:
+            return .sent
+        case .pasted:
+            return report.sendWasRequested
+                ? .sendSuppressed(report.statusMessage)
+                : .pastedWithoutSending
+        case .copied:
+            if let error = report.errorSummary {
+                return report.accessibilityTrusted
+                    ? .pasteFailed(error)
+                    : .permissionRequired(report.statusMessage)
+            }
+            return .copied(report.statusMessage)
+        case .ready:
+            let clipboardWriteSucceeded = copyToClipboard()
+            if let error = report.errorSummary {
+                guard clipboardWriteSucceeded else {
+                    return .pasteFailed("Could not paste or copy the transcript. \(error)")
+                }
+                return report.accessibilityTrusted
+                    ? .pasteFailed("Copied to clipboard. \(error)")
+                    : .permissionRequired("Copied to clipboard. \(report.statusMessage)")
+            }
+            return AutoSendClipboardFallback.disposition(
+                accessibilityTrusted: report.accessibilityTrusted,
+                clipboardWriteSucceeded: clipboardWriteSucceeded,
+                statusMessage: report.statusMessage
+            )
+        }
+    }
+}
+
 enum AutoSendFailureKind: Equatable, Sendable {
     case microphonePermission
     case recording

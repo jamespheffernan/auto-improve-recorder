@@ -66,7 +66,6 @@
 		AIRDR0000000000000000001 /* AppDeliveryRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRDR0000000000000000000 /* AppDeliveryRules.swift */; };
 		AIREDITGATE000000000001 /* TranscriptEditValueGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIREDITGATE000000000000 /* TranscriptEditValueGate.swift */; };
 		AIRENV0000000000000000001 /* AppEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRENV0000000000000000000 /* AppEnvironment.swift */; };
-		AIRFASTFALLBACK000001 /* FastestTranscriptionFallbackSelector.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRFASTFALLBACK000000 /* FastestTranscriptionFallbackSelector.swift */; };
 		AIRIS0000000000000000001 /* ImprovementService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRIS0000000000000000000 /* ImprovementService.swift */; };
 		AIRLMHEALTH000000000001 /* LocalRuntimeHealth.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRLMHEALTH000000000000 /* LocalRuntimeHealth.swift */; };
 		AIRLMINV000000000000001 /* LocalModelInventory.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRLMINV000000000000000 /* LocalModelInventory.swift */; };
@@ -173,7 +172,6 @@
 		AIRDR0000000000000000000 /* AppDeliveryRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDeliveryRules.swift; sourceTree = "<group>"; };
 		AIREDITGATE000000000000 /* TranscriptEditValueGate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptEditValueGate.swift; sourceTree = "<group>"; };
 		AIRENV0000000000000000000 /* AppEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppEnvironment.swift; sourceTree = "<group>"; };
-		AIRFASTFALLBACK000000 /* FastestTranscriptionFallbackSelector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FastestTranscriptionFallbackSelector.swift; sourceTree = "<group>"; };
 		AIRIS0000000000000000000 /* ImprovementService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImprovementService.swift; sourceTree = "<group>"; };
 		AIRLMHEALTH000000000000 /* LocalRuntimeHealth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalRuntimeHealth.swift; sourceTree = "<group>"; };
 		AIRLMINV000000000000000 /* LocalModelInventory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalModelInventory.swift; sourceTree = "<group>"; };
@@ -337,7 +335,6 @@
 				AIRDEL0000000000000000000 /* DeliveryService.swift */,
 				AIRDIAG0000000000000000 /* DiagnosticsStore.swift */,
 				AIRDICT0000000000000000 /* DictionaryStore.swift */,
-				AIRFASTFALLBACK000000 /* FastestTranscriptionFallbackSelector.swift */,
 				AIR000000000000000000000C /* HotKeyCenter.swift */,
 				AIR000000000000000000000D /* AudioInputDeviceDiscovery.swift */,
 				AIRMIC000000000000000000 /* MicrophoneDevice.swift */,
@@ -569,7 +566,6 @@
 				AIRDEL0000000000000000001 /* DeliveryService.swift in Sources */,
 				AIRDIAG0000000000000001 /* DiagnosticsStore.swift in Sources */,
 				AIRDICT0000000000000001 /* DictionaryStore.swift in Sources */,
-				AIRFASTFALLBACK000001 /* FastestTranscriptionFallbackSelector.swift in Sources */,
 				AIR000000000000000000001B /* HotKeyCenter.swift in Sources */,
 				AIR000000000000000000001C /* AudioInputDeviceDiscovery.swift in Sources */,
 				AIRMIC000000000000000001 /* MicrophoneDevice.swift in Sources */,

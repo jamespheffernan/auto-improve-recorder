@@ -100,35 +100,8 @@ enum AutoSendMenuBarIconStyle: String, CaseIterable, Codable, Identifiable, Send
 }
 
 enum AutoSendMicrophoneSelection {
-    static let esp32MicrophoneName = "TinyUSB UAC1"
-    static let esp32USBSerialNumber = "288485910484"
     static let boyaMicrophoneName = "BOYA mini 2"
     static let ankerMicrophoneName = "Anker PowerConf C200"
-
-    static func preferredDeviceIndex(
-        source: AutoSendRecordingSource,
-        availableDevices: [(id: String, name: String)],
-        preferredMicrophoneID: String = ""
-    ) -> Int? {
-        if source == .macHotKey {
-            let preferredID = preferredMicrophoneID.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !preferredID.isEmpty else { return nil }
-            let matchingIndices = availableDevices.indices.filter {
-                availableDevices[$0].id == preferredID
-            }
-            return matchingIndices.count == 1 ? matchingIndices[0] : nil
-        }
-
-        let matchingIndices = availableDevices.indices.filter {
-            let device = availableDevices[$0]
-            return device.name.compare(
-                esp32MicrophoneName,
-                options: .caseInsensitive
-            ) == .orderedSame && device.id.contains(esp32USBSerialNumber)
-        }
-        guard matchingIndices.count == 1 else { return nil }
-        return matchingIndices[0]
-    }
 }
 
 struct AutoSendAppRule: Codable, Equatable, Identifiable, Sendable {

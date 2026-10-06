@@ -26,7 +26,6 @@ let package = Package(
                 "DiagnosticsStore.swift",
                 "DictionaryLexicon.swift",
                 "DictionaryStore.swift",
-                "FastestTranscriptionFallbackSelector.swift",
                 "LocalModelInventory.swift",
                 "LocalRuntimeHealth.swift",
                 "LocalRuntimeProbe.swift",
