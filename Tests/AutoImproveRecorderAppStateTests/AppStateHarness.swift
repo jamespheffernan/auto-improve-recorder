@@ -37,6 +37,8 @@ final class AppStateHarness {
     init(
         devices: [AudioInputDevice] = [.systemDefault],
         backupMicrophoneEnabled: Bool = true,
+        silenceWatchConfiguration: MicrophoneSilenceWatchConfiguration = .standard,
+        silenceWatchCheckInterval: TimeInterval = 1,
         settings configureSettings: (inout AppSettingsSnapshot) -> Void = { _ in }
     ) throws {
         rootURL = FileManager.default.temporaryDirectory
@@ -89,6 +91,8 @@ final class AppStateHarness {
                 backupRecording: backupRecorder,
                 backupMicrophoneRecordingEnabled: { backupMicrophoneEnabled },
                 playMicrophoneWarningSound: { [warningSounds] in warningSounds.append(()) },
+                silenceWatchConfiguration: silenceWatchConfiguration,
+                silenceWatchCheckInterval: silenceWatchCheckInterval,
                 runningApps: { [] }
             )
         )

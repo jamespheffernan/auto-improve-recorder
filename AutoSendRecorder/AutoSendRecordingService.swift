@@ -24,6 +24,9 @@ final class AutoSendRecordingService: AutoSendCaptureService, @unchecked Sendabl
     /// The current recording's backup, from the moment its start is requested. `isRunning`
     /// becomes true when the backup microphone has opened.
     private var activeBackup: (operationID: AutoSendOperationID, microphoneName: String, isRunning: Bool)?
+    /// The repeating check that the main microphone is still delivering buffers. It runs only
+    /// while recording.
+    private var silenceCheckTimer: DispatchSourceTimer?
     /// The stopped recording's backup, held until the workflow asks for it.
     private var stoppedBackup: (
         operationID: AutoSendOperationID,
@@ -155,8 +158,8 @@ final class AutoSendRecordingService: AutoSendCaptureService, @unchecked Sendabl
                     streamHandler: { [weak self, weak transcription] event in
                         guard let self, self.isCurrent(operationID) else { return }
                         if case .captured(let captured) = event,
-                           silenceWatch?.observePrimary(captured.buffer) != nil {
-                            self.reportSilentMicrophone(named: primaryName, operationID: operationID)
+                           let report = silenceWatch?.observePrimary(captured.buffer) {
+                            self.reportSilentMicrophone(report, named: primaryName, operationID: operationID)
                         }
                         if case .captured(let captured) = event,
                            let healthEvent = healthMonitor?.observe(captured.buffer) {
@@ -176,6 +179,9 @@ final class AutoSendRecordingService: AutoSendCaptureService, @unchecked Sendabl
                     }
                 )
                 // The main recorder is running. The backup is chosen now and opens on its own queue.
+                if let silenceWatch {
+                    startSilenceChecks(silenceWatch, primaryName: primaryName, operationID: operationID)
+                }
                 if let silenceWatch,
                    let backupDevice = BackupMicrophoneChooser.chooseBackup(
                        primary: resolution.device,
@@ -187,6 +193,7 @@ final class AutoSendRecordingService: AutoSendCaptureService, @unchecked Sendabl
                         on: backupDevice,
                         mainRecordingURL: url,
                         silenceWatch: silenceWatch,
+                        primaryName: primaryName,
                         operationID: operationID
                     )
                 }
@@ -292,6 +299,7 @@ final class AutoSendRecordingService: AutoSendCaptureService, @unchecked Sendabl
         on device: MicrophoneDevice,
         mainRecordingURL: URL,
         silenceWatch: MicrophoneSilenceWatch,
+        primaryName: String,
         operationID: AutoSendOperationID
     ) {
         stateLock.lock()
@@ -300,7 +308,12 @@ final class AutoSendRecordingService: AutoSendCaptureService, @unchecked Sendabl
         backupRecorder.start(
             at: BackupMicrophoneRecorder.backupURL(forMainRecording: mainRecordingURL),
             microphone: device,
-            onBuffer: { silenceWatch.observeBackup($0) },
+            onBuffer: { [weak self] buffer in
+                // The backup's buffers show when the main microphone has stopped delivering any.
+                if let report = silenceWatch.observeBackup(buffer) {
+                    self?.reportSilentMicrophone(report, named: primaryName, operationID: operationID)
+                }
+            },
             onResult: { [weak self] started in
                 guard let self else { return }
                 var skippedRecovery: (silence: SkippedMicrophoneSilence, source: AutoSendRecordingSource)?
@@ -366,7 +379,41 @@ final class AutoSendRecordingService: AutoSendCaptureService, @unchecked Sendabl
         stopped?.stop.discard()
     }
 
-    private func reportSilentMicrophone(named primaryName: String, operationID: AutoSendOperationID) {
+    /// Checks once a second that the main microphone is still delivering buffers. The first
+    /// check, made here, marks when the recording started. `stopSilenceChecks` ends it.
+    private func startSilenceChecks(
+        _ silenceWatch: MicrophoneSilenceWatch,
+        primaryName: String,
+        operationID: AutoSendOperationID
+    ) {
+        _ = silenceWatch.checkPrimaryDelivery(now: Date())
+        let timer = DispatchSource.makeTimerSource(queue: .global(qos: .utility))
+        timer.schedule(deadline: .now() + 1, repeating: 1)
+        timer.setEventHandler { [weak self] in
+            guard let self, self.isCurrent(operationID) else { return }
+            if let report = silenceWatch.checkPrimaryDelivery(now: Date()) {
+                self.reportSilentMicrophone(report, named: primaryName, operationID: operationID)
+            }
+        }
+        stateLock.lock()
+        silenceCheckTimer?.cancel()
+        silenceCheckTimer = timer
+        stateLock.unlock()
+        timer.resume()
+    }
+
+    private func stopSilenceChecks() {
+        stateLock.lock()
+        silenceCheckTimer?.cancel()
+        silenceCheckTimer = nil
+        stateLock.unlock()
+    }
+
+    private func reportSilentMicrophone(
+        _ report: MicrophoneSilenceReport,
+        named primaryName: String,
+        operationID: AutoSendOperationID
+    ) {
         stateLock.lock()
         guard currentOperationID == operationID, silenceReportedOperationID != operationID else {
             stateLock.unlock()
@@ -379,7 +426,8 @@ final class AutoSendRecordingService: AutoSendCaptureService, @unchecked Sendabl
         let handler = microphoneWarningHandler
         stateLock.unlock()
         NSLog(
-            "Auto Send Recorder: %@ is delivering exact digital silence; backup microphone: %@.",
+            "Auto Send Recorder: silent microphone report (%@) for %@; backup microphone: %@.",
+            report.kind.rawValue,
             primaryName,
             backupName ?? "none"
         )
@@ -420,6 +468,8 @@ final class AutoSendRecordingService: AutoSendCaptureService, @unchecked Sendabl
             currentOperationID = nil
             currentSource = nil
             microphoneRecovery.recordingEnded()
+            silenceCheckTimer?.cancel()
+            silenceCheckTimer = nil
         }
         stateLock.unlock()
     }
@@ -671,6 +721,8 @@ final class AutoSendRecordingService: AutoSendCaptureService, @unchecked Sendabl
             microphoneRecovery.recoveryFinished()
             stateLock.unlock()
         }
+        // The recorder that restarts below does not feed the silence watch, so its checks end here.
+        stopSilenceChecks()
 
         withRecorderLock {
             guard isCurrent(operationID) else { return }

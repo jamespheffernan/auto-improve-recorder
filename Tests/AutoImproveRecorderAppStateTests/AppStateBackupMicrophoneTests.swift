@@ -38,11 +38,15 @@ final class AppStateBackupMicrophoneTests: XCTestCase {
     private func makeHarness(
         devices: [AudioInputDevice]? = nil,
         preferredMicrophoneID: String = "mic-usb",
-        backupMicrophoneEnabled: Bool = true
+        backupMicrophoneEnabled: Bool = true,
+        silenceWatchConfiguration: MicrophoneSilenceWatchConfiguration = .standard,
+        silenceWatchCheckInterval: TimeInterval = 1
     ) throws -> AppStateHarness {
         let harness = try AppStateHarness(
             devices: devices ?? [usbMicrophone, builtInMicrophone],
             backupMicrophoneEnabled: backupMicrophoneEnabled,
+            silenceWatchConfiguration: silenceWatchConfiguration,
+            silenceWatchCheckInterval: silenceWatchCheckInterval,
             settings: { $0.preferredMicrophoneID = preferredMicrophoneID }
         )
         self.harness = harness
@@ -221,6 +225,108 @@ final class AppStateBackupMicrophoneTests: XCTestCase {
         XCTAssertEqual(harness.warningSounds.count, 1)
         XCTAssertTrue(harness.appState.isRecording)
         XCTAssertEqual(harness.recorder.stopCount, 0)
+    }
+
+    func testFaintMainMicrophoneWithBackupSoundWarnsOnceAndUsesTheBackupWhenItHasMoreWords() async throws {
+        let harness = try makeHarness()
+        setTranscripts(harness, main: "", backup: "the backup heard every word")
+        await harness.startAndWaitForRecording()
+
+        let faint = try buffer(seconds: 0.25, level: 0.0005)
+        let loud = try buffer(seconds: 0.25, level: 0.5)
+        await harness.waitUntil("the silent microphone warning") {
+            guard harness.warningSounds.count < 1 else { return true }
+            if let handler = harness.recorder.streamHandler,
+               let captured = CapturedAudioBuffer.copying(sequence: 0, buffer: faint) {
+                handler(.captured(captured))
+            }
+            harness.backupRecorder.onBuffer?(loud)
+            return false
+        }
+        XCTAssertEqual(harness.appState.statusMessage, "No sound from USB Mic. Recording from Built-in Mic.")
+        XCTAssertTrue(harness.appState.isRecording)
+
+        // Exact silence afterwards is a second report in the same recording; it does not alert again.
+        try feedMain(harness, seconds: 0.25, level: 0, count: 8)
+        try await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertEqual(harness.warningSounds.count, 1)
+
+        harness.appState.stopRecording()
+        await harness.waitForDelivery()
+        XCTAssertEqual(requestedFiles(harness), [mainFile, backupFile])
+    }
+
+    func testMainMicrophoneThatDeliversNoBuffersWarnsFromTheBackupsAudio() async throws {
+        let harness = try makeHarness()
+        await harness.startAndWaitForRecording()
+
+        // One second of backup audio, quiet or not, with no main buffer in that time.
+        let quiet = try buffer(seconds: 0.25, level: 0.001)
+        for _ in 0..<4 {
+            harness.backupRecorder.onBuffer?(quiet)
+        }
+        await harness.waitUntil("the silent microphone warning") { harness.warningSounds.count == 1 }
+
+        XCTAssertEqual(harness.appState.statusMessage, "No sound from USB Mic. Recording from Built-in Mic.")
+        XCTAssertTrue(harness.appState.isRecording)
+    }
+
+    func testMainMicrophoneThatDeliversNoBuffersWarnsFromTheClockWhenThereIsNoBackup() async throws {
+        var configuration = MicrophoneSilenceWatchConfiguration.standard
+        configuration.missingBuffersDurationWithoutBackup = 0.2
+        let harness = try makeHarness(
+            devices: [builtInMicrophone],
+            preferredMicrophoneID: "mic-builtin",
+            silenceWatchConfiguration: configuration,
+            silenceWatchCheckInterval: 0.05
+        )
+        await harness.startAndWaitForRecording()
+        XCTAssertTrue(harness.backupRecorder.startedURLs.isEmpty)
+
+        await harness.waitUntil("the silent microphone warning") { harness.warningSounds.count == 1 }
+        XCTAssertEqual(harness.appState.statusMessage, "No sound from Built-in Mic.")
+        XCTAssertTrue(harness.appState.isRecording)
+
+        // The check keeps running and the recording still alerts once.
+        try await Task.sleep(nanoseconds: 400_000_000)
+        XCTAssertEqual(harness.warningSounds.count, 1)
+    }
+
+    func testClockCheckStaysQuietWhileTheMainMicrophoneDeliversAndStopsWhenTheRecordingEnds() async throws {
+        var configuration = MicrophoneSilenceWatchConfiguration.standard
+        configuration.missingBuffersDurationWithoutBackup = 0.2
+        let harness = try makeHarness(
+            devices: [builtInMicrophone],
+            preferredMicrophoneID: "mic-builtin",
+            silenceWatchConfiguration: configuration,
+            silenceWatchCheckInterval: 0.05
+        )
+        await harness.startAndWaitForRecording()
+
+        for _ in 0..<10 {
+            try feedMain(harness, seconds: 0.02, level: 0.2)
+            try await Task.sleep(nanoseconds: 40_000_000)
+        }
+        XCTAssertEqual(harness.warningSounds.count, 0)
+
+        harness.appState.cancelRecording()
+        try await Task.sleep(nanoseconds: 400_000_000)
+        XCTAssertEqual(harness.warningSounds.count, 0)
+    }
+
+    func testSwitchOffRunsNoClockCheck() async throws {
+        var configuration = MicrophoneSilenceWatchConfiguration.standard
+        configuration.missingBuffersDurationWithoutBackup = 0.2
+        let harness = try makeHarness(
+            backupMicrophoneEnabled: false,
+            silenceWatchConfiguration: configuration,
+            silenceWatchCheckInterval: 0.05
+        )
+        await harness.startAndWaitForRecording()
+
+        try await Task.sleep(nanoseconds: 500_000_000)
+        XCTAssertEqual(harness.warningSounds.count, 0)
+        XCTAssertEqual(harness.appState.statusMessage?.contains("No sound") ?? false, false)
     }
 
     // MARK: Startup recovery

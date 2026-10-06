@@ -22,6 +22,10 @@ struct AppEnvironment {
     var backupMicrophoneRecordingEnabled: () -> Bool
     /// Plays the sound that goes with the silent microphone warning.
     var playMicrophoneWarningSound: () -> Void
+    /// The silence watch's thresholds.
+    var silenceWatchConfiguration: MicrophoneSilenceWatchConfiguration = .standard
+    /// Seconds between the checks that the main microphone is still delivering buffers.
+    var silenceWatchCheckInterval: TimeInterval = 1
     /// Regular running apps that have a bundle identifier.
     var runningApps: () -> [FocusedApp]
 

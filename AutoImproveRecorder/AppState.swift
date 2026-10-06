@@ -159,6 +159,8 @@ final class AppState: ObservableObject {
     private var activeSilenceWatch: MicrophoneSilenceWatch?
     /// True once the silence watch has reported for the recording in flight.
     private var silentMicrophoneWarningShown = false
+    /// The repeating check that the main microphone is still delivering buffers. It runs only while recording.
+    private var silenceWatchCheckTask: Task<Void, Never>?
     private var activeBackupMicrophone: ActiveBackupMicrophone?
     /// The backup recording whose text the current session uses, or nil when it uses the main recording.
     private var usedBackupRecording: (microphone: AudioInputDevice, audioURL: URL)?
@@ -1026,6 +1028,7 @@ final class AppState: ObservableObject {
     /// stopping backup, or nil when the recording had none.
     private func endBackupMicrophone() -> StoppedBackupMicrophone? {
         let primaryWasSilent = silentMicrophoneWarningShown
+        endSilenceWatchChecks()
         activeSilenceWatch = nil
         silentMicrophoneWarningShown = false
         guard let backup = activeBackupMicrophone else { return nil }
@@ -1151,7 +1154,9 @@ final class AppState: ObservableObject {
             )
             activeRecordingHandle = recordingHandle
             // With the switch off there is no silence watch and no backup.
-            activeSilenceWatch = environment.backupMicrophoneRecordingEnabled() ? MicrophoneSilenceWatch() : nil
+            activeSilenceWatch = environment.backupMicrophoneRecordingEnabled()
+                ? MicrophoneSilenceWatch(configuration: environment.silenceWatchConfiguration)
+                : nil
             silentMicrophoneWarningShown = false
             usedBackupRecording = nil
             let audioURL: URL
@@ -1205,6 +1210,7 @@ final class AppState: ObservableObject {
             }
             showProcessingSignal?(.recording)
             logRecordingStartup("audio engine started and recording UI shown", requestedAt: requestedAt)
+            beginSilenceWatchChecks()
             startBackupMicrophoneIfEligible(mainRecordingURL: audioURL)
             prewarmEnginesForActiveModes()
 
@@ -1308,9 +1314,13 @@ final class AppState: ObservableObject {
             streamHandler: { [weak self] captureEvent in
                 switch captureEvent {
                 case .captured(let captured):
-                    if let silenceWatch, silenceWatch.observePrimary(captured.buffer) != nil {
+                    if let silenceWatch, let report = silenceWatch.observePrimary(captured.buffer) {
                         Task { @MainActor [weak self] in
-                            self?.handleSilentMicrophoneReport(from: silenceWatch, microphoneName: microphoneName)
+                            self?.handleSilentMicrophoneReport(
+                                report,
+                                from: silenceWatch,
+                                microphoneName: microphoneName
+                            )
                         }
                     }
                     if let event = healthMonitor?.observe(captured.buffer) {
@@ -1355,11 +1365,21 @@ final class AppState: ObservableObject {
             return
         }
         let id = UUID()
+        let microphoneName = BackupMicrophoneChooser.resolvedPrimary(
+            resolution.device,
+            devices: availableMicrophones
+        )?.name ?? resolution.device.name
         activeBackupMicrophone = ActiveBackupMicrophone(id: id, microphone: microphone)
         environment.backupRecording.start(
             at: BackupMicrophoneRecorder.backupURL(forMainRecording: mainRecordingURL),
             microphone: microphone,
-            onBuffer: { silenceWatch.observeBackup($0) },
+            onBuffer: { [weak self] buffer in
+                // The backup's buffers show when the main microphone has stopped delivering any.
+                guard let report = silenceWatch.observeBackup(buffer) else { return }
+                Task { @MainActor [weak self] in
+                    self?.handleSilentMicrophoneReport(report, from: silenceWatch, microphoneName: microphoneName)
+                }
+            },
             onResult: { [weak self] started in
                 Task { @MainActor [weak self] in
                     self?.backupMicrophoneStartFinished(id: id, started: started, silenceWatch: silenceWatch)
@@ -1390,8 +1410,42 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Checks once a second that the main microphone is still delivering buffers, until
+    /// `endSilenceWatchChecks`. The first check, made here, marks when the recording started.
+    private func beginSilenceWatchChecks() {
+        silenceWatchCheckTask?.cancel()
+        silenceWatchCheckTask = nil
+        guard let silenceWatch = activeSilenceWatch else { return }
+        _ = silenceWatch.checkPrimaryDelivery(now: Date())
+        let interval = UInt64(environment.silenceWatchCheckInterval * 1_000_000_000)
+        silenceWatchCheckTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: interval)
+                guard !Task.isCancelled, let self else { return }
+                guard let report = silenceWatch.checkPrimaryDelivery(now: Date()),
+                      let resolution = self.microphoneRecovery.activeResolution else {
+                    continue
+                }
+                let microphoneName = BackupMicrophoneChooser.resolvedPrimary(
+                    resolution.device,
+                    devices: self.availableMicrophones
+                )?.name ?? resolution.device.name
+                self.handleSilentMicrophoneReport(report, from: silenceWatch, microphoneName: microphoneName)
+            }
+        }
+    }
+
+    private func endSilenceWatchChecks() {
+        silenceWatchCheckTask?.cancel()
+        silenceWatchCheckTask = nil
+    }
+
     /// Shows the silent microphone warning once per recording. The recording keeps running.
-    private func handleSilentMicrophoneReport(from silenceWatch: MicrophoneSilenceWatch, microphoneName: String) {
+    private func handleSilentMicrophoneReport(
+        _ report: MicrophoneSilenceReport,
+        from silenceWatch: MicrophoneSilenceWatch,
+        microphoneName: String
+    ) {
         guard silenceWatch === activeSilenceWatch,
               !silentMicrophoneWarningShown,
               case .recording = phase else {
@@ -1400,7 +1454,7 @@ final class AppState: ObservableObject {
         silentMicrophoneWarningShown = true
         let backupName = activeBackupMicrophone?.isRunning == true ? activeBackupMicrophone?.microphone.name : nil
         microphoneDeviceLogger.info(
-            "Exact digital silence from microphone name=\(microphoneName, privacy: .public) backup=\(backupName ?? "none", privacy: .public)"
+            "Silent microphone report kind=\(report.kind.rawValue, privacy: .public) name=\(microphoneName, privacy: .public) backup=\(backupName ?? "none", privacy: .public)"
         )
         if let backupName {
             statusMessage = "No sound from \(microphoneName). Recording from \(backupName)."
