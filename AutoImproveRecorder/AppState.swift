@@ -836,6 +836,7 @@ final class AppState: ObservableObject {
             let message = "Recording stopped before an audio file was created."
             guard shouldTranscribe, let backup else {
                 backup?.stop.discard()
+                discardActiveArchiveDraftIfNeeded()
                 failWithMessage(message)
                 return
             }

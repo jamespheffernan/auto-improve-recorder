@@ -310,9 +310,22 @@ final class AppStateRecordingFlowTests: XCTestCase {
         XCTAssertEqual(harness.previewShownCount, 1)
         XCTAssertTrue(harness.transcription.requests.values.isEmpty)
         XCTAssertTrue(harness.archive.savedRecords.isEmpty)
-        // The draft is neither saved nor deleted on this path.
-        XCTAssertTrue(harness.archive.deletedDraftIDs.isEmpty)
         harness.assertTornDown(recorderStops: 1)
+    }
+
+    func testStopWithNoAudioFileDiscardsTheArchiveDraft() async throws {
+        let harness = try makeHarness()
+        await harness.startAndWaitForRecording()
+        let draft = try XCTUnwrap(harness.archive.preparedDrafts.first)
+        harness.recorder.stopReturnsFile = false
+
+        harness.appState.stopRecording()
+
+        XCTAssertEqual(harness.appState.phase, .failed)
+        // The draft is deleted and not saved, as on the cancel and discard paths.
+        XCTAssertEqual(harness.archive.deletedDraftIDs, [draft.id])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: draft.directoryURL.path))
+        XCTAssertTrue(harness.archive.savedRecords.isEmpty)
     }
 
     func testTranscriptionFailureFailsAndArchivesMessage() async throws {

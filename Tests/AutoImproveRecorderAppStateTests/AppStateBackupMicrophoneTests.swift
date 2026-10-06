@@ -442,6 +442,25 @@ final class AppStateBackupMicrophoneTests: XCTestCase {
         assertNoBackupRunning(harness)
     }
 
+    func testStopWithNoAudioFileRescuedByBackupKeepsTheDraftAndArchivesIt() async throws {
+        let harness = try makeHarness()
+        setTranscripts(harness, main: "never read", backup: "words from the backup")
+        await harness.startAndWaitForRecording()
+        let draft = try XCTUnwrap(harness.archive.preparedDrafts.first)
+        let backupURL = draft.directoryURL.appendingPathComponent(backupFile)
+        harness.recorder.stopReturnsFile = false
+
+        harness.appState.stopRecording()
+        await harness.waitForDelivery()
+
+        // One save after transcription, one after delivery, both in the recording's draft.
+        XCTAssertTrue(harness.archive.deletedDraftIDs.isEmpty)
+        XCTAssertEqual(harness.archive.savedRecords.map(\.id), [draft.id, draft.id])
+        XCTAssertEqual(harness.archive.savedRecords.last?.audioPath, backupURL.path)
+        XCTAssertEqual(harness.archive.savedRecords.last?.deliveredText, "words from the backup")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: backupURL.path))
+    }
+
     func testStopWithNoAudioFileAndEmptyBackupReportsOriginalFailure() async throws {
         let harness = try makeHarness()
         setTranscripts(harness, main: "never read", backup: "")
