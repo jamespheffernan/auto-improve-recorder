@@ -621,67 +621,6 @@ private final class AutoSendPermissionResultGate: @unchecked Sendable {
     }
 }
 
-protocol AutoSendLiveTranscriptFinalizing: Sendable {
-    func finalize() async throws -> String
-    func cancel()
-}
-
-protocol AutoSendOneShotTranscribing: Sendable {
-    func transcribe(audioURL: URL) async throws -> String
-}
-
-struct AutoSendParakeetFallbackPipeline: Sendable {
-    let oneShot: any AutoSendOneShotTranscribing
-
-    func transcribe(
-        liveSession: (any AutoSendLiveTranscriptFinalizing)?,
-        audioURL: URL
-    ) async throws -> String {
-        if let liveSession {
-            do {
-                let text = try await liveSession.finalize()
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                if !text.isEmpty {
-                    return text
-                }
-            } catch {
-                // The saved WAV is authoritative and remains available for fallback.
-            }
-        }
-
-        return try await oneShot.transcribe(audioURL: audioURL)
-    }
-}
-
-struct AutoSendSourceAwareTranscriptionPipeline: Sendable {
-    let fastWireless: any AutoSendOneShotTranscribing
-    let fallback: AutoSendParakeetFallbackPipeline
-
-    func transcribe(
-        source: AutoSendRecordingSource,
-        liveSession: (any AutoSendLiveTranscriptFinalizing)?,
-        audioURL: URL
-    ) async throws -> String {
-        if source == .esp32Button {
-            do {
-                let text = try await fastWireless.transcribe(audioURL: audioURL)
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                if !text.isEmpty {
-                    liveSession?.cancel()
-                    return text
-                }
-            } catch {
-                // Keep the intact-WAV fallback below for runtime or model failures.
-            }
-        }
-
-        return try await fallback.transcribe(
-            liveSession: liveSession,
-            audioURL: audioURL
-        )
-    }
-}
-
 // MARK: - What the user sees
 
 enum AutoSendExperienceState: Equatable, Sendable, Identifiable {

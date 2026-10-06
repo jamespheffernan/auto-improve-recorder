@@ -302,64 +302,6 @@ final class AutoSendWorkflowTests: XCTestCase {
         XCTAssertEqual(deliveredText, "21 notes")
     }
 
-    func testLiveFailureUsesIntactOneShotFallback() async throws {
-        let oneShot = FakeOneShot(text: "fallback transcript")
-        let pipeline = AutoSendParakeetFallbackPipeline(oneShot: oneShot)
-        let url = URL(fileURLWithPath: "/tmp/intact.wav")
-
-        let result = try await pipeline.transcribe(
-            liveSession: FailingLiveSession(),
-            audioURL: url
-        )
-
-        XCTAssertEqual(result, "fallback transcript")
-        let receivedURL = await oneShot.receivedURL
-        XCTAssertEqual(receivedURL, url)
-    }
-
-    func testESP32UsesFastResidentTranscriptInsteadOfLiveStream() async throws {
-        let fastResident = FakeOneShot(text: "accurate fast transcript")
-        let oneShotFallback = FakeOneShot(text: "slow fallback")
-        let pipeline = AutoSendSourceAwareTranscriptionPipeline(
-            fastWireless: fastResident,
-            fallback: AutoSendParakeetFallbackPipeline(oneShot: oneShotFallback)
-        )
-        let url = URL(fileURLWithPath: "/tmp/wireless.wav")
-
-        let result = try await pipeline.transcribe(
-            source: .esp32Button,
-            liveSession: SuccessfulLiveSession(text: "inaccurate live transcript"),
-            audioURL: url
-        )
-
-        XCTAssertEqual(result, "accurate fast transcript")
-        let fastURL = await fastResident.receivedURL
-        let fallbackURL = await oneShotFallback.receivedURL
-        XCTAssertEqual(fastURL, url)
-        XCTAssertNil(fallbackURL)
-    }
-
-    func testMacHotKeyKeepsLiveStreamingTranscript() async throws {
-        let fastResident = FakeOneShot(text: "must not be used")
-        let oneShotFallback = FakeOneShot(text: "slow fallback")
-        let pipeline = AutoSendSourceAwareTranscriptionPipeline(
-            fastWireless: fastResident,
-            fallback: AutoSendParakeetFallbackPipeline(oneShot: oneShotFallback)
-        )
-
-        let result = try await pipeline.transcribe(
-            source: .macHotKey,
-            liveSession: SuccessfulLiveSession(text: "live transcript"),
-            audioURL: URL(fileURLWithPath: "/tmp/mac.wav")
-        )
-
-        XCTAssertEqual(result, "live transcript")
-        let fastURL = await fastResident.receivedURL
-        let fallbackURL = await oneShotFallback.receivedURL
-        XCTAssertNil(fastURL)
-        XCTAssertNil(fallbackURL)
-    }
-
     func testCaptureStartFailureDoesNotTranscribeOrDeliver() async {
         let capture = FakeCapture(startError: TestError.capture)
         let transcript = FakeTranscript(text: "must not run")
@@ -948,32 +890,6 @@ private actor FakeDelivery: AutoSendDeliveryService {
         deliverCallCount += 1
         deliveredText = text
         return disposition
-    }
-}
-
-private struct FailingLiveSession: AutoSendLiveTranscriptFinalizing {
-    func finalize() async throws -> String { throw TestError.live }
-    func cancel() {}
-}
-
-private struct SuccessfulLiveSession: AutoSendLiveTranscriptFinalizing {
-    let text: String
-
-    func finalize() async throws -> String { text }
-    func cancel() {}
-}
-
-private actor FakeOneShot: AutoSendOneShotTranscribing {
-    let text: String
-    private(set) var receivedURL: URL?
-
-    init(text: String) {
-        self.text = text
-    }
-
-    func transcribe(audioURL: URL) async throws -> String {
-        receivedURL = audioURL
-        return text
     }
 }
 

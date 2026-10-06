@@ -170,6 +170,37 @@ final class AutoSendTargetManifestTests: XCTestCase {
         XCTAssertEqual(appConfigurations, ["AutoSendParakeetService.swift"])
     }
 
+    /// The package does not compile `AutoSendParakeetService.swift`, so the
+    /// lines that map ASR's source, operation IDs and engines onto the shared
+    /// policy and slot are checked here as source text.
+    func testParakeetServiceTranslatesOntoTheSharedPolicyAndSlot() throws {
+        let sources = try targetSourcesPhase(in: String(contentsOf: projectURL))
+        for name in [
+            "RecordingTranscriber.swift", "LocalRecordingAdapters.swift",
+            "LocalTranscriptionProcesses.swift", "LocalTranscriberPolicy.swift",
+            "OperationRecordingSlot.swift"
+        ] {
+            XCTAssertTrue(sources.contains("/* \(name) in Sources */"), name)
+        }
+        let service = try String(contentsOf: projectURL
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("AutoSendRecorder/AutoSendParakeetService.swift"))
+        for line in [
+            "ParakeetOneShotProcess(configuration: .app)",
+            "modelFilename: \"tdt_ctc-110m-q4_k.gguf\"",
+            "provider: \"parakeet.cpp 110M resident\"",
+            "source: source == .esp32Button ? .wirelessButton : .hotKey",
+            "slot.replace(operation: operationID.rawValue, with: handle)",
+            "slot.receive(event, operation: operationID.rawValue)",
+            "?? policy.beginWithoutCapture(model: currentModel)",
+            "slot.cancel(operation: operationID.rawValue)",
+            "await policy.warmUp(model: currentModel)"
+        ] {
+            XCTAssertTrue(service.contains(line), line)
+        }
+    }
+
     private var projectURL: URL {
         URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
