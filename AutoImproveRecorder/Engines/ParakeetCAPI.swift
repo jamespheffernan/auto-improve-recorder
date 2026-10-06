@@ -280,6 +280,16 @@ final class ParakeetResidentRuntime: @unchecked Sendable {
         configuration.resolveRoot().appendingPathComponent("models/\(filename)").path
     }
 
+    /// The context for the model with this file name. The library is loaded
+    /// first, which fixes the root on success, and the model path is built
+    /// after it, so both come from one resolution of the root.
+    func context(modelFilename: String) throws -> ParakeetResidentContext {
+        guard symbols != nil else {
+            throw ParakeetCAPIError.libraryUnavailable
+        }
+        return try context(modelPath: modelPath(filename: modelFilename))
+    }
+
     func context(modelPath: String) throws -> ParakeetResidentContext {
         guard let symbols else {
             throw ParakeetCAPIError.libraryUnavailable
@@ -333,7 +343,7 @@ final class ParakeetLiveStreamSession: LocalLiveTranscriptionSession, @unchecked
     static func warmUp() async {
         guard isAvailable else { return }
         await Task.detached(priority: .utility) {
-            guard let context = try? ParakeetResidentRuntime.shared.context(modelPath: modelPath) else { return }
+            guard let context = try? ParakeetResidentRuntime.shared.context(modelFilename: modelFilename) else { return }
             context.warmUpStreamingOnce()
         }.value
     }
@@ -372,7 +382,7 @@ final class ParakeetLiveStreamSession: LocalLiveTranscriptionSession, @unchecked
         let session = ParakeetLiveStreamSession()
         session.queue.async {
             do {
-                let context = try ParakeetResidentRuntime.shared.context(modelPath: modelPath)
+                let context = try ParakeetResidentRuntime.shared.context(modelFilename: modelFilename)
                 session.context = context
                 session.stream = try context.beginStreamLocked()
             } catch {

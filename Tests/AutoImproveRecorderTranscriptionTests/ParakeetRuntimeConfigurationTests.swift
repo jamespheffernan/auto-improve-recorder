@@ -253,6 +253,56 @@ final class ParakeetRuntimeConfigurationTests: XCTestCase {
         XCTAssertEqual(root.resolutions, 3)
     }
 
+    // MARK: One root per context
+
+    func testContextByFilenameTakesTheModelAndTheLibraryFromOneResolutionOfTheRoot() throws {
+        let root = MutableRoot(fallbackRoot)
+        let loader = FakeLoader(result: fakeSymbols)
+        let newRoot = versionedRoot
+        let runtime = ParakeetResidentRuntime(
+            configuration: root.configuration,
+            loadSymbols: { path in
+                // The installer finishes while the library loads.
+                defer { root.value = newRoot }
+                return loader.load(path)
+            },
+            fileExists: { _ in true }
+        )
+
+        _ = try runtime.context(modelFilename: "one-root.gguf")
+
+        XCTAssertEqual(loader.paths, ["/air/ParakeetCpp/capi/libparakeet.dylib"])
+        XCTAssertEqual(fakeLoadedModelPaths.last, "/air/ParakeetCpp/models/one-root.gguf")
+    }
+
+    func testContextByFilenameRetriesAFailedLibraryLoadAndThenStaysOnTheRootItLoadedFrom() throws {
+        let root = MutableRoot(fallbackRoot)
+        let loader = FakeLoader(result: nil)
+        let runtime = ParakeetResidentRuntime(
+            configuration: root.configuration,
+            loadSymbols: loader.load,
+            fileExists: { _ in true }
+        )
+
+        XCTAssertThrowsError(try runtime.context(modelFilename: "retried.gguf")) { error in
+            guard case ParakeetCAPIError.libraryUnavailable = error else {
+                return XCTFail("unexpected error: \(error)")
+            }
+        }
+
+        root.value = versionedRoot
+        loader.result = fakeSymbols
+        _ = try runtime.context(modelFilename: "retried.gguf")
+        XCTAssertEqual(loader.paths, [
+            "/air/ParakeetCpp/capi/libparakeet.dylib",
+            "/asr/Runtime/20260918/capi/libparakeet.dylib"
+        ])
+        XCTAssertEqual(fakeLoadedModelPaths.last, "/asr/Runtime/20260918/models/retried.gguf")
+
+        root.value = fallbackRoot
+        XCTAssertEqual(runtime.modelPath(filename: "retried.gguf"), "/asr/Runtime/20260918/models/retried.gguf")
+    }
+
     // MARK: Live input admission
 
     func testDefaultAdmissionLimitIsTheFourMebibytesAutoSendUsed() {

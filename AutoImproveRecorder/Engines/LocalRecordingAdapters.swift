@@ -70,7 +70,7 @@ extension ParakeetResidentRecordingAdapter {
                       FileManager.default.fileExists(atPath: modelPath()) else { return }
                 await Task.detached(priority: .utility) {
                     guard let context = try? ParakeetResidentRuntime.shared.context(
-                        modelPath: modelPath()
+                        modelFilename: modelFilename
                     ) else { return }
                     context.warmUpOnce()
                 }.value
@@ -80,7 +80,7 @@ extension ParakeetResidentRecordingAdapter {
                     throw ParakeetRunnerError.audioMissing(audioURL.path)
                 }
                 let text = try await Task.detached(priority: .userInitiated) {
-                    let context = try ParakeetResidentRuntime.shared.context(modelPath: modelPath())
+                    let context = try ParakeetResidentRuntime.shared.context(modelFilename: modelFilename)
                     return try context.transcribe(wavPath: audioURL.path, provider: provider)
                 }.value.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !text.isEmpty else {
