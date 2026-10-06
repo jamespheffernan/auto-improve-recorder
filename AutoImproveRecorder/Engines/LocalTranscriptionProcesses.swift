@@ -69,6 +69,10 @@ struct ParakeetOneShotProcess: Sendable {
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
 
+        // The readers start only after the launch succeeds. A launch that throws before the
+        // pipes are handed over would leave a reader started earlier blocked for good.
+        try process.run()
+
         let readGroup = DispatchGroup()
         let dataLock = NSLock()
         var stdout = Data()
@@ -87,7 +91,6 @@ struct ParakeetOneShotProcess: Sendable {
             }
         }
 
-        try process.run()
         let deadline = DispatchTime.now() + timeout
         if process.waitUntilExitOrTimeout(deadline: deadline) == false {
             process.terminate()

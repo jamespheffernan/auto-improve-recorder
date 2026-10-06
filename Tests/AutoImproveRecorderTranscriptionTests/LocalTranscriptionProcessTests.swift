@@ -158,6 +158,37 @@ final class LocalTranscriptionProcessTests: XCTestCase {
         return ParakeetRuntimeConfiguration { root }
     }
 
+    func testACLIThatCannotBeLaunchedReportsTheLaunchErrorAndLeavesNoPipeReaderBlocked() async throws {
+        try Data().write(to: audioURL)
+        try Data().write(to: root.appendingPathComponent("models/tdt-0.6b-v2-q4_k.gguf"))
+        // A directory passes the executable check and cannot be launched.
+        let cliURL = root.appendingPathComponent("bin/parakeet-cli")
+        try FileManager.default.createDirectory(at: cliURL, withIntermediateDirectories: false)
+        let process = ParakeetOneShotProcess(configuration: configuration)
+
+        func openFileDescriptorCount() throws -> Int {
+            try FileManager.default.contentsOfDirectory(atPath: "/dev/fd").count
+        }
+        let runs = 20
+        let descriptorsBefore = try openFileDescriptorCount()
+        let startedAt = Date()
+        for _ in 0..<runs {
+            do {
+                _ = try await process.transcribe(audioURL: audioURL)
+                XCTFail("transcribe should throw")
+            } catch {
+                XCTAssertFalse(error is ParakeetRunnerError, "expected the launch error, got \(error)")
+                XCTAssertEqual((error as NSError).domain, NSPOSIXErrorDomain)
+                XCTAssertEqual((error as NSError).code, Int(EACCES))
+            }
+        }
+        XCTAssertLessThan(Date().timeIntervalSince(startedAt), 10)
+
+        // A reader blocked on a pipe keeps that pipe's two descriptors open. Each run has two pipes.
+        try await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertLessThan(try openFileDescriptorCount() - descriptorsBefore, runs)
+    }
+
     private func writeCLI(_ body: String) throws {
         let url = root.appendingPathComponent("bin/parakeet-cli")
         try Data("#!/bin/sh\n\(body)\n".utf8).write(to: url)
