@@ -841,6 +841,9 @@ final class AppState: ObservableObject {
             guard shouldTranscribe, let backup else {
                 backup?.stop.discard()
                 discardActiveArchiveDraftIfNeeded()
+                // The draft is deleted, so the session stops naming its audio file. An edit in
+                // the preview then has no draft to save to.
+                session.audioURL = nil
                 failWithMessage(message)
                 return
             }
@@ -852,6 +855,7 @@ final class AppState: ObservableObject {
                     guard let self else { return }
                     guard let keptBackupURL else {
                         self.discardActiveArchiveDraftIfNeeded()
+                        self.session.audioURL = nil
                         self.failWithMessage(message)
                         return
                     }

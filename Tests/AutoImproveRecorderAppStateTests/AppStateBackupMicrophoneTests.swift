@@ -654,6 +654,20 @@ final class AppStateBackupMicrophoneTests: XCTestCase {
         XCTAssertTrue(harness.archive.savedRecords.isEmpty)
     }
 
+    func testEditingTheTextAfterStopWithNoAudioFileAndEmptyBackupSavesNoArchiveRecord() async throws {
+        let harness = try makeHarness()
+        setTranscripts(harness, main: "never read", backup: "")
+        await harness.startAndWaitForRecording()
+        harness.recorder.stopReturnsFile = false
+        harness.appState.stopRecording()
+        await harness.waitUntil("the failure") { harness.appState.phase == .failed }
+
+        harness.appState.updateDisplayText("typed into the preview")
+
+        XCTAssertTrue(harness.archive.savedRecords.isEmpty)
+        XCTAssertNil(harness.appState.session.audioURL)
+    }
+
     func testStopWithNoAudioFileAndNoBackupFileDiscardsTheArchiveDraft() async throws {
         let harness = try makeHarness()
         harness.backupRecorder.stopGivesFile = false

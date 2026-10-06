@@ -328,6 +328,22 @@ final class AppStateRecordingFlowTests: XCTestCase {
         XCTAssertTrue(harness.archive.savedRecords.isEmpty)
     }
 
+    func testEditingTheTextAfterStopWithNoAudioFileSavesNoArchiveRecord() async throws {
+        let harness = try makeHarness()
+        await harness.startAndWaitForRecording()
+        let draft = try XCTUnwrap(harness.archive.preparedDrafts.first)
+        harness.recorder.stopReturnsFile = false
+        harness.appState.stopRecording()
+        XCTAssertEqual(harness.appState.phase, .failed)
+
+        harness.appState.updateDisplayText("typed into the preview")
+
+        // The draft was deleted; an edit must not write a record under its ID.
+        XCTAssertTrue(harness.archive.savedRecords.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: draft.directoryURL.path))
+        XCTAssertNil(harness.appState.session.audioURL)
+    }
+
     func testTranscriptionFailureFailsAndArchivesMessage() async throws {
         let harness = try makeHarness()
         let appState = harness.appState
