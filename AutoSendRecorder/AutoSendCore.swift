@@ -62,7 +62,13 @@ struct AutoSendRecordingTriggerController: Sendable {
         case .walkieTalkie:
             switch event {
             case .pressed:
-                guard !keyIsDown else { return .none }
+                if keyIsDown {
+                    // A key that is down cannot be pressed again, so its release was lost.
+                    if phase == .recording {
+                        return .stop
+                    }
+                    return phase.isBusy ? .none : .start
+                }
                 keyIsDown = true
                 if isLatched {
                     isLatched = false

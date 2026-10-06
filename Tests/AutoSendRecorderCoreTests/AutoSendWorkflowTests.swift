@@ -270,6 +270,45 @@ final class AutoSendWorkflowTests: XCTestCase {
         )
     }
 
+    func testWalkieTalkiePressAfterALostReleaseStopsTheRecording() {
+        var controller = AutoSendRecordingTriggerController()
+
+        XCTAssertEqual(controller.handle(.pressed, mode: .walkieTalkie, phase: .idle), .start)
+        XCTAssertEqual(
+            controller.handle(.phaseChanged(.recording), mode: .walkieTalkie, phase: .recording),
+            .none
+        )
+        // No release arrives. The next press ends the recording.
+        XCTAssertEqual(controller.handle(.pressed, mode: .walkieTalkie, phase: .recording), .stop)
+        XCTAssertEqual(controller.handle(.released, mode: .walkieTalkie, phase: .transcribing), .none)
+        XCTAssertEqual(
+            controller.handle(.phaseChanged(.ready), mode: .walkieTalkie, phase: .ready),
+            .none
+        )
+
+        // The next hold records as usual.
+        XCTAssertEqual(controller.handle(.pressed, mode: .walkieTalkie, phase: .ready), .start)
+        XCTAssertEqual(controller.handle(.released, mode: .walkieTalkie, phase: .recording), .stop)
+    }
+
+    func testWalkieTalkiePressAfterALostReleaseStartsWhenNoRunIsInProgress() {
+        var controller = AutoSendRecordingTriggerController()
+
+        // The first press starts nothing that changes the phase, and its release is lost.
+        XCTAssertEqual(controller.handle(.pressed, mode: .walkieTalkie, phase: .idle), .start)
+        XCTAssertEqual(controller.handle(.pressed, mode: .walkieTalkie, phase: .idle), .start)
+        XCTAssertEqual(controller.handle(.released, mode: .walkieTalkie, phase: .recording), .stop)
+    }
+
+    func testWalkieTalkiePressAfterALostReleaseWaitsWhileARunIsBusyButNotRecording() {
+        var controller = AutoSendRecordingTriggerController()
+
+        XCTAssertEqual(controller.handle(.pressed, mode: .walkieTalkie, phase: .idle), .start)
+        for phase in [AutoSendPhase.starting, .transcribing, .delivering] {
+            XCTAssertEqual(controller.handle(.pressed, mode: .walkieTalkie, phase: phase), .none, "\(phase)")
+        }
+    }
+
     func testToggleModeIgnoresReleaseAndUsesSecondPressToStop() {
         var controller = AutoSendRecordingTriggerController()
 
