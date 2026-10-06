@@ -73,10 +73,10 @@ final class AppStateRecordingFlowTests: XCTestCase {
         XCTAssertEqual(appState.statusMessage, "Fake delivery finished.")
         XCTAssertEqual(appState.processingVisualState, .pasted)
 
-        // One save after transcription, one after delivery. Only the first names the engine.
+        // One save after transcription, one after delivery. Both name the engine.
         let records = harness.archive.savedRecords
         XCTAssertEqual(records.map(\.id), [draft.id, draft.id])
-        XCTAssertEqual(records.map(\.transcriptionEngine), ["Fake Engine", nil])
+        XCTAssertEqual(records.map(\.transcriptionEngine), ["Fake Engine", "Fake Engine"])
         let record = try XCTUnwrap(records.last)
         XCTAssertEqual(record.audioPath, draft.audioURL.path)
         XCTAssertEqual(record.rawTranscript, "hello world")
@@ -159,7 +159,72 @@ final class AppStateRecordingFlowTests: XCTestCase {
         XCTAssertTrue(record.improveFailed)
         XCTAssertEqual(record.finalTranscript, "alpha beta gamma")
         XCTAssertEqual(record.deliveredText, "alpha beta gamma")
+        XCTAssertEqual(record.transcriptionEngine, "Fake Engine")
         harness.assertTornDown(recorderStops: 1)
+    }
+
+    // MARK: The engine name in the archive record
+
+    func testLastArchiveRecordOfADeliveredRecordingNamesTheEngine() async throws {
+        let harness = try makeHarness()
+        harness.transcription.result = .success(TranscriptionResult(text: "hello world", engineName: "Engine A"))
+
+        await harness.startAndWaitForRecording()
+        harness.appState.stopRecording()
+        await harness.waitForDelivery()
+
+        let record = try XCTUnwrap(harness.archive.savedRecords.last)
+        XCTAssertEqual(record.deliveredText, "hello world")
+        XCTAssertEqual(record.transcriptionEngine, "Engine A")
+    }
+
+    func testLastArchiveRecordOfAnImprovedAndDeliveredRecordingNamesTheEngine() async throws {
+        let harness = try makeHarness { $0.thresholdWords = 3 }
+        harness.transcription.result = .success(TranscriptionResult(text: "alpha beta gamma", engineName: "Engine A"))
+        harness.improvement.result = .success("Alpha, beta, gamma.")
+
+        await harness.startAndWaitForRecording()
+        harness.appState.stopRecording()
+        await harness.waitForDelivery()
+
+        // One save after transcription, one after improvement, one after delivery.
+        let records = harness.archive.savedRecords
+        XCTAssertEqual(records.map(\.transcriptionEngine), ["Engine A", "Engine A", "Engine A"])
+        XCTAssertEqual(records.last?.cleanedTranscript, "Alpha, beta, gamma.")
+        XCTAssertEqual(records.last?.deliveredText, "Alpha, beta, gamma.")
+    }
+
+    func testArchiveSaveAfterEditingTheTextNamesTheEngine() async throws {
+        let harness = try makeHarness()
+        harness.transcription.result = .success(TranscriptionResult(text: "hello world", engineName: "Engine A"))
+
+        await harness.startAndWaitForRecording()
+        harness.appState.stopRecording()
+        await harness.waitForDelivery()
+        harness.appState.updateDisplayText("hello there")
+
+        let record = try XCTUnwrap(harness.archive.savedRecords.last)
+        XCTAssertEqual(record.rawTranscript, "hello there")
+        XCTAssertEqual(record.transcriptionEngine, "Engine A")
+    }
+
+    func testFailedRecordingDoesNotNameTheEngineOfTheRecordingBeforeIt() async throws {
+        let harness = try makeHarness()
+        let appState = harness.appState
+        harness.transcription.result = .success(TranscriptionResult(text: "hello world", engineName: "Engine A"))
+        await harness.startAndWaitForRecording()
+        appState.stopRecording()
+        await harness.waitForDelivery()
+        XCTAssertEqual(harness.archive.savedRecords.last?.transcriptionEngine, "Engine A")
+
+        harness.transcription.result = .failure(FakeError(message: "Fake transcription failed."))
+        await harness.startAndWaitForRecording()
+        appState.stopRecording()
+        await harness.waitUntil("the failure") { appState.phase == .failed }
+
+        let record = try XCTUnwrap(harness.archive.savedRecords.last)
+        XCTAssertEqual(record.message, "Fake transcription failed.")
+        XCTAssertNil(record.transcriptionEngine)
     }
 
     // MARK: Cancel and discard

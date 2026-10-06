@@ -312,6 +312,22 @@ final class AppStateBackupMicrophoneTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: draft.audioURL.path))
     }
 
+    func testBackupTextUsedArchivesTheBackupsEngineNameInEverySave() async throws {
+        let harness = try makeHarness()
+        harness.transcription.resultsByAudioFileName = [
+            mainFile: .success(TranscriptionResult(text: "", engineName: "Main Engine")),
+            backupFile: .success(TranscriptionResult(text: "words from the backup", engineName: "Backup Engine"))
+        ]
+        await harness.startAndWaitForRecording()
+
+        harness.appState.stopRecording()
+        await harness.waitForDelivery()
+
+        // One save after transcription, one after delivery.
+        XCTAssertEqual(harness.archive.savedRecords.map(\.transcriptionEngine), ["Backup Engine", "Backup Engine"])
+        XCTAssertEqual(harness.archive.savedRecords.last?.deliveredText, "words from the backup")
+    }
+
     func testMainTranscriptionFailureUsesBackupText() async throws {
         let harness = try makeHarness()
         setTranscripts(harness, main: nil, backup: "words from the backup")

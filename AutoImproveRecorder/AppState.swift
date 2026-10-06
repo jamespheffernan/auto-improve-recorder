@@ -135,6 +135,9 @@ final class AppState: ObservableObject {
     /// The transcription mode read when the session's recording started. Stop, transcription,
     /// the archive record and a microphone restart use it; the setting is not read again.
     private var sessionTranscriptionMode: TranscriptionMode?
+    /// The engine that produced the session's transcript: the backup's engine when the backup's
+    /// text was used, nil until the recording has a transcript. Every archive save writes it.
+    private var sessionTranscriptionEngineName: String?
     private var activeRecordingID: UUID?
     private var activeProcessingRecordingID: UUID?
     private var activeArchiveDraftState = ActiveTranscriptArchiveDraftState()
@@ -875,7 +878,7 @@ final class AppState: ObservableObject {
                 self.activeProcessingRecordingID = nil
                 self.recordingStartedAt = nil
                 self.failWithMessage(message)
-                self.persistTranscriptArchive(transcriptionEngineName: nil)
+                self.persistTranscriptArchive()
                 self.microphoneRecovery.recordingEnded()
             }
             guard let backup else {
@@ -1082,7 +1085,7 @@ final class AppState: ObservableObject {
         } else {
             session.improvedText = text
         }
-        persistTranscriptArchive(transcriptionEngineName: nil)
+        persistTranscriptArchive()
     }
 
     func openSettings() {
@@ -1174,6 +1177,7 @@ final class AppState: ObservableObject {
                 transcriptionVocabulary: transcriptionVocabulary
             )
             sessionTranscriptionMode = recordingMode
+            sessionTranscriptionEngineName = nil
             showRawTranscript = false
             statusMessage = recordingStatus
             phase = .recording(audioURL)
@@ -1568,7 +1572,7 @@ final class AppState: ObservableObject {
                 improveFailed: false,
                 dictionarySnapshot: session.dictionarySnapshot
             )
-            persistTranscriptArchive(transcriptionEngineName: nil)
+            persistTranscriptArchive()
             phase = .failed
             processingVisualState = .failed
             statusMessage = error.localizedDescription
@@ -1590,7 +1594,8 @@ final class AppState: ObservableObject {
         session.message = nil
         session.improveFailed = false
         session.dictionarySnapshot = dictionarySnapshot
-        persistTranscriptArchive(transcriptionEngineName: result.engineName)
+        sessionTranscriptionEngineName = result.engineName
+        persistTranscriptArchive()
 
         switch autoImproveMode {
         case .off:
@@ -1761,7 +1766,7 @@ final class AppState: ObservableObject {
             showRawTranscript = false
             phase = .ready
             statusMessage = "Improved text ready."
-            persistTranscriptArchive(transcriptionEngineName: nil)
+            persistTranscriptArchive()
         } catch {
             session.improvedText = ""
             session.message = "Improve failed; showing raw transcript. \(error.localizedDescription)"
@@ -1769,7 +1774,7 @@ final class AppState: ObservableObject {
             showRawTranscript = true
             phase = .ready
             statusMessage = session.message
-            persistTranscriptArchive(transcriptionEngineName: nil)
+            persistTranscriptArchive()
         }
 
         await finishProcessing()
@@ -1788,7 +1793,7 @@ final class AppState: ObservableObject {
         }
     }
 
-    private func persistTranscriptArchive(transcriptionEngineName: String?) {
+    private func persistTranscriptArchive() {
         guard var archiveDraft = activeArchiveDraft ?? archiveDraftFromSession() else { return }
         let microphoneResolution = microphoneRecovery.activeResolution
         // When the text came from the backup, the record names the backup's file and microphone.
@@ -1816,7 +1821,7 @@ final class AppState: ObservableObject {
         let metadata = TranscriptArchiveMetadata(
             updatedAt: Date(),
             transcriptionMode: recordingMode.rawValue,
-            transcriptionEngine: transcriptionEngineName,
+            transcriptionEngine: sessionTranscriptionEngineName,
             improvementMode: improvementMode.rawValue,
             cleanupMode: outputMode.rawValue,
             autoImproveMode: autoImproveMode.rawValue,
@@ -1918,7 +1923,7 @@ final class AppState: ObservableObject {
     private func recordDelivery(_ text: String, via: String) {
         session.deliveredText = text
         session.deliveredVia = via
-        persistTranscriptArchive(transcriptionEngineName: nil)
+        persistTranscriptArchive()
     }
 
     private func processingVisualState(for outcome: DeliveryOutcome) -> ProcessingVisualState {
