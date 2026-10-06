@@ -275,30 +275,28 @@ final class TranscriptionBehaviorTests: XCTestCase {
         }
     }
 
-    func testFastestVerificationAPIFailureCallsAPIASecondTime() async throws {
+    func testFastestVerificationAPIFailureKeepsTheRealtimeTranscriptWithoutASecondAPICall() async throws {
         let script = Script()
-        script.realtimeFinish = .success(TranscriptionResult(text: "thank you", engineName: "OpenAI Realtime test"))
+        let realtimeResult = TranscriptionResult(text: "thank you", engineName: "OpenAI Realtime test")
+        script.realtimeFinish = .success(realtimeResult)
         script.api = [.failure(ScriptedError("upload failed")), .success(Script.apiResult)]
 
         let result = try await script.transcribe(request(.fastest, realtimePrepared: true))
 
-        XCTAssertEqual(result, Script.apiResult)
+        XCTAssertEqual(result, realtimeResult)
         XCTAssertEqual(script.calls, [
             "realtime finish",
-            "realtime diagnostics",
-            "api key=sk-test vocabulary=Turf, Phonon",
             "realtime diagnostics",
             "api key=sk-test vocabulary=Turf, Phonon"
         ])
         XCTAssertEqual(script.diagnostics.map(\.summary), [
-            "OpenAI realtime returned a suspiciously short transcript (‘thank you’); using OpenAI API transcription instead.",
-            "OpenAI streaming failed; falling back to OpenAI API. upload failed"
+            "OpenAI realtime returned a suspiciously short transcript (‘thank you’); using OpenAI API transcription instead."
         ])
         assertStatuses(script.statuses, [
             "Realtime transcript looked wrong; using OpenAI API.",
             "Transcribing with OpenAI API.",
-            "OpenAI streaming failed; using OpenAI API."
-        ] + Self.apiStatuses)
+            "OpenAI API check failed; using the realtime transcript."
+        ])
     }
 
     func testFastestSecondAPIFailurePropagates() async {

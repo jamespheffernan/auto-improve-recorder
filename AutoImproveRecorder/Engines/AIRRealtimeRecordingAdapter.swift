@@ -300,13 +300,21 @@ final class AIRRealtimeRecordingHandle: RecordingSessionHandle, @unchecked Senda
                     await recordDiagnostics(await dependencies.realtimeDiagnostics(streamingTranscriber, reason))
                     NSLog(reason)
                     await status("Realtime transcript looked wrong; using OpenAI API.")
-                    return try await catalog.transcribeWithOpenAIAPI(
-                        audioURL: audioURL,
-                        apiKey: apiKey,
-                        context: context,
-                        startedAt: Date(),
-                        status: status
-                    )
+                    do {
+                        return try await catalog.transcribeWithOpenAIAPI(
+                            audioURL: audioURL,
+                            apiKey: apiKey,
+                            context: context,
+                            startedAt: Date(),
+                            status: status
+                        )
+                    } catch {
+                        // The check failed, not the stream. The realtime transcript is kept and
+                        // the API is not called again.
+                        NSLog("OpenAI API check of the short realtime transcript failed; keeping the realtime transcript: \(error.localizedDescription)")
+                        await status("OpenAI API check failed; using the realtime transcript.")
+                        return result
+                    }
                 }
                 await status(String(format: "OpenAI transcript ready in %.1fs.", elapsed))
                 return result
