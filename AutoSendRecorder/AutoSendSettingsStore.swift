@@ -48,6 +48,27 @@ struct AutoSendKeyboardShortcut: Codable, Equatable, Sendable {
     }
 }
 
+/// Which Space combinations lock a hold-to-talk recording.
+enum AutoSendSpaceLatch {
+    static let spaceKeyCode: UInt32 = 49
+
+    /// The modifier sets to register Space with while a hold-to-talk recording is active. Bare
+    /// Space is always first. Space with the recording shortcut's modifiers follows, so Space
+    /// locks the recording while the shortcut is still held. That second entry is left out when
+    /// the shortcut has no modifiers, or when the recording or cancel shortcut is that combination.
+    static func modifierSets(
+        recording: AutoSendKeyboardShortcut,
+        cancel: AutoSendKeyboardShortcut
+    ) -> [AutoSendShortcutModifiers] {
+        let held = recording.modifiers
+        let alreadyRegistered = [recording, cancel].contains {
+            $0.keyCode == spaceKeyCode && $0.modifiers == held
+        }
+        guard !held.isEmpty, !alreadyRegistered else { return [[]] }
+        return [[], held]
+    }
+}
+
 enum AutoSendAction: String, CaseIterable, Codable, Identifiable, Sendable {
     case enter
     case commandEnter

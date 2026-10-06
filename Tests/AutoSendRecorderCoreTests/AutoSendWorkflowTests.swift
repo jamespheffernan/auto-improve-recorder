@@ -117,6 +117,44 @@ final class AutoSendWorkflowTests: XCTestCase {
         XCTAssertEqual(AutoSendSettingsStore(defaults: defaults).recordingShortcut, replacement)
     }
 
+    func testSpaceLatchUsesTheRecordingShortcutsModifiers() {
+        XCTAssertEqual(AutoSendSpaceLatch.spaceKeyCode, 49)
+        XCTAssertEqual(
+            AutoSendSpaceLatch.modifierSets(recording: .defaultRecording, cancel: .defaultCancel),
+            [[], .hyper]
+        )
+        let controlR = AutoSendKeyboardShortcut(keyCode: 15, keyLabel: "R", modifiers: [.control])
+        XCTAssertEqual(
+            AutoSendSpaceLatch.modifierSets(recording: controlR, cancel: .defaultCancel),
+            [[], [.control]]
+        )
+    }
+
+    func testSpaceLatchRegistersNoCombinationTwice() {
+        let bareF5 = AutoSendKeyboardShortcut(keyCode: 96, keyLabel: "F5", modifiers: [])
+        XCTAssertEqual(
+            AutoSendSpaceLatch.modifierSets(recording: bareF5, cancel: .defaultCancel),
+            [[]]
+        )
+
+        // Space with the shortcut's modifiers is left out when a shortcut is that combination.
+        let controlSpace = AutoSendKeyboardShortcut(keyCode: 49, keyLabel: "Space", modifiers: [.control])
+        let controlR = AutoSendKeyboardShortcut(keyCode: 15, keyLabel: "R", modifiers: [.control])
+        XCTAssertEqual(
+            AutoSendSpaceLatch.modifierSets(recording: controlSpace, cancel: .defaultCancel),
+            [[]]
+        )
+        XCTAssertEqual(
+            AutoSendSpaceLatch.modifierSets(recording: controlR, cancel: controlSpace),
+            [[]]
+        )
+        let optionSpace = AutoSendKeyboardShortcut(keyCode: 49, keyLabel: "Space", modifiers: [.option])
+        XCTAssertEqual(
+            AutoSendSpaceLatch.modifierSets(recording: controlR, cancel: optionSpace),
+            [[], [.control]]
+        )
+    }
+
     @MainActor
     func testOnboardingAndWirelessOptInSurviveRelaunch() {
         let suiteName = "AutoSendRecorderTests-\(UUID().uuidString)"

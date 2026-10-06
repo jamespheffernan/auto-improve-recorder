@@ -32,6 +32,9 @@ final class AutoSendHotKeyCenter {
     private var spaceLatchRef: EventHotKeyRef?
     private var modifiedSpaceLatchRef: EventHotKeyRef?
     private var eventHandlerRef: EventHandlerRef?
+    /// The shortcuts last passed to `register`. The Space latch reads them.
+    private var recordingShortcut = AutoSendKeyboardShortcut.defaultRecording
+    private var cancelShortcut = AutoSendKeyboardShortcut.defaultCancel
 
     func register(
         recording: AutoSendKeyboardShortcut = .defaultRecording,
@@ -41,6 +44,8 @@ final class AutoSendHotKeyCenter {
         let handlerStatus = installHandlerIfNeeded()
         guard handlerStatus == noErr else { return .failed(handlerStatus) }
         unregisterHotKeys()
+        recordingShortcut = recording
+        cancelShortcut = cancel
 
         let status = RegisterEventHotKey(
             recording.keyCode,
@@ -95,21 +100,27 @@ final class AutoSendHotKeyCenter {
     }
 
     /// Arms Space only while a hold-to-talk recording is active. The modified
-    /// registration lets Space latch a recording before the main shortcut is released.
+    /// registration uses the recording shortcut's modifiers, so Space latches a
+    /// recording before the main shortcut is released.
     @discardableResult
     func registerSpaceLatch() -> Bool {
         let handlerStatus = installHandlerIfNeeded()
         guard handlerStatus == noErr else { return false }
 
-        let modifiers = UInt32(cmdKey | optionKey | controlKey | shiftKey)
+        let heldModifiers = AutoSendSpaceLatch.modifierSets(
+            recording: recordingShortcut,
+            cancel: cancelShortcut
+        ).first { !$0.isEmpty }
         if spaceLatchRef == nil {
             guard RegisterEventHotKey(
-                UInt32(kVK_Space), 0, spaceLatchID, GetApplicationEventTarget(), 0, &spaceLatchRef
+                AutoSendSpaceLatch.spaceKeyCode, 0, spaceLatchID, GetApplicationEventTarget(), 0,
+                &spaceLatchRef
             ) == noErr else { return false }
         }
-        if modifiedSpaceLatchRef == nil {
+        if modifiedSpaceLatchRef == nil, let heldModifiers {
             guard RegisterEventHotKey(
-                UInt32(kVK_Space), modifiers, modifiedSpaceLatchID, GetApplicationEventTarget(), 0,
+                AutoSendSpaceLatch.spaceKeyCode, Self.carbonModifiers(for: heldModifiers),
+                modifiedSpaceLatchID, GetApplicationEventTarget(), 0,
                 &modifiedSpaceLatchRef
             ) == noErr else {
                 unregisterSpaceLatch()
