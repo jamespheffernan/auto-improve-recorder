@@ -1,7 +1,40 @@
 import Foundation
 
+enum ParakeetLiveRuntimeCapability: Equatable, Sendable {
+    case ready
+    case loadFailed
+    case missingSymbols
+}
+
+enum ParakeetWarmupTarget: Equatable, Sendable {
+    case fastOneShot
+    case recommendedOneShot
+    case residentRecommended
+    case liveRecommended
+}
+
+enum ParakeetWarmupPolicy {
+    static func targets(transcriptionModeRawValue: String) -> [ParakeetWarmupTarget] {
+        switch transcriptionModeRawValue {
+        case "localParakeetCppFast":
+            return [.fastOneShot]
+        case "localParakeetCppRecommended", "fastest":
+            return [.recommendedOneShot]
+        case "localParakeetCppResident":
+            return [.residentRecommended]
+        case "localParakeetStreaming":
+            // The saved-WAV fallback remains available, but it must not load a
+            // second heavy model unless the live path actually fails.
+            return [.liveRecommended]
+        default:
+            return []
+        }
+    }
+}
+
 enum LocalModelID: String, CaseIterable, Codable, Hashable, Identifiable, Sendable {
     case parakeetCppRecommended
+    case parakeetCppResident
     case parakeetCppFast
     case allLocal
     case appleSpeech
@@ -76,6 +109,14 @@ struct LocalModelCapabilities: Codable, Equatable, Sendable {
         staysOnDevice: true
     )
 
+    static let localRealtimeTranscription = LocalModelCapabilities(
+        supportsTranscription: true,
+        supportsImprovement: false,
+        supportsRealtime: true,
+        supportsDictionaryContext: true,
+        staysOnDevice: true
+    )
+
     static let localImprovement = LocalModelCapabilities(
         supportsTranscription: false,
         supportsImprovement: true,
@@ -129,6 +170,7 @@ struct LocalModelStatus: Codable, Equatable, Identifiable, Sendable {
 
 enum LocalModelPreset: String, CaseIterable, Codable, Identifiable, Sendable {
     case recommended
+    case resident
     case fast
     case allLocal
     case appleSpeech
@@ -139,11 +181,13 @@ enum LocalModelPreset: String, CaseIterable, Codable, Identifiable, Sendable {
     var transcriptionModeRawValue: String {
         switch self {
         case .recommended:
-            return "localParakeetCppRecommended"
+            return "localParakeetStreaming"
+        case .resident:
+            return "localParakeetCppResident"
         case .fast:
             return "localParakeetCppFast"
         case .allLocal:
-            return "localParakeetCppRecommended"
+            return "localParakeetStreaming"
         case .appleSpeech:
             return "appleLocal"
         case .cloudRealtime:
@@ -155,7 +199,7 @@ enum LocalModelPreset: String, CaseIterable, Codable, Identifiable, Sendable {
         switch self {
         case .allLocal:
             return "ollamaLocal"
-        case .recommended, .fast, .appleSpeech, .cloudRealtime:
+        case .recommended, .resident, .fast, .appleSpeech, .cloudRealtime:
             return nil
         }
     }
@@ -164,7 +208,7 @@ enum LocalModelPreset: String, CaseIterable, Codable, Identifiable, Sendable {
         switch self {
         case .allLocal:
             return LocalModelInventory.qwenOllamaModel
-        case .recommended, .fast, .appleSpeech, .cloudRealtime:
+        case .recommended, .resident, .fast, .appleSpeech, .cloudRealtime:
             return nil
         }
     }

@@ -1,6 +1,6 @@
 import AVFoundation
 import XCTest
-@testable import AutoImproveRecorderDictionaryCore
+@testable import AutoImproveRecorderCore
 
 final class MicrophoneHealthMonitorTests: XCTestCase {
     func testExactSilentStartupEmitsAfterConfiguredDuration() {

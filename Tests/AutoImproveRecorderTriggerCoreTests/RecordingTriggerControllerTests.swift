@@ -1,5 +1,5 @@
 import XCTest
-@testable import AutoImproveRecorderTriggerCore
+@testable import AutoImproveRecorderCore
 
 final class RecordingTriggerControllerTests: XCTestCase {
     private let base = Date(timeIntervalSince1970: 1_000)
@@ -71,6 +71,31 @@ final class RecordingTriggerControllerTests: XCTestCase {
                 beganAt: base.addingTimeInterval(0.12),
                 keyDown: true,
                 lostReleaseToken: beganCommands.scheduledTimerToken
+            )
+        )
+    }
+
+    func testSpaceLatchRequestedDuringStartupAppliesWhenRecordingBegins() throws {
+        let controller = makeController()
+        let start = try requestStart(from: controller.handle(.recordHotKeyDown(receivedAt: base, eventID: 1, isRepeat: false)))
+
+        let latchCommands = controller.handle(.latchHotKeyDown(receivedAt: base.addingTimeInterval(0.05)))
+        XCTAssertTrue(latchCommands.contains(.showStatus("Recording will latch when ready.")))
+        XCTAssertFalse(controller.isLatchedForDisplay)
+
+        let beganCommands = controller.handle(.recordingBegan(
+            startID: start.startID,
+            recordingID: recordingID,
+            beganAt: base.addingTimeInterval(0.12)
+        ))
+
+        XCTAssertTrue(beganCommands.contains(.enterLatch(source: .latchHotKey)))
+        XCTAssertEqual(
+            controller.state,
+            .recordingLatched(
+                recordingID: recordingID,
+                beganAt: base.addingTimeInterval(0.12),
+                latchSource: .latchHotKey
             )
         )
     }

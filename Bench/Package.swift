@@ -16,6 +16,18 @@ let package = Package(
         .executableTarget(
             name: "StreamSharedClientBench",
             path: "Sources/StreamSharedClientBench"
+        ),
+        .executableTarget(
+            name: "ParakeetLiveBench",
+            path: "Sources/ParakeetLiveBench"
+        ),
+        .executableTarget(
+            name: "AudioCaptureProfile",
+            path: "Sources/AudioCaptureProfile"
+        ),
+        .executableTarget(
+            name: "AutoSendLatencyBench",
+            path: "Sources/AutoSendLatencyBench"
         )
     ]
 )

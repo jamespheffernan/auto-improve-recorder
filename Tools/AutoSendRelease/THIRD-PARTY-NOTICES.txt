@@ -1,0 +1,28 @@
+Auto Send Recorder speech runtime
+
+parakeet.cpp: MIT, copyright 2026 the parakeet.cpp authors.
+Source: https://github.com/mudler/parakeet.cpp
+Revision: e75de9b6b9b688fd293aa22f7e27aa724ea286f8
+Built for macOS with CPU and Accelerate support. No model weights are embedded in the app.
+
+ggml: MIT, copyright 2023-2026 The ggml authors.
+Source: https://github.com/ggml-org/ggml
+Revision: e705c5fed490514458bdd2eaddc43bd098fcce9b
+The parakeet.cpp build applies the patches included in its source tree.
+
+Speech model downloads: GGUF conversion and quantization by mudler/parakeet-cpp-gguf.
+Pinned revision: bf0af9f425fa01809cadec671b3cb672709d13e9
+https://huggingface.co/mudler/parakeet-cpp-gguf
+SHA-256 checksums and exact URLs are in models.json.
+
+Parakeet TDT 0.6B v2 and Parakeet TDT/CTC 110M: NVIDIA, CC BY 4.0.
+Original checkpoints:
+https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2
+https://huggingface.co/nvidia/parakeet-tdt_ctc-110m
+The downloaded GGUF files are converted and Q4_K quantized derivatives, not the original checkpoints.
+
+Nemotron 3.5 ASR Streaming 0.6B: NVIDIA, OpenMDW 1.1.
+https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b
+The downloaded GGUF file is a converted and Q8_0 quantized derivative.
+
+Full license texts and upstream model cards are in the licenses directory.

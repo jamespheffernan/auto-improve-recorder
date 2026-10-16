@@ -250,6 +250,11 @@ enum ParakeetCppVariant: Sendable {
     }
 }
 
+extension ParakeetRuntimeConfiguration {
+    /// AIR's Parakeet root is its fixed install directory.
+    static let app = ParakeetRuntimeConfiguration { ParakeetCppTranscriber.installBaseURL }
+}
+
 struct ParakeetCppTranscriber: TranscriptionEngine {
     private let variant: ParakeetCppVariant
     private let timeout: TimeInterval = 180
@@ -269,6 +274,7 @@ struct ParakeetCppTranscriber: TranscriptionEngine {
             )
         }.value
 
+        await ParakeetCppWarmKeeper.shared.noteActivity(variant: variant)
         guard !text.isEmpty else {
             throw TranscriptionEngineError.emptyLocalTranscript(provider: variant.providerName)
         }
@@ -276,10 +282,7 @@ struct ParakeetCppTranscriber: TranscriptionEngine {
     }
 
     func warmUp() async {
-        let selectedVariant = variant
-        try? await Task.detached(priority: .utility) {
-            _ = try Self.runInfo(variant: selectedVariant)
-        }.value
+        await ParakeetCppWarmKeeper.shared.warmIfStale(variant: variant)
     }
 
     static func isInstalled(variant: ParakeetCppVariant, fileManager: FileManager = .default) -> Bool {
@@ -296,7 +299,7 @@ struct ParakeetCppTranscriber: TranscriptionEngine {
             hasRuntimeLibrary
     }
 
-    private static func runTranscription(audioURL: URL, variant: ParakeetCppVariant, timeout: TimeInterval) throws -> String {
+    fileprivate static func runTranscription(audioURL: URL, variant: ParakeetCppVariant, timeout: TimeInterval) throws -> String {
         let fileManager = FileManager.default
         guard fileManager.fileExists(atPath: audioURL.path) else {
             throw TranscriptionEngineError.audioMissing(audioURL.path)
@@ -328,19 +331,7 @@ struct ParakeetCppTranscriber: TranscriptionEngine {
         return try parseTranscript(stdout, provider: variant.providerName)
     }
 
-    private static func runInfo(variant: ParakeetCppVariant) throws -> String {
-        let cliPath = installBaseURL.appendingPathComponent("bin/parakeet-cli").path
-        let modelPath = installBaseURL.appendingPathComponent("models/\(variant.modelFilename)").path
-        return try runProcess(
-            executablePath: cliPath,
-            arguments: ["info", modelPath],
-            forceCPU: variant.forceCPU,
-            timeout: 10,
-            provider: variant.providerName
-        )
-    }
-
-    private static var installBaseURL: URL {
+    static var installBaseURL: URL {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/AutoImproveRecorder/ParakeetCpp")
     }
@@ -432,5 +423,90 @@ struct ParakeetCppTranscriber: TranscriptionEngine {
             throw TranscriptionEngineError.localProcessFailed(provider: provider, status: -1, stderr: error)
         }
         return (object["text"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+/// Keeps parakeet.cpp effectively warm without a server mode. The CLI is a
+/// binary-only one-shot tool (it rejects FIFO/stdin input and `--stream`
+/// requires a cache-aware streaming model), so warm state can only live in the
+/// OS page cache and the Metal shader cache. A real transcription is the only
+/// invocation that populates both; `parakeet-cli info` reads metadata without
+/// touching weights or the GPU. Cold start measures 7-8 s, a warm run ~1.2 s.
+actor ParakeetCppWarmKeeper {
+    static let shared = ParakeetCppWarmKeeper()
+
+    private static let staleInterval: TimeInterval = 5 * 60
+    private static let warmTimeout: TimeInterval = 60
+
+    private var lastRunAt: [String: Date] = [:]
+
+    func noteActivity(variant: ParakeetCppVariant) {
+        lastRunAt[variant.modelFilename] = Date()
+    }
+
+    func warmIfStale(variant: ParakeetCppVariant) async {
+        guard ParakeetCppTranscriber.isInstalled(variant: variant) else { return }
+        if let last = lastRunAt[variant.modelFilename],
+           Date().timeIntervalSince(last) < Self.staleInterval {
+            return
+        }
+        // Claim the slot before running so overlapping callers skip instead of
+        // stacking additional processes behind a cold start.
+        lastRunAt[variant.modelFilename] = Date()
+
+        guard let audioURL = Self.warmupAudioURL() else { return }
+        let warmedVariant = variant
+        _ = try? await Task.detached(priority: .utility) {
+            try ParakeetCppTranscriber.runTranscription(
+                audioURL: audioURL,
+                variant: warmedVariant,
+                timeout: Self.warmTimeout
+            )
+        }.value
+        lastRunAt[variant.modelFilename] = Date()
+    }
+
+    /// 0.32 s of silence, 16 kHz mono PCM16: long enough to force weight load
+    /// and Metal pipeline setup, short enough that inference cost is noise.
+    private static func warmupAudioURL() -> URL? {
+        let url = ParakeetCppTranscriber.installBaseURL
+            .appendingPathComponent("warmup-silence.wav")
+        if FileManager.default.fileExists(atPath: url.path) { return url }
+
+        let sampleRate: UInt32 = 16_000
+        let sampleCount: UInt32 = 5_120
+        let dataSize = sampleCount * 2
+        var wav = Data()
+        wav.append(contentsOf: Array("RIFF".utf8))
+        wav.appendLittleEndian(36 + dataSize)
+        wav.append(contentsOf: Array("WAVE".utf8))
+        wav.append(contentsOf: Array("fmt ".utf8))
+        wav.appendLittleEndian(UInt32(16))
+        wav.appendLittleEndian(UInt16(1))
+        wav.appendLittleEndian(UInt16(1))
+        wav.appendLittleEndian(sampleRate)
+        wav.appendLittleEndian(sampleRate * 2)
+        wav.appendLittleEndian(UInt16(2))
+        wav.appendLittleEndian(UInt16(16))
+        wav.append(contentsOf: Array("data".utf8))
+        wav.appendLittleEndian(dataSize)
+        wav.append(Data(count: Int(dataSize)))
+
+        do {
+            try wav.write(to: url, options: .atomic)
+            return url
+        } catch {
+            return nil
+        }
+    }
+}
+
+private extension Data {
+    mutating func appendLittleEndian(_ value: UInt32) {
+        Swift.withUnsafeBytes(of: value.littleEndian) { append(contentsOf: $0) }
+    }
+
+    mutating func appendLittleEndian(_ value: UInt16) {
+        Swift.withUnsafeBytes(of: value.littleEndian) { append(contentsOf: $0) }
     }
 }

@@ -28,11 +28,16 @@ final class RealtimePCMChunker {
     private let chunkByteCount: Int
     private var converter: AVAudioConverter?
     private var converterInputFormat: AVAudioFormat?
+    private let outputBufferPool = ReusableAudioPCMBuffer()
     private var pendingData = Data()
     private var pendingFirstCaptureSequence: UInt64?
     private var pendingLastCaptureSequence: UInt64?
     private var nextChunkSequence: UInt64 = 0
     private(set) var diagnostics = AudioCaptureDiagnostics()
+
+    var conversionBufferAllocationCount: Int {
+        outputBufferPool.allocationCount
+    }
 
     init(chunkByteCount: Int = RealtimePCMChunker.defaultChunkByteCount) {
         precondition(chunkByteCount > 0, "chunkByteCount must be positive")
@@ -68,7 +73,10 @@ final class RealtimePCMChunker {
 
         let ratio = outputFormat.sampleRate / captured.format.sampleRate
         let outputCapacity = AVAudioFrameCount(Double(captured.frameLength) * ratio) + 512
-        guard let outputBuffer = AVAudioPCMBuffer(pcmFormat: outputFormat, frameCapacity: outputCapacity) else {
+        guard let outputBuffer = outputBufferPool.buffer(
+            format: outputFormat,
+            minimumFrameCapacity: outputCapacity
+        ) else {
             throw record(RealtimePCMChunkerError.outputBufferAllocationFailed)
         }
 

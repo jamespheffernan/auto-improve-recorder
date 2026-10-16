@@ -1,5 +1,5 @@
 import XCTest
-@testable import AutoImproveRecorderDictionaryCore
+@testable import AutoImproveRecorderCore
 
 final class TranscriptTextNormalizerTests: XCTestCase {
     func testNormalizesCommonCardinalNumbers() {
@@ -35,6 +35,33 @@ final class TranscriptTextNormalizerTests: XCTestCase {
         XCTAssertEqual(
             TranscriptTextNormalizer.normalizeSpokenNumbers(in: text),
             "One of the issues is line 21, and 1 more thing."
+        )
+    }
+
+    func testNonDateOrdinalsUseOrdinalSuffixes() {
+        let text = "Use the first pass, then the second review, rank the first and second options, and note the twenty first checkpoint."
+
+        XCTAssertEqual(
+            TranscriptTextNormalizer.normalizeSpokenNumbers(in: text),
+            "Use the 1st pass, then the 2nd review, rank the 1st and 2nd options, and note the 21st checkpoint."
+        )
+    }
+
+    func testMonthDateOrdinalsUseBareDayNumbers() {
+        let text = "The window is June first and second, then July twenty first."
+
+        XCTAssertEqual(
+            TranscriptTextNormalizer.normalizeSpokenNumbers(in: text),
+            "The window is June 1 and 2, then July 21."
+        )
+    }
+
+    func testPreservesOrdinalModifiersBeforeQuantities() {
+        let text = "Keep the first one, the first two rows, and the second hundred examples."
+
+        XCTAssertEqual(
+            TranscriptTextNormalizer.normalizeSpokenNumbers(in: text),
+            "Keep the first one, the first two rows, and the second hundred examples."
         )
     }
 }

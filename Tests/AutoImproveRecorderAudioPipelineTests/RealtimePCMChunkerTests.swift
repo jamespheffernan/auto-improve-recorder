@@ -1,6 +1,7 @@
 import AVFoundation
+import CryptoKit
 import XCTest
-@testable import AutoImproveRecorderAudioPipeline
+@testable import AutoImproveRecorderCore
 
 final class RealtimePCMChunkerTests: XCTestCase {
     func testEmitsExactDefault100msChunkWhenInputAlreadyMatchesRealtimeFormat() throws {
@@ -85,6 +86,74 @@ final class RealtimePCMChunkerTests: XCTestCase {
         _ = try chunker.append(CapturedAudioBuffer(sequence: 3, buffer: makeSineBuffer(format: secondFormat, frames: 1_200)))
 
         XCTAssertEqual(chunker.diagnostics.converterRecreateCount, 2)
+    }
+
+    func testReusesOneConversionBufferForStableFormatAndCapacity() throws {
+        let format = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: 48_000,
+            channels: 1,
+            interleaved: false
+        )!
+        let chunker = RealtimePCMChunker()
+
+        for sequence in 0..<100 {
+            _ = try chunker.append(
+                CapturedAudioBuffer(
+                    sequence: UInt64(sequence),
+                    buffer: makeSineBuffer(format: format, frames: 256)
+                )
+            )
+        }
+
+        XCTAssertEqual(chunker.conversionBufferAllocationCount, 1)
+    }
+
+    func testReallocatesConversionBufferOnlyWhenCapacityGrows() throws {
+        let format = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: 48_000,
+            channels: 1,
+            interleaved: false
+        )!
+        let chunker = RealtimePCMChunker()
+
+        _ = try chunker.append(
+            CapturedAudioBuffer(sequence: 1, buffer: makeSineBuffer(format: format, frames: 256))
+        )
+        _ = try chunker.append(
+            CapturedAudioBuffer(sequence: 2, buffer: makeSineBuffer(format: format, frames: 4_800))
+        )
+        _ = try chunker.append(
+            CapturedAudioBuffer(sequence: 3, buffer: makeSineBuffer(format: format, frames: 1_200))
+        )
+
+        XCTAssertEqual(chunker.conversionBufferAllocationCount, 2)
+    }
+
+    func testStableConversionByteGoldenWithReusableOutputBuffer() throws {
+        let format = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: 48_000,
+            channels: 2,
+            interleaved: false
+        )!
+        let chunker = RealtimePCMChunker()
+        var chunks: [RealtimeAudioChunk] = []
+
+        chunks.append(contentsOf: try chunker.append(
+            CapturedAudioBuffer(sequence: 10, buffer: makeSineBuffer(format: format, frames: 4_800))
+        ))
+        chunks.append(contentsOf: try chunker.append(
+            CapturedAudioBuffer(sequence: 11, buffer: makeSineBuffer(format: format, frames: 4_800))
+        ))
+        chunks.append(contentsOf: chunker.finish())
+        let pcm = chunks.reduce(into: Data()) { $0.append($1.data) }
+        let digest = SHA256.hash(data: pcm).map { String(format: "%02x", $0) }.joined()
+
+        XCTAssertEqual(pcm.count, 8_192)
+        XCTAssertEqual(digest, "5addde01f39bced50f95519ba91209183cb7b87faf4f01339258a8121a52b014")
+        XCTAssertEqual(chunker.conversionBufferAllocationCount, 1)
     }
 
     private func makeSineBuffer(format: AVAudioFormat, frames: AVAudioFrameCount) throws -> AVAudioPCMBuffer {

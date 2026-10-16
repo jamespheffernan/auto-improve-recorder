@@ -4,34 +4,33 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject private var state: AppState
+    @State private var selectedSection: SettingsSection = .recording
 
     var body: some View {
         VStack(spacing: 0) {
-            TabView {
-                GeneralSettingsTab()
-                    .tabItem { Label("General", systemImage: "gearshape") }
+            HStack(spacing: 0) {
+                SettingsSidebar(selection: $selectedSection)
+                    .frame(width: 188)
 
-                EngineSettingsTab()
-                    .tabItem { Label("Engine", systemImage: "cpu") }
+                Divider()
 
-                OutputSettingsTab()
-                    .tabItem { Label("Output", systemImage: "text.alignleft") }
-
-                ProvidersSettingsTab()
-                    .tabItem { Label("Providers", systemImage: "key") }
-
-                DictionarySettingsTab(store: state.dictionaryStore)
-                    .tabItem { Label("Dictionary", systemImage: "character.book.closed") }
+                ScrollView {
+                    SettingsPaneContent(section: selectedSection)
+                        .padding(.horizontal, 28)
+                        .padding(.vertical, 24)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                }
             }
 
             ReadinessFooter()
         }
+        .background(Color(nsColor: .windowBackgroundColor))
         .frame(
-            minWidth: 560,
-            idealWidth: 620,
+            minWidth: 820,
+            idealWidth: 900,
             maxWidth: .infinity,
-            minHeight: 460,
-            idealHeight: 580,
+            minHeight: 560,
+            idealHeight: 680,
             maxHeight: .infinity
         )
         .onAppear {
@@ -43,24 +42,278 @@ struct SettingsView: View {
     }
 }
 
-private struct GeneralSettingsTab: View {
+private enum SettingsSection: String, CaseIterable, Identifiable {
+    case recording
+    case processing
+    case output
+    case providers
+    case dictionary
+    case readiness
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .recording:
+            return "Recording"
+        case .processing:
+            return "Processing"
+        case .output:
+            return "Output"
+        case .providers:
+            return "Providers"
+        case .dictionary:
+            return "Dictionary"
+        case .readiness:
+            return "Readiness"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .recording:
+            return "Hotkey, trigger, and microphone input."
+        case .processing:
+            return "Transcription, cleanup, and local runtime choices."
+        case .output:
+            return "Cleanup style, clipboard, paste, and app rules."
+        case .providers:
+            return "Cloud keys and local Ollama settings."
+        case .dictionary:
+            return "Terms, replacement rules and the generated lexicon."
+        case .readiness:
+            return "Permissions, diagnostics, and current app status."
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .recording:
+            return "mic"
+        case .processing:
+            return "cpu"
+        case .output:
+            return "arrow.down.doc"
+        case .providers:
+            return "key"
+        case .dictionary:
+            return "character.book.closed"
+        case .readiness:
+            return "checkmark.shield"
+        }
+    }
+}
+
+private struct SettingsSidebar: View {
+    @Binding var selection: SettingsSection
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Auto Improve")
+                    .font(.system(size: 16, weight: .semibold))
+                Text("Settings")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 18)
+
+            VStack(spacing: 4) {
+                ForEach(SettingsSection.allCases) { section in
+                    SettingsSidebarRow(
+                        section: section,
+                        isSelected: selection == section
+                    ) {
+                        selection = section
+                    }
+                }
+            }
+            .padding(.horizontal, 8)
+
+            Spacer(minLength: 0)
+        }
+        .background(Color(nsColor: .controlBackgroundColor).opacity(0.44))
+    }
+}
+
+private struct SettingsSidebarRow: View {
+    var section: SettingsSection
+    var isSelected: Bool
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 9) {
+                Image(systemName: section.systemImage)
+                    .font(.system(size: 13, weight: .medium))
+                    .frame(width: 17)
+                Text(section.title)
+                    .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background {
+                if isSelected {
+                    RoundedRectangle(cornerRadius: 7)
+                        .fill(Color.accentColor.opacity(0.14))
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct SettingsPaneContent: View {
+    @EnvironmentObject private var state: AppState
+    var section: SettingsSection
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            SettingsPaneHeader(section: section)
+
+            switch section {
+            case .recording:
+                RecordingSettingsPane()
+            case .processing:
+                ProcessingSettingsPane()
+            case .output:
+                OutputSettingsPane()
+            case .providers:
+                ProvidersSettingsPane()
+            case .dictionary:
+                DictionarySettingsSection(store: state.dictionaryStore)
+            case .readiness:
+                ReadinessSettingsPane()
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+    }
+}
+
+private struct SettingsPaneHeader: View {
+    var section: SettingsSection
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Label {
+                Text(section.title)
+                    .font(.system(size: 24, weight: .semibold))
+            } icon: {
+                Image(systemName: section.systemImage)
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+            }
+
+            Text(section.subtitle)
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+        }
+        .padding(.bottom, 4)
+    }
+}
+
+private struct SettingsGroup<Content: View>: View {
+    var title: String
+    var subtitle: String
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .top, spacing: 24) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title)
+                        .font(.system(size: 13, weight: .semibold))
+                    Text(subtitle)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(width: 145, alignment: .topLeading)
+
+                VStack(alignment: .leading, spacing: 12) {
+                    content()
+                }
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+            .padding(.vertical, 17)
+
+            Divider()
+        }
+    }
+}
+
+private struct SettingRow<Control: View>: View {
+    var title: String
+    var detail: String?
+    var controlWidth: CGFloat
+    @ViewBuilder var control: () -> Control
+
+    init(
+        _ title: String,
+        detail: String? = nil,
+        controlWidth: CGFloat = 300,
+        @ViewBuilder control: @escaping () -> Control
+    ) {
+        self.title = title
+        self.detail = detail
+        self.controlWidth = controlWidth
+        self.control = control
+    }
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 16) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 13, weight: .medium))
+                if let detail, !detail.isEmpty {
+                    Text(detail)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            control()
+                .frame(width: controlWidth, alignment: .trailing)
+        }
+    }
+}
+
+private struct SettingsInlineNote: View {
+    var text: String
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 12))
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+private struct RecordingSettingsPane: View {
     @EnvironmentObject private var state: AppState
 
     var body: some View {
-        Form {
-            Section("Recording") {
-                Picker("Trigger", selection: $state.recordingTriggerMode) {
-                    ForEach(RecordingTriggerMode.allCases) { mode in
-                        Text(mode.label).tag(mode)
+        VStack(spacing: 0) {
+            SettingsGroup(
+                title: "Capture",
+                subtitle: "Set how dictation starts, stops, and cancels."
+            ) {
+                SettingRow("Trigger", detail: recordingTriggerNote, controlWidth: 240) {
+                    Picker("", selection: $state.recordingTriggerMode) {
+                        ForEach(RecordingTriggerMode.allCases) { mode in
+                            Text(mode.label).tag(mode)
+                        }
                     }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
                 }
-                Text(recordingTriggerNote)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                HStack {
-                    Text("Hotkey")
-                    Spacer()
+
+                SettingRow("Hotkey", detail: "Click the key field, then press the shortcut.", controlWidth: 180) {
                     HotKeyRecorder(
                         hotKey: $state.recordingHotKey,
                         onCaptureChange: { isCapturing in
@@ -71,40 +324,35 @@ private struct GeneralSettingsTab: View {
                             }
                         }
                     )
-                        .frame(width: 180, height: 28)
-                }
-                Picker("Microphone", selection: $state.preferredMicrophoneID) {
-                    ForEach(state.availableMicrophones) { device in
-                        Text(device.name).tag(device.id)
-                    }
-                }
-                Text(state.resolvedMicrophoneSummary)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Button {
-                    state.refreshMicrophones()
-                } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise")
+                    .frame(width: 180, height: 28)
                 }
             }
 
-            Section("Improvement") {
-                Picker("Auto-improve", selection: $state.autoImproveMode) {
-                    ForEach(AutoImproveMode.allCases) { mode in
-                        Text(mode.label).tag(mode)
+            SettingsGroup(
+                title: "Microphone",
+                subtitle: "Choose the input AIR should use and refresh available devices."
+            ) {
+                SettingRow("Input device", detail: state.resolvedMicrophoneSummary, controlWidth: 320) {
+                    HStack(spacing: 8) {
+                        Picker("", selection: $state.preferredMicrophoneID) {
+                            ForEach(state.availableMicrophones) { device in
+                                Text(device.name).tag(device.id)
+                            }
+                        }
+                        .labelsHidden()
+                        .frame(width: 274)
+
+                        Button {
+                            state.refreshMicrophones()
+                        } label: {
+                            Image(systemName: "arrow.clockwise")
+                        }
+                        .buttonStyle(.borderless)
+                        .help("Refresh microphones")
                     }
                 }
-                Stepper("Threshold: \(state.thresholdWords) words", value: $state.thresholdWords, in: 1...500)
-                Text("Auto-improve runs cleanup automatically once a transcript passes the word threshold.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
             }
-
-            ReadinessSettingsSection()
         }
-        .formStyle(.grouped)
     }
 
     private var recordingTriggerNote: String {
@@ -117,40 +365,103 @@ private struct GeneralSettingsTab: View {
     }
 }
 
-private struct EngineSettingsTab: View {
+private struct ProcessingSettingsPane: View {
     @EnvironmentObject private var state: AppState
 
     var body: some View {
-        Form {
-            LocalModelSettingsSection()
+        VStack(spacing: 0) {
+            SettingsGroup(
+                title: "Choose a preset",
+                subtitle: "Start with a tested pipeline. Manual engine pairing is advanced."
+            ) {
+                ProcessingPresetSummary()
 
-            Section("How this engine runs") {
-                Text(processingNote)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                LocalModelSettingsSection()
+
+                DisclosureGroup {
+                    VStack(alignment: .leading, spacing: 12) {
+                        SettingRow("Transcription", detail: transcriptionDetail, controlWidth: 280) {
+                            Picker("", selection: $state.transcriptionMode) {
+                                ForEach(TranscriptionMode.allCases) { mode in
+                                    Text(mode.label).tag(mode)
+                                }
+                            }
+                            .labelsHidden()
+                        }
+
+                        SettingRow("Cleanup", detail: state.improvementMode.detailLabel, controlWidth: 280) {
+                            Picker("", selection: $state.improvementMode) {
+                                ForEach(ImprovementMode.allCases) { mode in
+                                    Text(mode.label).tag(mode)
+                                }
+                            }
+                            .labelsHidden()
+                        }
+
+                        SettingsInlineNote(text: processingNote)
+                    }
+                    .padding(.top, 8)
+                } label: {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Advanced engine pairing")
+                            .font(.system(size: 13, weight: .semibold))
+                        Text("Manually choose transcription and cleanup only when a preset does not fit.")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(10)
+                .background(Color(nsColor: .controlBackgroundColor).opacity(0.55), in: RoundedRectangle(cornerRadius: 8))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color(nsColor: .separatorColor).opacity(0.55), lineWidth: 1)
+                }
+
             }
 
-            Section {
-                DisclosureGroup("Custom engine (advanced)") {
-                    Picker("Transcription", selection: $state.transcriptionMode) {
-                        ForEach(TranscriptionMode.allCases) { mode in
+            SettingsGroup(
+                title: "Auto-improve",
+                subtitle: "Control when the cleanup pass runs."
+            ) {
+                SettingRow("Mode", detail: autoImproveDetail, controlWidth: 240) {
+                    Picker("", selection: $state.autoImproveMode) {
+                        ForEach(AutoImproveMode.allCases) { mode in
                             Text(mode.label).tag(mode)
                         }
                     }
-                    Picker("Improvement", selection: $state.improvementMode) {
-                        ForEach(ImprovementMode.allCases) { mode in
-                            Text(mode.label).tag(mode)
-                        }
-                    }
-                    Text("Mix any transcription and cleanup engine. The presets above set these for you.")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                }
+
+                SettingRow("Threshold", detail: "Automatic cleanup starts once the transcript reaches this length.", controlWidth: 200) {
+                    Stepper("\(state.thresholdWords) words", value: $state.thresholdWords, in: 1...500)
                 }
             }
         }
-        .formStyle(.grouped)
+    }
+
+    private var transcriptionDetail: String {
+        switch state.transcriptionMode {
+        case .localPhonon2:
+            return PhononTranscriber.isInstalled
+                ? "English transcription with Phonon-2 on Apple’s Neural Engine. Audio stays on this Mac."
+                : "Phonon-2 needs macOS 15 or newer and its bundled speech models. Choose another model until it is ready."
+        case .localWhisper, .localParakeetCppFast, .localParakeetCppRecommended, .localParakeetCppResident, .localParakeetStreaming, .appleLocal:
+            return "Audio stays on this Mac."
+        case .openAIAPI, .fastest:
+            return "Audio may be sent to OpenAI."
+        }
+    }
+
+    private var autoImproveDetail: String {
+        switch state.autoImproveMode {
+        case .off:
+            return "Always keep the raw transcript."
+        case .manual:
+            return "Clean only when you click Re-run."
+        case .automatic:
+            return "Clean automatically above the threshold."
+        }
     }
 
     private var processingNote: String {
@@ -164,6 +475,14 @@ private struct EngineSettingsTab: View {
 
         if state.transcriptionMode == .localParakeetCppRecommended && state.improvementMode == .ollamaLocal {
             return "All-local mode uses Parakeet.cpp 0.6B Recommended for transcription and Ollama qwen3.5:0.8b-mlx for cleanup."
+        }
+
+        if state.transcriptionMode == .localParakeetCppResident && state.improvementMode == .ollamaLocal {
+            return "All-local mode uses resident Parakeet.cpp 0.6B for transcription and Ollama qwen3.5:0.8b-mlx for cleanup."
+        }
+
+        if state.transcriptionMode == .localParakeetStreaming && state.improvementMode == .ollamaLocal {
+            return "All-local mode uses resident Parakeet Live transcription and Ollama qwen3.5:0.8b-mlx for cleanup."
         }
 
         if state.transcriptionMode == .appleLocal && state.improvementMode == .appleLocal {
@@ -190,144 +509,290 @@ private struct EngineSettingsTab: View {
             return "Apple Speech keeps transcription local, then sends text to OpenAI for cleanup when auto-improve runs."
         }
 
-        return "OpenAI cleanup uses the API key in the Providers tab. Local Whisper, Parakeet, and Apple Speech transcription stay on this Mac."
+        return "OpenAI cleanup uses the API key in Providers. Local Whisper, Parakeet, and Apple Speech transcription stay on this Mac."
     }
 }
 
-private struct OutputSettingsTab: View {
+private struct ProcessingPresetSummary: View {
     @EnvironmentObject private var state: AppState
 
     var body: some View {
-        Form {
-            Section("Cleanup style") {
-                Picker("Style", selection: $state.outputMode) {
-                    ForEach(OutputMode.allCases) { mode in
-                        Text(mode.label).tag(mode)
-                    }
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Label(currentPathTitle, systemImage: currentPathSymbol)
+                    .font(.system(size: 14, weight: .semibold))
+
+                Text("Current path")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Color.accentColor.opacity(0.12))
+                    .clipShape(Capsule())
+
+                Spacer()
+
+                Button {
+                    state.refreshLocalModelStatuses()
+                } label: {
+                    Label("Check presets", systemImage: "arrow.clockwise")
                 }
-                .pickerStyle(.segmented)
-                Text(state.outputMode.promptIntensity)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                .controlSize(.small)
             }
 
-            Section("Delivery") {
+            Text(currentPathDetail)
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(12)
+        .background(Color.accentColor.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.accentColor.opacity(0.18), lineWidth: 1)
+        }
+    }
+
+    private var currentPathTitle: String {
+        if state.transcriptionMode == .localParakeetCppRecommended && state.improvementMode == .ollamaLocal {
+            return "All Local"
+        }
+
+        switch state.transcriptionMode {
+        case .localPhonon2:
+            return "Phonon-2"
+        case .localParakeetCppRecommended:
+            return "Recommended local"
+        case .localParakeetCppResident:
+            return "Resident local"
+        case .localParakeetStreaming:
+            return "Parakeet Live"
+        case .localParakeetCppFast:
+            return "Fast local"
+        case .appleLocal:
+            return "Apple Speech"
+        case .fastest:
+            return "Cloud Realtime"
+        case .localWhisper, .openAIAPI:
+            return "Custom pairing"
+        }
+    }
+
+    private var currentPathSymbol: String {
+        switch state.transcriptionMode {
+        case .fastest, .openAIAPI:
+            return "cloud"
+        case .localPhonon2, .localParakeetCppResident, .localParakeetStreaming:
+            return "bolt.horizontal"
+        case .localWhisper, .localParakeetCppFast, .localParakeetCppRecommended, .appleLocal:
+            return "cpu"
+        }
+    }
+
+    private var currentPathDetail: String {
+        "Transcription: \(state.transcriptionMode.label). Cleanup: \(state.improvementMode.label). Pick a preset below to switch paths without manually pairing engines."
+    }
+}
+
+private struct OutputSettingsPane: View {
+    @EnvironmentObject private var state: AppState
+
+    var body: some View {
+        VStack(spacing: 0) {
+            SettingsGroup(
+                title: "Cleanup style",
+                subtitle: "Choose how strongly AIR rewrites dictation."
+            ) {
+                SettingRow("Style", detail: state.outputMode.promptIntensity, controlWidth: 320) {
+                    Picker("", selection: $state.outputMode) {
+                        ForEach(OutputMode.allCases) { mode in
+                            Text(mode.label).tag(mode)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                }
+            }
+
+            SettingsGroup(
+                title: "Delivery",
+                subtitle: "Default behavior after the final text is ready."
+            ) {
                 Toggle("Copy finished text to clipboard", isOn: $state.copyFinishedTextToClipboard)
                     .toggleStyle(.checkbox)
                 Toggle("Auto-submit in detected text fields", isOn: $state.autoSubmitDetectedTextFields)
                     .toggleStyle(.checkbox)
             }
 
-            Section("App rules") {
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Per-app overrides")
-                                .font(.system(size: 13, weight: .semibold))
-                            Text("Override paste, clipboard, and Return behavior for specific apps.")
-                                .font(.system(size: 12))
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Button {
-                            state.refreshDeliveryRuleCandidateApps()
-                        } label: {
-                            Image(systemName: "arrow.clockwise")
-                        }
-                        .buttonStyle(.borderless)
-                        .help("Refresh running apps")
-                    }
-
-                    if state.appDeliveryRules.isEmpty {
-                        Text("No app rules configured.")
-                            .font(.system(size: 12))
-                            .foregroundStyle(.secondary)
-                    } else {
-                        VStack(spacing: 8) {
-                            ForEach($state.appDeliveryRules) { $rule in
-                                AppDeliveryRuleRow(rule: $rule) {
-                                    state.removeAppDeliveryRule(id: rule.id)
-                                }
-                            }
-                        }
-                    }
-
-                    HStack {
-                        Menu {
-                            if state.deliveryRuleCandidateApps.isEmpty {
-                                Text("No available running apps")
-                            } else {
-                                ForEach(state.deliveryRuleCandidateApps) { app in
-                                    Button(app.displayName) {
-                                        state.addAppDeliveryRule(for: app)
-                                    }
-                                }
-                            }
-                        } label: {
-                            Label("Add Running App", systemImage: "plus")
-                        }
-
-                        Button("Restore Defaults") {
-                            state.resetAppDeliveryRulesToDefaults()
-                        }
-
-                        Spacer()
-                    }
-                }
+            SettingsGroup(
+                title: "App rules",
+                subtitle: "Override paste, clipboard, and Return behavior per app."
+            ) {
+                AppRulesEditor()
             }
         }
-        .formStyle(.grouped)
     }
 }
 
-private struct ProvidersSettingsTab: View {
+private struct AppRulesEditor: View {
     @EnvironmentObject private var state: AppState
 
     var body: some View {
-        Form {
-            Section("Cloud API keys") {
-                LabeledContent("OpenAI") {
-                    SecureField("sk-…", text: $state.apiKey)
-                        .textFieldStyle(.roundedBorder)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Menu {
+                    if state.deliveryRuleCandidateApps.isEmpty {
+                        Text("No available running apps")
+                    } else {
+                        ForEach(state.deliveryRuleCandidateApps) { app in
+                            Button(app.displayName) {
+                                state.addAppDeliveryRule(for: app)
+                            }
+                        }
+                    }
+                } label: {
+                    Label("Add running app", systemImage: "plus")
                 }
-                LabeledContent("Gemini") {
-                    SecureField("AIza…", text: $state.geminiAPIKey)
-                        .textFieldStyle(.roundedBorder)
+
+                Button {
+                    state.refreshDeliveryRuleCandidateApps()
+                } label: {
+                    Label("Refresh", systemImage: "arrow.clockwise")
                 }
-                LabeledContent("Anthropic") {
-                    SecureField("sk-ant-…", text: $state.anthropicAPIKey)
-                        .textFieldStyle(.roundedBorder)
+
+                Button("Restore defaults") {
+                    state.resetAppDeliveryRulesToDefaults()
                 }
-                Text("Keys stay on this Mac and are only sent when you pick a matching cloud engine.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+
+                Spacer()
             }
 
-            Section("Ollama (local cleanup)") {
-                TextField("Base URL", text: $state.ollamaBaseURL)
-                    .textFieldStyle(.roundedBorder)
-                TextField("Model", text: $state.ollamaModel)
-                    .textFieldStyle(.roundedBorder)
-                Text("Start Ollama locally and run `ollama pull qwen3.5:0.8b-mlx` before using Ollama local improvement.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+            if state.appDeliveryRules.isEmpty {
+                SettingsInlineNote(text: "No app rules configured.")
+            } else {
+                VStack(spacing: 8) {
+                    ForEach($state.appDeliveryRules) { $rule in
+                        AppDeliveryRuleRow(rule: $rule) {
+                            state.removeAppDeliveryRule(id: rule.id)
+                        }
+                    }
+                }
             }
         }
-        .formStyle(.grouped)
     }
 }
 
-private struct DictionarySettingsTab: View {
-    @ObservedObject var store: UserDictionaryStore
+private struct ProvidersSettingsPane: View {
+    @EnvironmentObject private var state: AppState
 
     var body: some View {
-        Form {
-            DictionarySettingsSection(store: store)
+        VStack(spacing: 0) {
+            SettingsGroup(
+                title: "Cloud keys",
+                subtitle: "Only used when a matching cloud engine is selected."
+            ) {
+                SettingRow("OpenAI", detail: "Used by OpenAI cleanup and Cloud Realtime.", controlWidth: 320) {
+                    SecureField("sk-...", text: $state.apiKey)
+                        .textFieldStyle(.roundedBorder)
+                }
+                SettingRow("Gemini", detail: "Used by Gemini Flash cleanup.", controlWidth: 320) {
+                    SecureField("AIza...", text: $state.geminiAPIKey)
+                        .textFieldStyle(.roundedBorder)
+                }
+                SettingRow("Anthropic", detail: "Used by Claude Haiku cleanup.", controlWidth: 320) {
+                    SecureField("sk-ant-...", text: $state.anthropicAPIKey)
+                        .textFieldStyle(.roundedBorder)
+                }
+            }
+
+            SettingsGroup(
+                title: "Ollama",
+                subtitle: "Local cleanup server and model."
+            ) {
+                SettingRow("Base URL", detail: "Default local Ollama endpoint.", controlWidth: 320) {
+                    TextField("Base URL", text: $state.ollamaBaseURL)
+                        .textFieldStyle(.roundedBorder)
+                }
+                SettingRow("Model", detail: "AIR expects the qwen3.5 local cleanup model by default.", controlWidth: 320) {
+                    TextField("Model", text: $state.ollamaModel)
+                        .textFieldStyle(.roundedBorder)
+                }
+                SettingsInlineNote(text: "Start Ollama locally and pull the selected model before choosing Ollama local cleanup.")
+            }
         }
-        .formStyle(.grouped)
+    }
+}
+
+private struct ReadinessSettingsPane: View {
+    @EnvironmentObject private var state: AppState
+
+    var body: some View {
+        VStack(spacing: 0) {
+            SettingsGroup(
+                title: "Permissions",
+                subtitle: "Recording and automatic paste depend on these macOS permissions."
+            ) {
+                PermissionStatusRow(
+                    title: "Microphone",
+                    systemImage: "mic",
+                    state: state.permissionStatus.microphone,
+                    detail: microphonePermissionDetail,
+                    actionTitle: "Refresh",
+                    action: refreshReadiness
+                )
+                PermissionStatusRow(
+                    title: "Accessibility",
+                    systemImage: "keyboard",
+                    state: state.permissionStatus.accessibility,
+                    detail: accessibilityPermissionDetail,
+                    actionTitle: "Prompt Accessibility",
+                    action: { state.promptForAccessibilityPermission() },
+                    secondaryTitle: "Refresh",
+                    secondaryAction: refreshReadiness
+                )
+            }
+
+            SettingsGroup(
+                title: "Diagnostics",
+                subtitle: "The latest saved issue and copyable technical details."
+            ) {
+                DiagnosticsStatusRow(event: state.diagnosticEvents.first)
+            }
+        }
+    }
+
+    private func refreshReadiness() {
+        Task { await state.refreshReadiness() }
+    }
+
+    private var microphonePermissionDetail: String {
+        switch state.permissionStatus.microphone {
+        case .authorized:
+            return "Ready: recording can use the microphone."
+        case .notDetermined:
+            return "Next: start a recording and grant microphone access when macOS asks."
+        case .denied:
+            return "Blocked: enable Microphone access for AutoImproveRecorder in System Settings, then refresh."
+        case .restricted:
+            return "Blocked by macOS policy. Check Screen Time, device management, or System Settings."
+        case .unavailable:
+            return "Unavailable: AIR cannot read microphone permission on this Mac."
+        }
+    }
+
+    private var accessibilityPermissionDetail: String {
+        switch state.permissionStatus.accessibility {
+        case .authorized:
+            return "Ready: AIR can paste finished text into the focused app."
+        case .notDetermined:
+            return "Next: prompt macOS for Accessibility access so AIR can paste automatically."
+        case .denied:
+            return "Next: open the macOS Accessibility prompt, approve AutoImproveRecorder, then refresh."
+        case .restricted:
+            return "Blocked by macOS policy. Check System Settings or device management before automatic paste will work."
+        case .unavailable:
+            return "Unavailable: AIR cannot check Accessibility trust on this Mac."
+        }
     }
 }
 
@@ -338,16 +803,34 @@ private struct ReadinessFooter: View {
         VStack(spacing: 0) {
             Divider()
             HStack(spacing: 14) {
-                FooterPermissionBadge(
-                    title: "Mic",
-                    systemImage: "mic",
-                    state: state.permissionStatus.microphone
-                )
-                FooterPermissionBadge(
-                    title: "Accessibility",
-                    systemImage: "keyboard",
-                    state: state.permissionStatus.accessibility
-                )
+                if hasPermissionAction {
+                    Label(footerActionMessage, systemImage: "exclamationmark.triangle.fill")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.orange)
+
+                    if state.permissionStatus.accessibility != .authorized {
+                        Button("Prompt Accessibility") {
+                            state.promptForAccessibilityPermission()
+                        }
+                        .controlSize(.small)
+                    }
+
+                    Button("Refresh") {
+                        Task { await state.refreshReadiness() }
+                    }
+                    .controlSize(.small)
+                } else {
+                    FooterPermissionBadge(
+                        title: "Mic",
+                        systemImage: "mic",
+                        state: state.permissionStatus.microphone
+                    )
+                    FooterPermissionBadge(
+                        title: "Accessibility",
+                        systemImage: "keyboard",
+                        state: state.permissionStatus.accessibility
+                    )
+                }
 
                 Spacer(minLength: 12)
 
@@ -363,6 +846,25 @@ private struct ReadinessFooter: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
         }
+    }
+
+    private var hasPermissionAction: Bool {
+        state.permissionStatus.microphone != .authorized || state.permissionStatus.accessibility != .authorized
+    }
+
+    private var footerActionMessage: String {
+        let microphoneNeedsAction = state.permissionStatus.microphone != .authorized
+        let accessibilityNeedsAction = state.permissionStatus.accessibility != .authorized
+
+        if microphoneNeedsAction && accessibilityNeedsAction {
+            return "Microphone and Accessibility need attention."
+        }
+
+        if microphoneNeedsAction {
+            return "Microphone permission needs attention."
+        }
+
+        return "Accessibility is needed for automatic paste."
     }
 }
 
@@ -387,72 +889,130 @@ private struct FooterPermissionBadge: View {
     }
 }
 
-private struct ReadinessSettingsSection: View {
-    @EnvironmentObject private var state: AppState
-
-    var body: some View {
-        Section("Readiness") {
-            PermissionStatusRow(
-                title: "Microphone",
-                systemImage: "mic",
-                state: state.permissionStatus.microphone
-            )
-            PermissionStatusRow(
-                title: "Accessibility",
-                systemImage: "keyboard",
-                state: state.permissionStatus.accessibility
-            )
-
-            HStack(spacing: 8) {
-                Button {
-                    Task { await state.refreshReadiness() }
-                } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise")
-                }
-
-                Button {
-                    state.promptForAccessibilityPermission()
-                } label: {
-                    Label("Prompt Accessibility", systemImage: "hand.raised")
-                }
-            }
-
-            if let latest = state.diagnosticEvents.first {
-                Divider()
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Last issue: \(latest.summary)")
-                        .font(.system(size: 12, weight: .semibold))
-                    Text(latest.diagnosticsSubtitle)
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Button {
-                        state.copyLatestDiagnostics()
-                    } label: {
-                        Label("Copy details", systemImage: "doc.on.doc")
-                    }
-                }
-            }
-        }
-    }
-}
-
 private struct PermissionStatusRow: View {
     var title: String
     var systemImage: String
     var state: PermissionState
+    var detail: String
+    var actionTitle: String?
+    var action: (() -> Void)?
+    var secondaryTitle: String?
+    var secondaryAction: (() -> Void)?
 
     var body: some View {
-        HStack(spacing: 8) {
-            Label(title, systemImage: systemImage)
-            Spacer()
-            Text(state.readinessLabel)
-                .font(.system(size: 11, weight: .semibold))
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(state.readinessBadgeColor)
-                .clipShape(Capsule())
+        ActionableStatusRow(
+            title: title,
+            subtitle: nil,
+            detail: detail,
+            statusLabel: state.readinessLabel,
+            systemImage: systemImage,
+            tint: state.readinessTint,
+            actionTitle: actionTitle,
+            action: action,
+            secondaryTitle: secondaryTitle,
+            secondaryAction: secondaryAction
+        )
+    }
+}
+
+private struct DiagnosticsStatusRow: View {
+    @EnvironmentObject private var state: AppState
+    var event: DiagnosticEvent?
+
+    var body: some View {
+        if let event {
+            ActionableStatusRow(
+                title: event.summary,
+                subtitle: event.subsystem.label,
+                detail: "Next: copy details if you need to troubleshoot this issue. \(event.diagnosticsSubtitle)",
+                statusLabel: event.severity.label,
+                systemImage: event.subsystem.systemImage,
+                tint: event.severity.statusTint,
+                actionTitle: "Copy details",
+                action: { state.copyLatestDiagnostics() },
+                secondaryTitle: "Refresh",
+                secondaryAction: { state.refreshDiagnostics() }
+            )
+        } else {
+            ActionableStatusRow(
+                title: "No recent diagnostics",
+                subtitle: nil,
+                detail: "If recording, provider, runtime, or delivery fails, the latest issue will appear here.",
+                statusLabel: "Clear",
+                systemImage: "checkmark.circle.fill",
+                tint: .green,
+                actionTitle: "Refresh",
+                action: { state.refreshDiagnostics() }
+            )
         }
+    }
+}
+
+private struct ActionableStatusRow: View {
+    var title: String
+    var subtitle: String? = nil
+    var detail: String
+    var statusLabel: String
+    var systemImage: String
+    var tint: Color
+    var actionTitle: String? = nil
+    var action: (() -> Void)? = nil
+    var secondaryTitle: String? = nil
+    var secondaryAction: (() -> Void)? = nil
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: systemImage)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(tint)
+                .frame(width: 18)
+                .padding(.top, 2)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+                if let subtitle, !subtitle.isEmpty {
+                    Text(subtitle)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+                Text(detail)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 12)
+
+            VStack(alignment: .trailing, spacing: 6) {
+                Text(statusLabel)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(tint)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(tint.opacity(0.14))
+                    .clipShape(Capsule())
+
+                if hasActions {
+                    HStack(spacing: 6) {
+                        if let actionTitle, let action {
+                            Button(actionTitle, action: action)
+                                .controlSize(.small)
+                        }
+
+                        if let secondaryTitle, let secondaryAction {
+                            Button(secondaryTitle, action: secondaryAction)
+                                .controlSize(.small)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(.vertical, 10)
+    }
+
+    private var hasActions: Bool {
+        (actionTitle != nil && action != nil) || (secondaryTitle != nil && secondaryAction != nil)
     }
 }
 
@@ -460,12 +1020,18 @@ private struct LocalModelSettingsSection: View {
     @EnvironmentObject private var state: AppState
 
     var body: some View {
-        Section("Choose an engine") {
+        VStack(spacing: 0) {
             recommendedRow
-            fastRow
+            Divider()
             allLocalRow
-            appleSpeechRow
+            Divider()
             cloudRealtimeRow
+            Divider()
+            residentRow
+            Divider()
+            fastRow
+            Divider()
+            appleSpeechRow
         }
     }
 
@@ -475,6 +1041,17 @@ private struct LocalModelSettingsSection: View {
             fallbackDescriptor: LocalModelInventory.descriptor(for: .parakeetCppRecommended),
             actionTitle: "Use Recommended",
             action: { state.useRecommendedLocalTranscription() },
+            secondaryTitle: "Check",
+            secondaryAction: { state.refreshLocalModelStatuses() }
+        )
+    }
+
+    private var residentRow: some View {
+        LocalModelStatusRow(
+            status: status(for: .parakeetCppResident),
+            fallbackDescriptor: LocalModelInventory.descriptor(for: .parakeetCppResident),
+            actionTitle: "Use Resident",
+            action: { state.useResidentLocalTranscription() },
             secondaryTitle: "Check",
             secondaryAction: { state.refreshLocalModelStatuses() }
         )
@@ -559,55 +1136,83 @@ private struct LocalModelStatusRow: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(descriptor.title)
-                        .font(.system(size: 13, weight: .semibold))
-                    Text(descriptor.subtitle)
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                Spacer(minLength: 12)
-
-                Text(state.label)
-                    .font(.system(size: 11, weight: .semibold))
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(badgeBackground)
-                    .clipShape(Capsule())
-            }
-
-            Text(detail)
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            HStack(spacing: 8) {
-                if !actionTitle.isEmpty {
-                    Button(actionTitle, action: action)
-                }
-
-                if let secondaryTitle, let secondaryAction {
-                    Button(secondaryTitle, action: secondaryAction)
-                }
-            }
-        }
-        .padding(.vertical, 4)
+        ActionableStatusRow(
+            title: descriptor.title,
+            subtitle: descriptor.subtitle,
+            detail: "\(nextStep) \(detail)",
+            statusLabel: state.label,
+            systemImage: statusSymbol,
+            tint: statusTint,
+            actionTitle: actionTitle.isEmpty ? nil : actionTitle,
+            action: actionTitle.isEmpty ? nil : action,
+            secondaryTitle: secondaryTitle,
+            secondaryAction: secondaryAction
+        )
     }
 
-    private var badgeBackground: Color {
+    private var nextStep: String {
         switch state {
         case .ready, .installed:
-            return Color.green.opacity(0.16)
-        case .checking, .loading, .downloading:
-            return Color.blue.opacity(0.14)
-        case .needsModel, .needsRuntime, .externalAppRequired, .unavailable:
-            return Color.orange.opacity(0.16)
+            return "Ready: choose this preset when you want this processing path."
+        case .checking:
+            return "Checking: AIR is reading the current local runtime state."
+        case .loading:
+            return "Loading: wait for the runtime check to finish."
+        case .downloading:
+            return "Downloading: keep Settings open until the model download completes."
+        case .needsModel:
+            if descriptor.id == .allLocal {
+                return "Next: install the missing Parakeet model or pull the Ollama cleanup model, then check again."
+            }
+            return "Next: install the missing model file, then check again."
+        case .needsRuntime:
+            if descriptor.id == .cloudRealtime {
+                return "Next: add an OpenAI API key in Providers, then check again."
+            }
+            if descriptor.id == .parakeetCppResident {
+                return "Next: install the optional resident runtime, or use Recommended local instead."
+            }
+            return "Next: install the required local runtime, then check again."
+        case .externalAppRequired:
+            if descriptor.id == .allLocal {
+                return "Next: start Ollama locally and pull qwen3.5:0.8b-mlx, then check again."
+            }
+            return "Next: open the required local app or service, then check again."
+        case .unavailable:
+            if descriptor.id == .parakeetCppRecommended {
+                return "This Mac will use one-shot Parakeet.cpp Recommended instead."
+            }
+            return "No AIR action is available for this Mac right now."
         case .failed:
-            return Color.red.opacity(0.16)
+            return "Next: check again or copy diagnostics if this keeps failing."
+        }
+    }
+
+    private var statusSymbol: String {
+        switch state {
+        case .ready, .installed:
+            return "checkmark.circle.fill"
+        case .checking, .loading:
+            return "arrow.clockwise.circle.fill"
+        case .downloading:
+            return "arrow.down.circle.fill"
+        case .needsModel, .needsRuntime, .externalAppRequired, .unavailable:
+            return "exclamationmark.triangle.fill"
+        case .failed:
+            return "xmark.octagon.fill"
+        }
+    }
+
+    private var statusTint: Color {
+        switch state {
+        case .ready, .installed:
+            return .green
+        case .checking, .loading, .downloading:
+            return .blue
+        case .needsModel, .needsRuntime, .externalAppRequired, .unavailable:
+            return .orange
+        case .failed:
+            return .red
         }
     }
 }
@@ -620,8 +1225,25 @@ private struct DictionarySettingsSection: View {
     @State private var newRuleReplacement = ""
 
     var body: some View {
-        Section("Dictionary") {
-            VStack(alignment: .leading, spacing: 10) {
+        VStack(spacing: 0) {
+            SettingsGroup(
+                title: "In the current mode",
+                subtitle: "What the dictionary does with your settings as they are now."
+            ) {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(currentModeLines, id: \.self) { line in
+                        Text(line)
+                            .font(.system(size: 12))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            SettingsGroup(
+                title: "Terms",
+                subtitle: "Names and phrases AIR should recognize and preserve."
+            ) {
                 HStack(spacing: 8) {
                     TextField("Word or phrase", text: $newEntryText)
                         .textFieldStyle(.roundedBorder)
@@ -662,8 +1284,12 @@ private struct DictionarySettingsSection: View {
                     }
                 }
 
-                Divider()
+            }
 
+            SettingsGroup(
+                title: "Replacements",
+                subtitle: "Rewrite a dictated phrase into the exact text you want."
+            ) {
                 HStack(spacing: 8) {
                     TextField("Phrase", text: $newRulePhrase)
                         .textFieldStyle(.roundedBorder)
@@ -707,7 +1333,46 @@ private struct DictionarySettingsSection: View {
                         }
                     }
                 }
+            }
 
+            SettingsGroup(
+                title: "Lexicon",
+                subtitle: "Generated from your work in ~/.config/lexicon/terms.json. Read only here; your own terms and rules above take precedence."
+            ) {
+                Text("\(store.lexicon.terms.count) terms, \(store.lexicon.rules.count) rules")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                ForEach(store.lexicon.rules) { rule in
+                    HStack(spacing: 8) {
+                        Text(rule.phrase)
+                            .font(.system(size: 13, weight: .medium))
+                            .lineLimit(1)
+                        Image(systemName: "arrow.right")
+                            .foregroundStyle(.secondary)
+                        Text(rule.replacement)
+                            .font(.system(size: 13))
+                            .lineLimit(1)
+                        Spacer()
+                    }
+                }
+                if !store.lexicon.terms.isEmpty {
+                    Text("Top terms: " + store.lexicon.terms.prefix(12).joined(separator: ", "))
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if let lexiconError = store.lexiconLoadError {
+                    Text(lexiconError)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            SettingsGroup(
+                title: "Import",
+                subtitle: "Bring in terms and rules from Superwhisper."
+            ) {
                 HStack {
                     Button {
                         state.importSuperwhisperDictionary()
@@ -728,6 +1393,25 @@ private struct DictionarySettingsSection: View {
                 }
             }
         }
+        .onAppear { store.reloadLexicon() }
+    }
+
+    private var currentModeLines: [String] {
+        let mode = state.transcriptionMode
+        let rules = "Replacement rules run on every recording, before anything else reads the text: \(store.replacementRules.count) of yours and \(store.lexicon.rules.count) from the lexicon."
+        let recogniser = mode.takesVocabulary
+            ? "\(mode.label) receives up to 20 terms as a spelling hint."
+            : "\(mode.label) takes no vocabulary, so terms do not reach the recogniser."
+        let cleanup: String
+        switch state.autoImproveMode {
+        case .off:
+            cleanup = "Auto Improve is off, so the cleanup prompt, and the terms in it, run only when you choose Improve."
+        case .manual:
+            cleanup = "Terms reach the cleanup prompt only when you choose Improve."
+        case .automatic:
+            cleanup = "Terms reach the cleanup prompt for recordings of \(state.thresholdWords) words or more; shorter recordings get the rules only."
+        }
+        return [rules, recogniser, cleanup]
     }
 
     private func addEntry() {
@@ -842,6 +1526,17 @@ private extension PermissionState {
         }
     }
 
+    var readinessTint: Color {
+        switch self {
+        case .authorized:
+            return .green
+        case .notDetermined:
+            return .blue
+        case .denied, .restricted, .unavailable:
+            return .orange
+        }
+    }
+
     var readinessDotColor: Color {
         switch self {
         case .authorized:
@@ -886,6 +1581,27 @@ private extension DiagnosticSubsystem {
             return "Archive"
         }
     }
+
+    var systemImage: String {
+        switch self {
+        case .microphone:
+            return "mic"
+        case .accessibility:
+            return "keyboard"
+        case .hotKey:
+            return "command"
+        case .openAIRealtime:
+            return "waveform"
+        case .transcription:
+            return "text.bubble"
+        case .improvement:
+            return "wand.and.stars"
+        case .localRuntime:
+            return "cpu"
+        case .archive:
+            return "archivebox"
+        }
+    }
 }
 
 private extension DiagnosticSeverity {
@@ -897,6 +1613,17 @@ private extension DiagnosticSeverity {
             return "Warning"
         case .error:
             return "Error"
+        }
+    }
+
+    var statusTint: Color {
+        switch self {
+        case .info:
+            return .blue
+        case .warning:
+            return .orange
+        case .error:
+            return .red
         }
     }
 }

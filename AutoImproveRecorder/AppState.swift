@@ -66,7 +66,7 @@ final class AppState: ObservableObject {
             applyRecordingHotKey(previous: oldValue)
         }
     }
-    @Published var transcriptionMode: TranscriptionMode = .localWhisper {
+    @Published var transcriptionMode: TranscriptionMode = .localPhonon2 {
         didSet { saveSettings(reason: .general) }
     }
     @Published var improvementMode: ImprovementMode = .ollamaLocal {
@@ -107,7 +107,7 @@ final class AppState: ObservableObject {
     @Published private(set) var deliveryRuleCandidateApps: [FocusedApp] = []
     @Published var availableMicrophones: [AudioInputDevice] = [.systemDefault]
     @Published private(set) var resolvedMicrophoneSummary = "Using system default."
-    let dictionaryStore = UserDictionaryStore()
+    let dictionaryStore: UserDictionaryStore
 
     var showPreview: (() -> Void)?
     var showSettings: (() -> Void)?
@@ -116,20 +116,28 @@ final class AppState: ObservableObject {
     var unregisterRecordingHotKey: (() -> Void)?
     var registerCancelHotKey: (() -> Void)?
     var unregisterCancelHotKey: (() -> Void)?
-    var registerWalkieTalkieLatchHotKey: (() -> Void)?
+    var registerWalkieTalkieLatchHotKey: ((RecordingHotKey) -> WalkieTalkieLatchHotKeyRegistration)?
     var unregisterWalkieTalkieLatchHotKey: (() -> Void)?
     var showProcessingSignal: ((ProcessingVisualState) -> Void)?
     var flashReadySignal: ((ProcessingVisualState) -> Void)?
     var hideProcessingSignal: (() -> Void)?
 
     private let environment: AppEnvironment
-    private let defaults = UserDefaults.standard
+    private let defaults: UserDefaults
     private lazy var recordingTriggerController = RecordingTriggerController { [weak self] in
         self?.recordingTriggerBehavior ?? .holdToTalk
     }
-    private let realtimeAudioSink = OpenAIRealtimeAudioSink()
-    private var activeStreamingTranscriber: OpenAIRealtimeTranscriber?
-    private var activeRealtimeStartupTask: Task<Void, Never>?
+    private var activeSpaceLatchRegistrationFailed = false
+    private var activeRecordingHandle: (any RecordingSessionHandle)?
+    /// Raised each time a handle is cancelled. Statuses and diagnostics from handles begun before
+    /// that are dropped.
+    private var recordingEventGeneration = 0
+    /// The transcription mode read when the session's recording started. Stop, transcription,
+    /// the archive record and a microphone restart use it; the setting is not read again.
+    private var sessionTranscriptionMode: TranscriptionMode?
+    /// The engine that produced the session's transcript: the backup's engine when the backup's
+    /// text was used, nil until the recording has a transcript. Every archive save writes it.
+    private var sessionTranscriptionEngineName: String?
     private var activeRecordingID: UUID?
     private var activeProcessingRecordingID: UUID?
     private var activeArchiveDraftState = ActiveTranscriptArchiveDraftState()
@@ -145,15 +153,39 @@ final class AppState: ObservableObject {
     private var isRevertingRecordingHotKey = false
     private var visualResetToken = UUID()
     private var microphoneUseLockHeartbeatTask: Task<Void, Never>?
-    private var microphoneDeviceObserver: MicrophoneDeviceObserver?
-    private var quarantinedMicrophoneIDs: [String: Date] = [:]
-    private var activeMicrophoneResolution: MicrophoneResolution?
-    private var activeMicrophoneHealthMonitor: MicrophoneHealthMonitor?
-    private var microphoneRecoveryInProgress = false
-    private let microphoneRetryCooldown: TimeInterval = 10
+    private var microphoneDeviceObservation: AnyObject?
+    private var microphoneRecovery = MicrophoneRecovery(retryCooldown: 10)
+    /// The silence watch of the recording in flight, or nil when the backup microphone switch is off.
+    private var activeSilenceWatch: MicrophoneSilenceWatch?
+    /// True once the silence watch has reported for the recording in flight.
+    private var silentMicrophoneWarningShown = false
+    /// The repeating check that the main microphone is still delivering buffers. It runs only while recording.
+    private var silenceWatchCheckTask: Task<Void, Never>?
+    private var activeBackupMicrophone: ActiveBackupMicrophone?
+    /// The backup recording whose text the current session uses, or nil when it uses the main recording.
+    private var usedBackupRecording: (microphone: AudioInputDevice, audioURL: URL)?
     private var triggerTimerTasks: [RecordingTriggerTimerKind: Task<Void, Never>] = [:]
     private var localModelStatusTask: Task<Void, Never>?
     private var recordingHotKeyCaptureIsActive = false
+
+    /// The backup microphone of the recording in flight. It stays here from the request to open
+    /// it until the recording ends or the open fails.
+    private struct ActiveBackupMicrophone {
+        let id: UUID
+        let microphone: AudioInputDevice
+        /// True once the backup has opened.
+        var isRunning = false
+        /// What the startup recovery needs, set when it is skipped because of this backup.
+        var skippedRecovery: (recordingID: UUID, audioURL: URL, requestedAt: Date)?
+    }
+
+    /// The backup of a recording that has stopped.
+    private struct StoppedBackupMicrophone {
+        let microphone: AudioInputDevice
+        let stop: any BackupRecordingStop
+        /// True when the silence watch reported for the recording.
+        let primaryWasSilent: Bool
+    }
 
     private enum Keys {
         static let autoImproveMode = "autoImproveMode"
@@ -174,8 +206,10 @@ final class AppState: ObservableObject {
         static let lastOpenAIRealtimeErrorDetails = "lastOpenAIRealtimeErrorDetails"
     }
 
-    init(environment: AppEnvironment = .live) {
+    init(environment: AppEnvironment) {
         self.environment = environment
+        dictionaryStore = environment.dictionaryStore
+        defaults = environment.legacyDefaults
         let credentials = environment.secrets.loadCredentials()
         apiKey = credentials.openAIAPIKey
         geminiAPIKey = credentials.geminiAPIKey
@@ -201,12 +235,11 @@ final class AppState: ObservableObject {
         ollamaModel = settings.ollama.model
         refreshMicrophones()
         enforcePreferredMicrophoneDefaultInput(reason: "app launch")
-        microphoneDeviceObserver = MicrophoneDeviceObserver { [weak self] in
+        microphoneDeviceObservation = environment.microphoneDevices.observeDeviceChanges { [weak self] in
             Task { @MainActor [weak self] in
                 self?.handleMicrophoneDevicesChanged()
             }
         }
-        microphoneDeviceObserver?.start()
         refreshDeliveryRuleCandidateApps()
     }
 
@@ -244,7 +277,7 @@ final class AppState: ObservableObject {
 
     func refreshMicrophones() {
         availableMicrophones = microphonesIncludingSavedPreference(
-            AudioInputDeviceDiscovery.inputDevices()
+            environment.microphoneDevices.inputDevices()
         )
         updateResolvedMicrophoneSummary()
     }
@@ -278,10 +311,9 @@ final class AppState: ObservableObject {
 
     private func updateResolvedMicrophoneSummary() {
         do {
-            let resolution = try MicrophoneResolver.resolve(
+            let resolution = try microphoneRecovery.resolve(
                 preferences: .fromPreferredMicrophoneID(preferredMicrophoneID),
                 devices: availableMicrophones,
-                quarantinedUntil: quarantinedMicrophoneIDs,
                 now: Date()
             )
             resolvedMicrophoneSummary = microphoneSummary(for: resolution)
@@ -308,7 +340,7 @@ final class AppState: ObservableObject {
         guard let target = MicrophoneDefaultInputPinningPolicy.targetDeviceToPin(
             preferences: preferences,
             devices: availableMicrophones,
-            quarantinedUntil: quarantinedMicrophoneIDs,
+            quarantinedUntil: microphoneRecovery.quarantinedUntil,
             now: Date()
         ),
               let coreAudioDeviceID = target.coreAudioDeviceID else {
@@ -316,7 +348,7 @@ final class AppState: ObservableObject {
         }
 
         do {
-            try AudioInputDeviceDiscovery.setDefaultInputDeviceID(coreAudioDeviceID)
+            try environment.microphoneDevices.setDefaultInputDeviceID(coreAudioDeviceID)
             microphoneDeviceLogger.info(
                 "Pinned macOS default input to preferred microphone id=\(target.id, privacy: .public) name=\(target.name, privacy: .public) coreAudioDeviceID=\(coreAudioDeviceID, privacy: .public) reason=\(reason, privacy: .public)"
             )
@@ -339,17 +371,10 @@ final class AppState: ObservableObject {
         let ownBundleIdentifier = Bundle.main.bundleIdentifier
         var seenBundleIdentifiers = Set<String>()
 
-        deliveryRuleCandidateApps = NSWorkspace.shared.runningApplications.compactMap { app in
-            guard app.activationPolicy == .regular,
-                  let bundleIdentifier = app.bundleIdentifier,
-                  !bundleIdentifier.isEmpty,
-                  bundleIdentifier != ownBundleIdentifier,
-                  !existingBundleIdentifiers.contains(bundleIdentifier),
-                  seenBundleIdentifiers.insert(bundleIdentifier).inserted else {
-                return nil
-            }
-
-            return FocusedApp(bundleIdentifier: bundleIdentifier, displayName: app.localizedName)
+        deliveryRuleCandidateApps = environment.runningApps().filter { app in
+            app.bundleIdentifier != ownBundleIdentifier &&
+                !existingBundleIdentifiers.contains(app.bundleIdentifier) &&
+                seenBundleIdentifiers.insert(app.bundleIdentifier).inserted
         }
         .sorted { lhs, rhs in
             lhs.displayName.localizedCaseInsensitiveCompare(rhs.displayName) == .orderedAscending
@@ -391,6 +416,10 @@ final class AppState: ObservableObject {
         applyLocalModelPreset(.recommended)
     }
 
+    func useResidentLocalTranscription() {
+        applyLocalModelPreset(.resident)
+    }
+
     func useFastLocalTranscription() {
         applyLocalModelPreset(.fast)
     }
@@ -408,8 +437,16 @@ final class AppState: ObservableObject {
     }
 
     private func applyLocalModelPreset(_ preset: LocalModelPreset) {
-        if let transcriptionMode = TranscriptionMode(rawValue: preset.transcriptionModeRawValue) {
-            self.transcriptionMode = transcriptionMode
+        if let requestedMode = TranscriptionMode(rawValue: preset.transcriptionModeRawValue) {
+            let wantsLiveRecommendation = preset == .recommended || preset == .allLocal
+            let canUseLiveRecommendation = ParakeetLiveSafetyPolicy.shouldSelectByDefault(
+                physicalMemoryBytes: ProcessInfo.processInfo.physicalMemory,
+                liveRuntimeInstalled: RecommendedLiveTranscription.isAvailable,
+                offlineFallbackInstalled: ParakeetCppTranscriber.isInstalled(variant: .recommended06B)
+            )
+            self.transcriptionMode = wantsLiveRecommendation && !canUseLiveRecommendation
+                ? .localParakeetCppRecommended
+                : requestedMode
         }
 
         if let improvementModeRawValue = preset.improvementModeRawValue,
@@ -423,11 +460,17 @@ final class AppState: ObservableObject {
 
         switch preset {
         case .recommended:
-            statusMessage = "Using Parakeet.cpp Recommended for local transcription."
+            statusMessage = transcriptionMode == .localParakeetStreaming
+                ? "Using recommended live Parakeet transcription."
+                : "Live Parakeet does not meet this Mac's runtime gates; using one-shot Parakeet.cpp Recommended."
+        case .resident:
+            statusMessage = "Using resident Parakeet.cpp for local transcription."
         case .fast:
             statusMessage = "Using Parakeet.cpp Fast for local transcription."
         case .allLocal:
-            statusMessage = "Using Parakeet.cpp Recommended with Ollama qwen3.5 local cleanup."
+            statusMessage = transcriptionMode == .localParakeetStreaming
+                ? "Using recommended live Parakeet with Ollama qwen3.5 local cleanup."
+                : "Using one-shot Parakeet.cpp Recommended with Ollama qwen3.5 local cleanup."
         case .appleSpeech:
             statusMessage = "Using Apple Speech for local transcription when available."
         case .cloudRealtime:
@@ -550,46 +593,36 @@ final class AppState: ObservableObject {
         saveSettings(reason: .general)
         saveCredentials()
         cancelAllRecordingTriggerTimers()
-        activeRealtimeStartupTask?.cancel()
-        activeRealtimeStartupTask = nil
-        activeStartID = nil
-        activeStartIsTriggerManaged = false
-        activeRecordingID = nil
-        activeProcessingRecordingID = nil
-        activeMicrophoneResolution = nil
+        cancelRecordingHandle()
+        clearActiveRecordingIdentity()
         discardActiveArchiveDraftIfNeeded()
         discardPreparedRecordingDraft()
         _ = environment.recording.stopRecording()
+        discardBackupMicrophone()
         endMicrophoneUseLock()
     }
 
     func prewarmLocalModels() {
-        let selectedTranscriptionMode = transcriptionMode
-        let selectedImprovementMode = improvementMode
-        let selectedOllamaBaseURL = ollamaBaseURL
-        let selectedOllamaModel = ollamaModel
-        let selectedAPIKey = apiKey
-
         prewarmRecordingStartResources()
+        prewarmEnginesForActiveModes()
+    }
 
-        Task.detached(priority: .utility) {
-            if selectedTranscriptionMode == .localWhisper {
-                await WhisperCppTranscriber().warmUp()
-            }
-            if selectedTranscriptionMode == .localParakeetCppFast {
-                await ParakeetCppTranscriber(variant: .fast110M).warmUp()
-            }
-            if selectedTranscriptionMode == .localParakeetCppRecommended ||
-                (selectedTranscriptionMode == .fastest && selectedAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) {
-                await ParakeetCppTranscriber(variant: .recommended06B).warmUp()
-            }
-            if selectedImprovementMode == .ollamaLocal {
-                await OllamaImproveEngine(
-                    baseURL: selectedOllamaBaseURL,
-                    model: selectedOllamaModel
-                ).warmUp()
-            }
-        }
+    /// Warm the engines the current modes will need, off the hot path. Called
+    /// at launch and again when each recording starts, so the post-stop work
+    /// never pays a cold start: parakeet.cpp weight/Metal caches stay hot,
+    /// Ollama reloads the model if its keep-alive evicted it, and cloud TLS
+    /// handshakes are paid while the user is still speaking.
+    /// ParakeetCppWarmKeeper throttles repeat warms internally.
+    private func prewarmEnginesForActiveModes() {
+        environment.enginePrewarm.prewarm(
+            EnginePrewarmRequest(
+                transcriptionMode: transcriptionMode,
+                improvementMode: improvementMode,
+                ollamaBaseURL: ollamaBaseURL,
+                ollamaModel: ollamaModel,
+                hasOpenAIKey: !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            )
+        )
     }
 
     private func prewarmRecordingStartResources() {
@@ -772,13 +805,20 @@ final class AppState: ObservableObject {
         beginMicrophoneUseLock(reason: "starting")
         registerCancelHotKey?()
         if recordingTriggerBehavior == .holdToTalk {
-            registerWalkieTalkieLatchHotKey?()
+            let registration = registerWalkieTalkieLatchHotKey?(recordingHotKey) ?? .unavailable
+            activeSpaceLatchRegistrationFailed = triggerManaged
+                ? !registration.spaceWhileHoldingTriggerRegistered
+                : !registration.unmodifiedSpaceRegistered
+        } else {
+            activeSpaceLatchRegistrationFailed = false
         }
         isStartingRecording = true
         recordingStartedAt = nil
         phase = .starting
         processingVisualState = .starting
-        statusMessage = "Opening microphone."
+        statusMessage = activeSpaceLatchRegistrationFailed
+            ? "Opening microphone. Space latch unavailable; hold to talk for this recording."
+            : "Opening microphone."
         showProcessingSignal?(.starting)
         logRecordingStartup("start requested", requestedAt: requestedAt)
         Task { await startRecordingFlow(startID: startID, requestedAt: requestedAt) }
@@ -786,38 +826,59 @@ final class AppState: ObservableObject {
 
     func stopRecording(shouldTranscribe: Bool = true) {
         guard case .recording = phase else { return }
-        unregisterCancelHotKey?()
-        unregisterWalkieTalkieLatchHotKey?()
-        activeRealtimeStartupTask?.cancel()
-        activeRealtimeStartupTask = nil
+        unregisterActiveRecordingHotKeys()
         let stoppedRecordingID = activeRecordingID
-        let streamingTranscriber = activeStreamingTranscriber
-        activeStreamingTranscriber = nil
+        let recordingHandle = activeRecordingHandle
+        activeRecordingHandle = nil
+        let handleStopStatus = recordingHandle?.captureWillStop()
         guard let audioURL = environment.recording.stopRecording() else {
+            let backup = endBackupMicrophone()
             activeRecordingID = nil
-            activeMicrophoneResolution = nil
-            activeMicrophoneHealthMonitor = nil
+            microphoneRecovery.recordingEnded()
             endMicrophoneUseLock()
-            realtimeAudioSink.clear()
-            if let streamingTranscriber {
-                Task { await streamingTranscriber.cancel() }
+            cancelLiveTranscription(recordingHandle: recordingHandle)
+            let message = "Recording stopped before an audio file was created."
+            guard shouldTranscribe, let backup else {
+                backup?.stop.discard()
+                discardActiveArchiveDraftIfNeeded()
+                // The draft is deleted, so the session stops naming its audio file. An edit in
+                // the preview then has no draft to save to.
+                session.audioURL = nil
+                failWithMessage(message)
+                return
             }
-            failWithMessage("Recording stopped before an audio file was created.")
+            processBackupAfterFailedStop(
+                backup,
+                stoppedRecordingID: stoppedRecordingID,
+                unusedAudioURL: nil,
+                reportFailure: { [weak self] keptBackupURL in
+                    guard let self else { return }
+                    guard let keptBackupURL else {
+                        self.discardActiveArchiveDraftIfNeeded()
+                        self.session.audioURL = nil
+                        self.failWithMessage(message)
+                        return
+                    }
+                    // The backup's audio stays on disk. The record names it and its microphone.
+                    self.usedBackupRecording = (backup.microphone, keptBackupURL)
+                    self.session.audioURL = keptBackupURL
+                    self.failWithMessage(message)
+                    self.persistTranscriptArchive()
+                }
+            )
             return
         }
+        let backup = endBackupMicrophone()
         endMicrophoneUseLock()
-        activeMicrophoneHealthMonitor = nil
-        realtimeAudioSink.clear()
+        let captureFailure = recordingHandle?.captureFailure
         activeRecordingID = nil
 
         guard shouldTranscribe else {
-            if let streamingTranscriber {
-                Task { await streamingTranscriber.cancel() }
-            }
+            backup?.stop.discard()
+            cancelLiveTranscription(recordingHandle: recordingHandle)
             try? FileManager.default.removeItem(at: audioURL)
             discardActiveArchiveDraftIfNeeded()
-            activeMicrophoneResolution = nil
-            activeMicrophoneHealthMonitor = nil
+            microphoneRecovery.recordingEnded()
             session = .empty
             showRawTranscript = false
             recordingStartedAt = nil
@@ -830,14 +891,94 @@ final class AppState: ObservableObject {
             return
         }
 
+        if let captureFailure {
+            cancelLiveTranscription(recordingHandle: recordingHandle)
+            let message = captureFailure.localizedDescription
+            let reportFailure: @MainActor () -> Void = { [weak self] in
+                guard let self else { return }
+                self.activeProcessingRecordingID = nil
+                self.recordingStartedAt = nil
+                self.failWithMessage(message)
+                self.persistTranscriptArchive()
+                self.microphoneRecovery.recordingEnded()
+            }
+            guard let backup else {
+                reportFailure()
+                return
+            }
+            processBackupAfterFailedStop(
+                backup,
+                stoppedRecordingID: stoppedRecordingID,
+                unusedAudioURL: audioURL,
+                reportFailure: { _ in reportFailure() }
+            )
+            return
+        }
+
         recordingStartedAt = nil
         activeProcessingRecordingID = stoppedRecordingID
         phase = .transcribing
         processingVisualState = .transcribing
-        statusMessage = transcriptionStatusMessage(streamingTranscriber: streamingTranscriber)
+        statusMessage = handleStopStatus ?? AIRTranscriberCatalog.stopStatus(for: recordingMode)
         showProcessingSignal?(.transcribing)
         handleRecordingTriggerEvent(.processingBegan(recordingID: stoppedRecordingID, at: Date()))
-        Task { await processRecording(audioURL: audioURL, streamingTranscriber: streamingTranscriber) }
+        Task {
+            await processRecording(
+                audioURL: audioURL,
+                recordingHandle: recordingHandle,
+                backup: backup
+            )
+        }
+    }
+
+    /// The main recording failed at stop and a backup exists. Shows the transcribing state, then
+    /// continues the run on the backup's text when it has any. Otherwise it runs `reportFailure`,
+    /// which reports the main recording's failure. `reportFailure` receives the backup file's
+    /// URL when that file is kept because it could not be transcribed, and nil when no backup
+    /// file remains.
+    private func processBackupAfterFailedStop(
+        _ backup: StoppedBackupMicrophone,
+        stoppedRecordingID: UUID?,
+        unusedAudioURL: URL?,
+        reportFailure: @escaping @MainActor (_ keptBackupURL: URL?) -> Void
+    ) {
+        recordingStartedAt = nil
+        activeProcessingRecordingID = stoppedRecordingID
+        phase = .transcribing
+        processingVisualState = .transcribing
+        statusMessage = "Transcribing the backup microphone recording."
+        showProcessingSignal?(.transcribing)
+        handleRecordingTriggerEvent(.processingBegan(recordingID: stoppedRecordingID, at: Date()))
+        Task {
+            let dictionarySnapshot = session.dictionarySnapshot
+            guard let backupURL = await backup.stop.finishedFile() else {
+                activeProcessingRecordingID = nil
+                reportFailure(nil)
+                return
+            }
+            let result: TranscriptionResult
+            do {
+                result = try await transcribe(
+                    audioURL: backupURL,
+                    recordingHandle: nil,
+                    dictionarySnapshot: session.transcriptionVocabulary
+                )
+            } catch {
+                // The backup file stays when it could not be read, so no audio is lost.
+                NSLog("Backup microphone recording could not be transcribed: %@", error.localizedDescription)
+                activeProcessingRecordingID = nil
+                reportFailure(backupURL)
+                return
+            }
+            guard BackupTranscriptChoice.wordCount(finalTranscript(of: result)) > 0 else {
+                try? FileManager.default.removeItem(at: backupURL)
+                activeProcessingRecordingID = nil
+                reportFailure(nil)
+                return
+            }
+            useBackupRecording(backupURL, microphone: backup.microphone, replacing: unusedAudioURL)
+            await continueRun(with: result, dictionarySnapshot: dictionarySnapshot)
+        }
     }
 
     func cancelRecording() {
@@ -846,55 +987,25 @@ final class AppState: ObservableObject {
             return
         }
 
-        unregisterCancelHotKey?()
-        unregisterWalkieTalkieLatchHotKey?()
-        activeRealtimeStartupTask?.cancel()
-        activeRealtimeStartupTask = nil
-        activeStartID = nil
-        activeStartIsTriggerManaged = false
+        unregisterActiveRecordingHotKeys()
+        clearActiveRecordingIdentity()
         isStartingRecording = false
-        activeRecordingID = nil
-        activeProcessingRecordingID = nil
-        activeMicrophoneResolution = nil
-        activeMicrophoneHealthMonitor = nil
-        let audioURL = environment.recording.stopRecording()
-        endMicrophoneUseLock()
-        realtimeAudioSink.clear()
-        if let audioURL {
-            try? FileManager.default.removeItem(at: audioURL)
-        }
-        discardActiveArchiveDraftIfNeeded()
-        session = .empty
-        showRawTranscript = false
-        phase = .idle
-        processingVisualState = .idle
-        recordingStartedAt = nil
-        walkieTalkieIsLatchedForDisplay = false
-        statusMessage = "Recording cancelled."
-        hideProcessingSignal?()
-        prewarmRecordingStartResources()
+        let audioURL = stopRecorderAndReleaseMicrophone()
+        cancelRecordingHandle()
+        finishCancelledRecording(removing: audioURL)
     }
 
     private func cancelActiveRecording() {
         guard case .recording = phase else { return }
-        unregisterCancelHotKey?()
-        unregisterWalkieTalkieLatchHotKey?()
-        activeRealtimeStartupTask?.cancel()
-        activeRealtimeStartupTask = nil
-        activeStartID = nil
-        activeStartIsTriggerManaged = false
-        activeRecordingID = nil
-        activeProcessingRecordingID = nil
-        activeMicrophoneResolution = nil
-        activeMicrophoneHealthMonitor = nil
-        let streamingTranscriber = activeStreamingTranscriber
-        activeStreamingTranscriber = nil
-        let audioURL = environment.recording.stopRecording()
-        endMicrophoneUseLock()
-        realtimeAudioSink.clear()
-        if let streamingTranscriber {
-            Task { await streamingTranscriber.cancel() }
-        }
+        unregisterActiveRecordingHotKeys()
+        clearActiveRecordingIdentity()
+        cancelRecordingHandle()
+        let audioURL = stopRecorderAndReleaseMicrophone()
+        finishCancelledRecording(removing: audioURL)
+    }
+
+    /// The end of both cancel paths: delete the audio and draft, then show the idle state.
+    private func finishCancelledRecording(removing audioURL: URL?) {
         if let audioURL {
             try? FileManager.default.removeItem(at: audioURL)
         }
@@ -910,19 +1021,80 @@ final class AppState: ObservableObject {
         prewarmRecordingStartResources()
     }
 
+    private func unregisterActiveRecordingHotKeys() {
+        unregisterCancelHotKey?()
+        unregisterWalkieTalkieLatchHotKey?()
+    }
+
+    /// Forgets the start and the recording in flight.
+    private func clearActiveRecordingIdentity() {
+        activeStartID = nil
+        activeStartIsTriggerManaged = false
+        activeRecordingID = nil
+        activeProcessingRecordingID = nil
+        microphoneRecovery.recordingEnded()
+    }
+
+    private func stopRecorderAndReleaseMicrophone() -> URL? {
+        let audioURL = environment.recording.stopRecording()
+        discardBackupMicrophone()
+        endMicrophoneUseLock()
+        return audioURL
+    }
+
+    /// Ends the silence watch and the backup microphone of the recording in flight. Returns the
+    /// stopping backup, or nil when the recording had none.
+    private func endBackupMicrophone() -> StoppedBackupMicrophone? {
+        let primaryWasSilent = silentMicrophoneWarningShown
+        endSilenceWatchChecks()
+        activeSilenceWatch = nil
+        silentMicrophoneWarningShown = false
+        guard let backup = activeBackupMicrophone else { return nil }
+        activeBackupMicrophone = nil
+        return StoppedBackupMicrophone(
+            microphone: backup.microphone,
+            stop: environment.backupRecording.stop(),
+            primaryWasSilent: primaryWasSilent
+        )
+    }
+
+    /// Ends the silence watch and the backup microphone of the recording in flight and deletes
+    /// the backup file.
+    private func discardBackupMicrophone() {
+        endBackupMicrophone()?.stop.discard()
+    }
+
+    private func cancelRecordingHandle() {
+        recordingEventGeneration += 1
+        activeRecordingHandle?.cancel()
+        activeRecordingHandle = nil
+    }
+
+    private func cancelLiveTranscription(recordingHandle: (any RecordingSessionHandle)?) {
+        recordingEventGeneration += 1
+        recordingHandle?.cancel()
+    }
+
     func copyDisplayText() {
-        copyToPasteboard(displayText)
+        let text = displayText
+        copyToPasteboard(text)
         statusMessage = "Copied."
+        recordDelivery(text, via: "manual-copy")
     }
 
     func pasteDisplayText() {
         let text = displayText
-        do {
-            try environment.delivery.pasteManually(text)
-            statusMessage = "Pasted."
-        } catch {
-            copyToPasteboard(text)
-            statusMessage = "Copied. Enable Accessibility for AutoImproveRecorder in System Settings to paste automatically."
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                try await environment.delivery.pasteManually(text)
+                statusMessage = "Pasted."
+                recordDelivery(text, via: "manual-paste")
+            } catch {
+                copyToPasteboard(text)
+                statusMessage = "Copied. Enable Accessibility for Auto Improve Recorder in System Settings to paste automatically."
+                recordDelivery(text, via: "manual-copy")
+            }
         }
     }
 
@@ -937,7 +1109,7 @@ final class AppState: ObservableObject {
         } else {
             session.improvedText = text
         }
-        persistTranscriptArchive(transcriptionEngineName: nil)
+        persistTranscriptArchive()
     }
 
     func openSettings() {
@@ -987,24 +1159,36 @@ final class AppState: ObservableObject {
 
             let recordingID = UUID()
             let archiveDraft = try consumePreparedArchiveDraft(createdAt: requestedAt)
+            dictionaryStore.reloadLexicon()
             let dictionarySnapshot = dictionaryStore.currentSnapshotString
+            let transcriptionVocabulary = dictionaryStore.transcriptionVocabularyString
             activeArchiveDraft = archiveDraft
-            let shouldPrepareRealtime = transcriptionMode == .fastest
-            let shouldBufferRealtimeAudio = shouldPrepareRealtime &&
-                !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            realtimeAudioSink.reset(bufferPendingAudio: shouldBufferRealtimeAudio)
+            let recordingMode = transcriptionMode
+            let recordingStatus = AIRTranscriberCatalog.recordingStatus(for: recordingMode, apiKeyAtStart: apiKey)
+            let recordingHandle = beginRecordingHandle(
+                mode: recordingMode,
+                dictionarySnapshot: transcriptionVocabulary,
+                attachedToCapture: true
+            )
+            activeRecordingHandle = recordingHandle
+            // With the switch off there is no silence watch and no backup.
+            activeSilenceWatch = environment.backupMicrophoneRecordingEnabled()
+                ? MicrophoneSilenceWatch(configuration: environment.silenceWatchConfiguration)
+                : nil
+            silentMicrophoneWarningShown = false
+            usedBackupRecording = nil
             let audioURL: URL
-            let audioSink = realtimeAudioSink
             do {
                 let microphoneResolution = try resolveMicrophoneForRecording()
                 audioURL = try startAudioRecorder(
                     at: archiveDraft.audioURL,
+                    recordingID: recordingID,
                     initialResolution: microphoneResolution,
-                    audioSink: audioSink,
+                    recordingHandle: recordingHandle,
                     requestedAt: requestedAt
                 )
             } catch {
-                realtimeAudioSink.clear()
+                cancelRecordingHandle()
                 throw error
             }
             guard activeStartID == startID, case .starting = phase else { return }
@@ -1016,16 +1200,13 @@ final class AppState: ObservableObject {
                 improvedText: "",
                 message: nil,
                 improveFailed: false,
-                dictionarySnapshot: dictionarySnapshot
+                dictionarySnapshot: dictionarySnapshot,
+                transcriptionVocabulary: transcriptionVocabulary
             )
+            sessionTranscriptionMode = recordingMode
+            sessionTranscriptionEngineName = nil
             showRawTranscript = false
-            if shouldPrepareRealtime {
-                statusMessage = shouldBufferRealtimeAudio
-                    ? "Recording. Preparing OpenAI realtime transcription."
-                    : "Recording for Parakeet fallback."
-            } else {
-                statusMessage = nil
-            }
+            statusMessage = recordingStatus
             phase = .recording(audioURL)
             processingVisualState = .recording
             let beganAt = Date()
@@ -1040,18 +1221,18 @@ final class AppState: ObservableObject {
                 handleRecordingTriggerEvent(.externalRecordingBegan(recordingID: recordingID, beganAt: beganAt))
             }
             guard case .recording = phase else { return }
+            if activeSpaceLatchRegistrationFailed &&
+                recordingTriggerBehavior == .holdToTalk &&
+                !walkieTalkieIsLatchedForDisplay {
+                statusMessage = "Space latch unavailable; keep holding to record."
+            }
             showProcessingSignal?(.recording)
             logRecordingStartup("audio engine started and recording UI shown", requestedAt: requestedAt)
+            beginSilenceWatchChecks()
+            startBackupMicrophoneIfEligible(mainRecordingURL: audioURL)
+            prewarmEnginesForActiveModes()
 
-            if shouldPrepareRealtime {
-                activeRealtimeStartupTask = Task { [weak self] in
-                    await self?.prepareRealtimeTranscriberForActiveRecording(
-                        recordingID: recordingID,
-                        dictionarySnapshot: dictionarySnapshot,
-                        requestedAt: requestedAt
-                    )
-                }
-            }
+            prepareRecordingHandle(recordingHandle)
         } catch {
             recordDiagnosticEvent(
                 subsystem: .microphone,
@@ -1062,10 +1243,8 @@ final class AppState: ObservableObject {
             )
             discardActiveArchiveDraftIfNeeded()
             activeRecordingID = nil
-            activeMicrophoneResolution = nil
-            activeMicrophoneHealthMonitor = nil
-            activeRealtimeStartupTask = nil
-            realtimeAudioSink.clear()
+            microphoneRecovery.recordingEnded()
+            cancelRecordingHandle()
             handleRecordingTriggerEvent(.startFailed(startID: startID, error: error.localizedDescription, at: Date()))
             failWithMessage(error.localizedDescription)
         }
@@ -1073,10 +1252,9 @@ final class AppState: ObservableObject {
 
     private func resolveMicrophoneForRecording() throws -> MicrophoneResolution {
         refreshMicrophones()
-        let resolution = try MicrophoneResolver.resolve(
+        let resolution = try microphoneRecovery.resolve(
             preferences: .fromPreferredMicrophoneID(preferredMicrophoneID),
             devices: availableMicrophones,
-            quarantinedUntil: quarantinedMicrophoneIDs,
             now: Date()
         )
         microphoneDeviceLogger.info(
@@ -1090,16 +1268,18 @@ final class AppState: ObservableObject {
 
     private func startAudioRecorder(
         at audioURL: URL,
+        recordingID: UUID,
         initialResolution: MicrophoneResolution,
-        audioSink: OpenAIRealtimeAudioSink,
+        recordingHandle: any RecordingSessionHandle,
         requestedAt: Date
     ) throws -> URL {
         do {
-            activeMicrophoneResolution = initialResolution
+            microphoneRecovery.recordingStarted(on: initialResolution)
             return try startAudioRecorderOnce(
                 at: audioURL,
+                recordingID: recordingID,
                 resolution: initialResolution,
-                audioSink: audioSink,
+                recordingHandle: recordingHandle,
                 requestedAt: requestedAt
             )
         } catch {
@@ -1109,48 +1289,77 @@ final class AppState: ObservableObject {
 
             quarantineMicrophone(initialResolution.device.id, reason: error.localizedDescription)
             let fallbackResolution = try resolveMicrophoneForRecording()
-            guard fallbackResolution.device.id != initialResolution.device.id else {
+            guard case .restart = MicrophoneRecovery.restartCommand(
+                replacing: initialResolution,
+                with: fallbackResolution
+            ) else {
                 throw error
             }
 
             statusMessage = "Could not use \(initialResolution.device.name); using \(fallbackResolution.device.name)."
-            activeMicrophoneResolution = fallbackResolution
+            microphoneRecovery.recordingStarted(on: fallbackResolution)
             return try startAudioRecorderOnce(
                 at: audioURL,
+                recordingID: recordingID,
                 resolution: fallbackResolution,
-                audioSink: audioSink,
+                recordingHandle: recordingHandle,
                 requestedAt: requestedAt
             )
         }
     }
 
+    /// `recordingID` is the recording this recorder run belongs to. The stream handler sends it
+    /// with each microphone health event.
     private func startAudioRecorderOnce(
         at audioURL: URL,
+        recordingID: UUID,
         resolution: MicrophoneResolution,
-        audioSink: OpenAIRealtimeAudioSink,
+        recordingHandle: any RecordingSessionHandle,
         requestedAt: Date
     ) throws -> URL {
         let healthMonitor = shouldMonitorForPreferredMicrophoneHealth(resolution)
             ? MicrophoneHealthMonitor(configuration: .startupFallback)
             : nil
-        activeMicrophoneHealthMonitor = healthMonitor
+        let silenceWatch = activeSilenceWatch
+        let microphoneName = BackupMicrophoneChooser.resolvedPrimary(
+            resolution.device,
+            devices: availableMicrophones
+        )?.name ?? resolution.device.name
         return try environment.recording.startRecording(
             at: audioURL,
             microphone: resolution.device,
             bufferSize: environment.recording.fastStartBufferSize,
-            streamHandler: { [weak self] buffer in
-                if let event = healthMonitor?.observe(buffer) {
+            streamHandler: { [weak self] captureEvent in
+                switch captureEvent {
+                case .captured(let captured):
+                    if let silenceWatch, let report = silenceWatch.observePrimary(captured.buffer) {
+                        Task { @MainActor [weak self] in
+                            self?.handleSilentMicrophoneReport(
+                                report,
+                                from: silenceWatch,
+                                microphoneName: microphoneName
+                            )
+                        }
+                    }
+                    if let event = healthMonitor?.observe(captured.buffer) {
+                        Task { @MainActor [weak self] in
+                            self?.handleMicrophoneHealthEvent(
+                                event,
+                                recordingID: recordingID,
+                                resolution: resolution,
+                                audioURL: audioURL,
+                                requestedAt: requestedAt
+                            )
+                        }
+                    }
+                    recordingHandle.receive(captureEvent)
+                case .failure(let failure):
+                    recordingHandle.receive(captureEvent)
                     Task { @MainActor [weak self] in
-                        self?.handleMicrophoneHealthEvent(
-                            event,
-                            resolution: resolution,
-                            audioURL: audioURL,
-                            audioSink: audioSink,
-                            requestedAt: requestedAt
-                        )
+                        guard let self, case .recording = self.phase else { return }
+                        self.statusMessage = "Recording degraded. Stop and try again. \(failure.localizedDescription)"
                     }
                 }
-                audioSink.appendAudioBuffer(buffer)
             },
             onFirstBuffer: {
                 NSLog(
@@ -1161,32 +1370,198 @@ final class AppState: ObservableObject {
         )
     }
 
+    /// Opens the backup microphone beside an external main microphone. The main recorder is
+    /// already running; the backup opens on its own queue and this returns at once.
+    private func startBackupMicrophoneIfEligible(mainRecordingURL: URL) {
+        guard let silenceWatch = activeSilenceWatch,
+              let resolution = microphoneRecovery.activeResolution,
+              let microphone = BackupMicrophoneChooser.chooseBackup(
+                  primary: resolution.device,
+                  devices: availableMicrophones,
+                  isEnabled: true
+              ) else {
+            return
+        }
+        let id = UUID()
+        let microphoneName = BackupMicrophoneChooser.resolvedPrimary(
+            resolution.device,
+            devices: availableMicrophones
+        )?.name ?? resolution.device.name
+        activeBackupMicrophone = ActiveBackupMicrophone(id: id, microphone: microphone)
+        environment.backupRecording.start(
+            at: BackupMicrophoneRecorder.backupURL(forMainRecording: mainRecordingURL),
+            microphone: microphone,
+            onBuffer: { [weak self] buffer in
+                // The backup's buffers show when the main microphone has stopped delivering any.
+                guard let report = silenceWatch.observeBackup(buffer) else { return }
+                Task { @MainActor [weak self] in
+                    self?.handleSilentMicrophoneReport(report, from: silenceWatch, microphoneName: microphoneName)
+                }
+            },
+            onResult: { [weak self] started in
+                Task { @MainActor [weak self] in
+                    self?.backupMicrophoneStartFinished(id: id, started: started, silenceWatch: silenceWatch)
+                }
+            }
+        )
+    }
+
+    /// A backup that failed to open is forgotten; the recording continues without one. A startup
+    /// recovery that was skipped because of that backup runs now.
+    private func backupMicrophoneStartFinished(id: UUID, started: Bool, silenceWatch: MicrophoneSilenceWatch) {
+        guard activeBackupMicrophone?.id == id else { return }
+        if started {
+            activeBackupMicrophone?.isRunning = true
+            silenceWatch.backupStarted()
+        } else {
+            let skippedRecovery = activeBackupMicrophone?.skippedRecovery
+            activeBackupMicrophone = nil
+            if let skippedRecovery, let skipped = microphoneRecovery.backupFailedToOpen() {
+                handleMicrophoneHealthEvent(
+                    skipped.event,
+                    recordingID: skippedRecovery.recordingID,
+                    resolution: skipped.resolution,
+                    audioURL: skippedRecovery.audioURL,
+                    requestedAt: skippedRecovery.requestedAt
+                )
+            }
+        }
+    }
+
+    /// Checks once a second that the main microphone is still delivering buffers, until
+    /// `endSilenceWatchChecks`. The first check, made here, marks when the recording started.
+    private func beginSilenceWatchChecks() {
+        silenceWatchCheckTask?.cancel()
+        silenceWatchCheckTask = nil
+        guard let silenceWatch = activeSilenceWatch else { return }
+        _ = silenceWatch.checkPrimaryDelivery(now: Date())
+        let interval = UInt64(environment.silenceWatchCheckInterval * 1_000_000_000)
+        silenceWatchCheckTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: interval)
+                guard !Task.isCancelled, let self else { return }
+                guard let report = silenceWatch.checkPrimaryDelivery(now: Date()),
+                      let resolution = self.microphoneRecovery.activeResolution else {
+                    continue
+                }
+                let microphoneName = BackupMicrophoneChooser.resolvedPrimary(
+                    resolution.device,
+                    devices: self.availableMicrophones
+                )?.name ?? resolution.device.name
+                self.handleSilentMicrophoneReport(report, from: silenceWatch, microphoneName: microphoneName)
+            }
+        }
+    }
+
+    private func endSilenceWatchChecks() {
+        silenceWatchCheckTask?.cancel()
+        silenceWatchCheckTask = nil
+    }
+
+    /// Shows the silent microphone warning once per recording. The recording keeps running.
+    private func handleSilentMicrophoneReport(
+        _ report: MicrophoneSilenceReport,
+        from silenceWatch: MicrophoneSilenceWatch,
+        microphoneName: String
+    ) {
+        guard silenceWatch === activeSilenceWatch,
+              !silentMicrophoneWarningShown,
+              case .recording = phase else {
+            return
+        }
+        silentMicrophoneWarningShown = true
+        let backupName = activeBackupMicrophone?.isRunning == true ? activeBackupMicrophone?.microphone.name : nil
+        microphoneDeviceLogger.info(
+            "Silent microphone report kind=\(report.kind.rawValue, privacy: .public) name=\(microphoneName, privacy: .public) backup=\(backupName ?? "none", privacy: .public)"
+        )
+        if let backupName {
+            statusMessage = "No sound from \(microphoneName). Recording from \(backupName)."
+        } else {
+            statusMessage = "No sound from \(microphoneName)."
+        }
+        environment.playMicrophoneWarningSound()
+    }
+
+    /// The mode of the session's recording, or the setting when no recording has started yet.
+    private var recordingMode: TranscriptionMode {
+        sessionTranscriptionMode ?? transcriptionMode
+    }
+
+    /// Starts the transcription work for one recording. The API key is read when the handle
+    /// finishes, as it was before handles.
+    private func beginRecordingHandle(
+        mode: TranscriptionMode,
+        dictionarySnapshot: String,
+        attachedToCapture: Bool
+    ) -> any RecordingSessionHandle {
+        let generation = recordingEventGeneration
+        return environment.transcription.beginRecording(
+            RecordingTranscriptionRequest(
+                mode: mode,
+                dictionarySnapshot: dictionarySnapshot,
+                attachedToCapture: attachedToCapture,
+                apiKeyAtStart: apiKey,
+                apiKey: { [weak self] in
+                    await MainActor.run { self?.apiKey ?? "" }
+                }
+            ),
+            events: { [weak self] event in
+                await MainActor.run {
+                    guard let self, self.recordingEventGeneration == generation else { return }
+                    switch event {
+                    case .status(let message):
+                        self.statusMessage = message
+                    case .diagnostic(let diagnostic):
+                        self.recordOpenAIRealtimeDiagnostics(
+                            OpenAIRealtimeDiagnostics(summary: diagnostic.summary, details: diagnostic.details)
+                        )
+                    }
+                }
+            }
+        )
+    }
+
     private func shouldMonitorForPreferredMicrophoneHealth(_ resolution: MicrophoneResolution) -> Bool {
-        !resolution.usedFallback &&
-            !resolution.device.id.isEmpty &&
-            preferredMicrophoneID.trimmingCharacters(in: .whitespacesAndNewlines) == resolution.device.id
+        MicrophoneRecovery.shouldMonitor(
+            resolution,
+            preferredMicrophoneID: preferredMicrophoneID.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
     }
 
     private func handleMicrophoneHealthEvent(
         _ event: MicrophoneHealthEvent,
+        recordingID: UUID,
         resolution: MicrophoneResolution,
         audioURL: URL,
-        audioSink: OpenAIRealtimeAudioSink,
         requestedAt: Date
     ) {
-        guard event.kind == .exactSilentStartup,
-              !microphoneRecoveryInProgress,
-              case .recording = phase,
-              activeMicrophoneResolution == resolution,
-              shouldMonitorForPreferredMicrophoneHealth(resolution) else {
+        // An event from an earlier recording is dropped, even when that recording used the same
+        // microphone and its resolution equals the active one.
+        guard recordingID == activeRecordingID else { return }
+        // A recording with a backup keeps its main microphone; the backup holds the audio. The
+        // event is kept, and the recovery runs if that backup then fails to open.
+        guard activeBackupMicrophone == nil else {
+            microphoneRecovery.silentMicrophoneSkippedForBackup(event, on: resolution)
+            activeBackupMicrophone?.skippedRecovery = (recordingID, audioURL, requestedAt)
+            return
+        }
+        guard case .recording = phase,
+              case .recover(let quarantinedUntil) = microphoneRecovery.silentMicrophoneReported(
+                  event,
+                  on: resolution,
+                  recheckingPreferredMicrophoneID: preferredMicrophoneID
+                      .trimmingCharacters(in: .whitespacesAndNewlines),
+                  now: Date()
+              ) else {
             return
         }
 
         recoverFromSilentPreferredMicrophone(
             resolution,
             event: event,
+            quarantinedUntil: quarantinedUntil,
             audioURL: audioURL,
-            audioSink: audioSink,
+            recordingID: recordingID,
             requestedAt: requestedAt
         )
     }
@@ -1194,63 +1569,53 @@ final class AppState: ObservableObject {
     private func recoverFromSilentPreferredMicrophone(
         _ resolution: MicrophoneResolution,
         event: MicrophoneHealthEvent,
+        quarantinedUntil: Date,
         audioURL: URL,
-        audioSink: OpenAIRealtimeAudioSink,
+        recordingID: UUID,
         requestedAt: Date
     ) {
-        microphoneRecoveryInProgress = true
-        defer { microphoneRecoveryInProgress = false }
+        defer { microphoneRecovery.recoveryFinished() }
 
         let observedMS = Int(event.observedDuration * 1000)
         let reason = "Exact digital silence for \(observedMS)ms across \(event.silentBufferCount) startup buffers."
-        quarantineMicrophone(resolution.device.id, reason: reason)
+        noteMicrophoneQuarantined(resolution.device.id, until: quarantinedUntil, reason: reason)
 
         do {
             let fallbackResolution = try resolveMicrophoneForRecording()
-            guard fallbackResolution.device.id != resolution.device.id else {
+            guard case .restart = MicrophoneRecovery.restartCommand(
+                replacing: resolution,
+                with: fallbackResolution
+            ) else {
                 return
             }
 
-            activeRealtimeStartupTask?.cancel()
-            activeRealtimeStartupTask = nil
-            if let streamingTranscriber = activeStreamingTranscriber {
-                activeStreamingTranscriber = nil
-                Task { await streamingTranscriber.cancel() }
-            }
-
+            // The old handle only heard digital silence; start a new one in
+            // the same mode alongside the fallback microphone.
+            cancelRecordingHandle()
             _ = environment.recording.stopRecording()
-            activeMicrophoneHealthMonitor = nil
-            realtimeAudioSink.clear()
 
-            let shouldPrepareRealtime = transcriptionMode == .fastest
-            let shouldBufferRealtimeAudio = shouldPrepareRealtime &&
-                !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            audioSink.reset(bufferPendingAudio: shouldBufferRealtimeAudio)
+            let recordingHandle = beginRecordingHandle(
+                mode: recordingMode,
+                dictionarySnapshot: session.transcriptionVocabulary,
+                attachedToCapture: true
+            )
+            activeRecordingHandle = recordingHandle
 
             statusMessage = "Could not hear \(resolution.device.name); using \(fallbackResolution.device.name)."
-            activeMicrophoneResolution = fallbackResolution
+            microphoneRecovery.recordingStarted(on: fallbackResolution)
             _ = try startAudioRecorderOnce(
                 at: audioURL,
+                recordingID: recordingID,
                 resolution: fallbackResolution,
-                audioSink: audioSink,
+                recordingHandle: recordingHandle,
                 requestedAt: requestedAt
             )
             microphoneDeviceLogger.info(
                 "Recovered from exact-silent microphone id=\(resolution.device.id, privacy: .public) fallbackID=\(fallbackResolution.device.id, privacy: .public) fallbackName=\(fallbackResolution.device.name, privacy: .public)"
             )
 
-            if shouldPrepareRealtime, let recordingID = activeRecordingID {
-                let dictionarySnapshot = session.dictionarySnapshot
-                activeRealtimeStartupTask = Task { [weak self] in
-                    await self?.prepareRealtimeTranscriberForActiveRecording(
-                        recordingID: recordingID,
-                        dictionarySnapshot: dictionarySnapshot,
-                        requestedAt: requestedAt
-                    )
-                }
-            }
+            prepareRecordingHandle(recordingHandle)
         } catch {
-            activeMicrophoneHealthMonitor = nil
             failWithMessage(error.localizedDescription)
         }
     }
@@ -1266,102 +1631,44 @@ final class AppState: ObservableObject {
     }
 
     private func quarantineMicrophone(_ id: String, reason: String) {
-        guard !id.isEmpty else { return }
-        let expiresAt = Date().addingTimeInterval(microphoneRetryCooldown)
-        quarantinedMicrophoneIDs[id] = expiresAt
+        guard let expiresAt = microphoneRecovery.quarantine(id, now: Date()) else { return }
+        noteMicrophoneQuarantined(id, until: expiresAt, reason: reason)
+    }
+
+    private func noteMicrophoneQuarantined(_ id: String, until expiresAt: Date, reason: String) {
         updateResolvedMicrophoneSummary()
         microphoneDeviceLogger.info(
             "Quarantined microphone id=\(id, privacy: .public) until=\(expiresAt.ISO8601Format(), privacy: .public) reason=\(reason, privacy: .public)"
         )
     }
 
-    private func prepareRealtimeTranscriberForActiveRecording(
-        recordingID: UUID,
-        dictionarySnapshot: String,
-        requestedAt: Date
-    ) async {
-        let selectedMode = transcriptionMode
-        let selectedAPIKey = apiKey
-        let streamingTranscriber = await environment.transcription.prepareRealtimeIfNeeded(
-            mode: selectedMode,
-            apiKey: selectedAPIKey,
-            dictionarySnapshot: dictionarySnapshot,
-            status: { [weak self] message in
-                await MainActor.run {
-                    self?.statusMessage = message
-                }
-            },
-            recordDiagnostics: { [weak self] diagnostics in
-                await MainActor.run {
-                    self?.recordOpenAIRealtimeDiagnostics(diagnostics)
-                }
+    /// Lets the handle start the work that needs capture to be running. The status it returns is
+    /// shown only while the same handle is still recording.
+    private func prepareRecordingHandle(_ recordingHandle: any RecordingSessionHandle) {
+        Task { [weak self] in
+            guard let status = await recordingHandle.prepare(),
+                  let self,
+                  self.activeRecordingHandle === recordingHandle,
+                  case .recording = self.phase else {
+                return
             }
-        )
-
-        guard !Task.isCancelled,
-              activeRecordingID == recordingID,
-              case .recording = phase else {
-            if let streamingTranscriber {
-                await streamingTranscriber.cancel()
-            }
-            return
+            self.statusMessage = status
         }
-
-        activeRealtimeStartupTask = nil
-        guard let streamingTranscriber else {
-            realtimeAudioSink.discardPendingAudio()
-            return
-        }
-
-        activeStreamingTranscriber = streamingTranscriber
-        let replayedBufferCount = realtimeAudioSink.setTranscriber(streamingTranscriber)
-        statusMessage = "Recording with OpenAI realtime transcription."
-        NSLog(
-            "Recording startup: OpenAI realtime ready after %.3fs; replayed %d buffered audio buffers.",
-            Date().timeIntervalSince(requestedAt),
-            replayedBufferCount
-        )
     }
 
-    private func processRecording(audioURL: URL, streamingTranscriber: OpenAIRealtimeTranscriber?) async {
+    private func processRecording(
+        audioURL: URL,
+        recordingHandle: (any RecordingSessionHandle)? = nil,
+        backup: StoppedBackupMicrophone? = nil
+    ) async {
         do {
             let dictionarySnapshot = session.dictionarySnapshot
-            let result = try await transcribe(
+            let result = try await transcribeChoosingBackup(
                 audioURL: audioURL,
-                streamingTranscriber: streamingTranscriber,
-                dictionarySnapshot: dictionarySnapshot
+                recordingHandle: recordingHandle,
+                backup: backup
             )
-            let transcript = TranscriptTextNormalizer.normalizeSpokenNumbers(
-                in: dictionaryStore.applyReplacementRules(to: result.text)
-            )
-            session.rawTranscript = transcript
-            session.improvedText = ""
-            session.message = nil
-            session.improveFailed = false
-            session.dictionarySnapshot = dictionarySnapshot
-            persistTranscriptArchive(transcriptionEngineName: result.engineName)
-
-            switch autoImproveMode {
-            case .off:
-                phase = .ready
-                showRawTranscript = true
-                statusMessage = "Showing raw transcript."
-                finishProcessing()
-            case .manual:
-                phase = .ready
-                showRawTranscript = true
-                statusMessage = "Transcript ready."
-                finishProcessing()
-            case .automatic:
-                if wordCount(transcript) >= thresholdWords {
-                    await improveCurrentTranscript(force: false)
-                } else {
-                    phase = .ready
-                    showRawTranscript = true
-                    statusMessage = "Transcript ready."
-                    finishProcessing()
-                }
-            }
+            await continueRun(with: result, dictionarySnapshot: dictionarySnapshot)
         } catch {
             session = TranscriptSession(
                 audioURL: audioURL,
@@ -1371,39 +1678,146 @@ final class AppState: ObservableObject {
                 improveFailed: false,
                 dictionarySnapshot: session.dictionarySnapshot
             )
-            persistTranscriptArchive(transcriptionEngineName: nil)
+            persistTranscriptArchive()
             phase = .failed
             processingVisualState = .failed
             statusMessage = error.localizedDescription
-            finishProcessing()
+            // Only the preview part of `failWithMessage`: stop already ended the recording's hot
+            // keys, backup and microphone lock, and `finishProcessing` ends the trigger's
+            // processing state and hides the signal.
+            showPreview?()
+            await finishProcessing()
         }
+    }
+
+    /// The run after transcription: replacement rules, the archive save, then improvement or delivery.
+    private func continueRun(with result: TranscriptionResult, dictionarySnapshot: String) async {
+        let outcome = TranscriptPostProcessor.process(
+            result.text,
+            rules: dictionaryStore.effectiveReplacementRules
+        )
+        let transcript = outcome.final
+        session.rawTranscript = transcript
+        session.recognizerTranscript = outcome.recognizer
+        session.postRulesTranscript = outcome.afterRules
+        session.improvedText = ""
+        session.message = nil
+        session.improveFailed = false
+        session.dictionarySnapshot = dictionarySnapshot
+        sessionTranscriptionEngineName = result.engineName
+        persistTranscriptArchive()
+
+        switch autoImproveMode {
+        case .off:
+            phase = .ready
+            showRawTranscript = true
+            statusMessage = "Showing raw transcript."
+            await finishProcessing()
+        case .manual:
+            phase = .ready
+            showRawTranscript = true
+            statusMessage = "Transcript ready."
+            await finishProcessing()
+        case .automatic:
+            if wordCount(transcript) >= thresholdWords {
+                await improveCurrentTranscript(force: false)
+            } else {
+                phase = .ready
+                showRawTranscript = true
+                statusMessage = "Transcript ready."
+                await finishProcessing()
+            }
+        }
+    }
+
+    /// Transcribes the main recording. When that fails, gives no words, or the silence watch
+    /// reported, it transcribes the backup too and returns the backup's result when it has more
+    /// words. A backup that is not needed is deleted without waiting for its file.
+    private func transcribeChoosingBackup(
+        audioURL: URL,
+        recordingHandle: (any RecordingSessionHandle)?,
+        backup: StoppedBackupMicrophone?
+    ) async throws -> TranscriptionResult {
+        let vocabulary = session.transcriptionVocabulary
+        let main: Result<TranscriptionResult, Error>
+        do {
+            main = .success(try await transcribe(
+                audioURL: audioURL,
+                recordingHandle: recordingHandle,
+                dictionarySnapshot: vocabulary
+            ))
+        } catch {
+            main = .failure(error)
+        }
+        guard let backup else { return try main.get() }
+
+        let mainText = (try? main.get()).map(finalTranscript(of:)) ?? ""
+        guard BackupTranscriptChoice.wordCount(mainText) == 0 || backup.primaryWasSilent else {
+            backup.stop.discard()
+            return try main.get()
+        }
+        guard let backupURL = await backup.stop.finishedFile() else { return try main.get() }
+        do {
+            // No streaming transcriber and no live session: the backup is read from its file.
+            let backupResult = try await transcribe(
+                audioURL: backupURL,
+                recordingHandle: nil,
+                dictionarySnapshot: vocabulary
+            )
+            if BackupTranscriptChoice.prefersBackup(
+                mainText: mainText,
+                backupText: finalTranscript(of: backupResult)
+            ) {
+                useBackupRecording(backupURL, microphone: backup.microphone, replacing: audioURL)
+                return backupResult
+            }
+            try? FileManager.default.removeItem(at: backupURL)
+        } catch {
+            // The backup file stays when it could not be read, so no audio is lost.
+            NSLog("Backup microphone recording could not be transcribed: %@", error.localizedDescription)
+        }
+        return try main.get()
+    }
+
+    /// The text the run would use for `result`: the recognizer's text after the replacement rules.
+    private func finalTranscript(of result: TranscriptionResult) -> String {
+        TranscriptPostProcessor.process(result.text, rules: dictionaryStore.effectiveReplacementRules).final
+    }
+
+    /// Makes the backup recording the session's audio and deletes the main recording's file.
+    private func useBackupRecording(_ backupURL: URL, microphone: AudioInputDevice, replacing mainAudioURL: URL?) {
+        usedBackupRecording = (microphone, backupURL)
+        session.audioURL = backupURL
+        if let mainAudioURL {
+            try? FileManager.default.removeItem(at: mainAudioURL)
+        }
+        microphoneDeviceLogger.info(
+            "Using the backup microphone recording name=\(microphone.name, privacy: .public)"
+        )
+    }
+
+    /// Adds the backup microphone note to the status when the session's text came from the backup.
+    private func appendBackupMicrophoneNoteToStatus() {
+        guard let microphone = usedBackupRecording?.microphone else { return }
+        let note = "Used the backup microphone (\(microphone.name))."
+        let current = statusMessage?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !current.hasSuffix(note) else { return }
+        statusMessage = current.isEmpty ? note : "\(current) \(note)"
     }
 
     private func transcribe(
         audioURL: URL,
-        streamingTranscriber: OpenAIRealtimeTranscriber?,
+        recordingHandle: (any RecordingSessionHandle)?,
         dictionarySnapshot: String
     ) async throws -> TranscriptionResult {
-        let request = TranscriptionServiceRequest(
-            audioURL: audioURL,
-            mode: transcriptionMode,
-            apiKey: apiKey,
+        // Without a handle this is a second transcription of a saved file. It gets a handle in
+        // the recording's mode that was never attached to capture.
+        let handle = recordingHandle ?? beginRecordingHandle(
+            mode: recordingMode,
             dictionarySnapshot: dictionarySnapshot,
-            streamingTranscriber: streamingTranscriber
+            attachedToCapture: false
         )
-        return try await environment.transcription.transcribe(
-            request,
-            status: { [weak self] message in
-                await MainActor.run {
-                    self?.statusMessage = message
-                }
-            },
-            recordDiagnostics: { [weak self] diagnostics in
-                await MainActor.run {
-                    self?.recordOpenAIRealtimeDiagnostics(diagnostics)
-                }
-            }
-        )
+        return try await handle.finish(audioURL: audioURL)
     }
 
     private func improveCurrentTranscript(force: Bool) async {
@@ -1462,7 +1876,7 @@ final class AppState: ObservableObject {
             showRawTranscript = false
             phase = .ready
             statusMessage = "Improved text ready."
-            persistTranscriptArchive(transcriptionEngineName: nil)
+            persistTranscriptArchive()
         } catch {
             session.improvedText = ""
             session.message = "Improve failed; showing raw transcript. \(error.localizedDescription)"
@@ -1470,10 +1884,10 @@ final class AppState: ObservableObject {
             showRawTranscript = true
             phase = .ready
             statusMessage = session.message
-            persistTranscriptArchive(transcriptionEngineName: nil)
+            persistTranscriptArchive()
         }
 
-        finishProcessing()
+        await finishProcessing()
     }
 
     private var cleanupStrength: Int {
@@ -1489,32 +1903,48 @@ final class AppState: ObservableObject {
         }
     }
 
-    private func persistTranscriptArchive(transcriptionEngineName: String?) {
-        guard let archiveDraft = activeArchiveDraft ?? archiveDraftFromSession() else { return }
-        let microphoneResolution = activeMicrophoneResolution
+    private func persistTranscriptArchive() {
+        guard var archiveDraft = activeArchiveDraft ?? archiveDraftFromSession() else { return }
+        let microphoneResolution = microphoneRecovery.activeResolution
+        // When the text came from the backup, the record names the backup's file and microphone.
+        let backup = usedBackupRecording
+        if let backup {
+            archiveDraft = TranscriptArchiveDraft(
+                id: archiveDraft.id,
+                createdAt: archiveDraft.createdAt,
+                directoryURL: archiveDraft.directoryURL,
+                audioURL: backup.audioURL
+            )
+        }
         let content = TranscriptArchiveContent(
             rawTranscript: session.rawTranscript,
             cleanedTranscript: session.improvedText,
             finalTranscript: session.preferredText,
             improveFailed: session.improveFailed,
             message: session.message ?? statusMessage,
-            dictionarySnapshot: session.dictionarySnapshot
+            dictionarySnapshot: session.dictionarySnapshot,
+            recognizerTranscript: session.recognizerTranscript.isEmpty ? nil : session.recognizerTranscript,
+            postRulesTranscript: session.postRulesTranscript.isEmpty ? nil : session.postRulesTranscript,
+            deliveredText: session.deliveredText.isEmpty ? nil : session.deliveredText,
+            deliveredVia: session.deliveredVia.isEmpty ? nil : session.deliveredVia
         )
         let metadata = TranscriptArchiveMetadata(
             updatedAt: Date(),
-            transcriptionMode: transcriptionMode.rawValue,
-            transcriptionEngine: transcriptionEngineName,
+            transcriptionMode: recordingMode.rawValue,
+            transcriptionEngine: sessionTranscriptionEngineName,
             improvementMode: improvementMode.rawValue,
             cleanupMode: outputMode.rawValue,
             autoImproveMode: autoImproveMode.rawValue,
             thresholdWords: thresholdWords,
             microphonePreferenceID: preferredMicrophoneID,
-            microphoneResolvedID: microphoneResolution?.device.id,
-            microphoneResolvedName: microphoneResolution?.device.name,
-            microphoneUsedFallback: microphoneResolution?.usedFallback ?? false,
-            microphoneFallbackReason: microphoneResolution?.usedFallback == true
-                ? microphoneResolution?.reason.rawValue
-                : nil
+            microphoneResolvedID: backup?.microphone.id ?? microphoneResolution?.device.id,
+            microphoneResolvedName: backup?.microphone.name ?? microphoneResolution?.device.name,
+            microphoneUsedFallback: backup != nil || (microphoneResolution?.usedFallback ?? false),
+            microphoneFallbackReason: backup != nil
+                ? "backupMicrophone"
+                : microphoneResolution?.usedFallback == true
+                    ? microphoneResolution?.reason.rawValue
+                    : nil
         )
         let record = environment.archive.record(
             draft: archiveDraft,
@@ -1539,26 +1969,7 @@ final class AppState: ObservableObject {
         )
     }
 
-    private func transcriptionStatusMessage(streamingTranscriber: OpenAIRealtimeTranscriber?) -> String {
-        if streamingTranscriber != nil {
-            return "Finalizing OpenAI streaming transcript."
-        }
-
-        switch transcriptionMode {
-        case .localWhisper:
-            return "Transcribing with local Whisper."
-        case .localParakeetCppFast:
-            return "Transcribing with Parakeet.cpp Fast."
-        case .localParakeetCppRecommended, .fastest:
-            return "Transcribing with Parakeet.cpp Recommended."
-        case .appleLocal:
-            return "Transcribing with Apple Speech."
-        case .openAIAPI:
-            return "Transcribing with OpenAI API."
-        }
-    }
-
-    private func finishProcessing() {
+    private func finishProcessing() async {
         unregisterCancelHotKey?()
         defer {
             let processingRecordingID = activeProcessingRecordingID
@@ -1573,7 +1984,7 @@ final class AppState: ObservableObject {
             statusMessage = "Delivering text."
             showProcessingSignal?(.delivering)
 
-            let deliveryState = completeWithText(text)
+            let deliveryState = await completeWithText(text)
             processingVisualState = deliveryState
             phase = .ready
             flashReadySignal?(deliveryState)
@@ -1583,11 +1994,12 @@ final class AppState: ObservableObject {
             hideProcessingSignal?()
             scheduleVisualReset(after: 0.8)
         }
+        appendBackupMicrophoneNoteToStatus()
     }
 
     @discardableResult
-    private func completeWithText(_ text: String) -> ProcessingVisualState {
-        let result = environment.delivery.deliver(
+    private func completeWithText(_ text: String) async -> ProcessingVisualState {
+        let result = await environment.delivery.deliver(
             DeliveryRequest(
                 text: text,
                 globalSettings: GlobalCompletionSettings(
@@ -1598,7 +2010,30 @@ final class AppState: ObservableObject {
             )
         )
         statusMessage = result.statusMessage
+        if let via = Self.deliveredVia(for: result.outcome) {
+            recordDelivery(text, via: via)
+        }
         return processingVisualState(for: result.outcome)
+    }
+
+    private static func deliveredVia(for outcome: DeliveryOutcome) -> String? {
+        switch outcome {
+        case .pasted:
+            return "auto-paste"
+        case .submitted:
+            return "auto-submit"
+        case .copied:
+            return "auto-copy"
+        case .ready:
+            return nil
+        }
+    }
+
+    /// Records what reached the destination so the archive can compare it with the recogniser's output.
+    private func recordDelivery(_ text: String, via: String) {
+        session.deliveredText = text
+        session.deliveredVia = via
+        persistTranscriptArchive()
     }
 
     private func processingVisualState(for outcome: DeliveryOutcome) -> ProcessingVisualState {
@@ -1660,9 +2095,9 @@ final class AppState: ObservableObject {
     }
 
     private func failWithMessage(_ message: String) {
-        unregisterCancelHotKey?()
-        unregisterWalkieTalkieLatchHotKey?()
+        unregisterActiveRecordingHotKeys()
         resetRecordingTriggerState(reason: "terminal failure: \(message)")
+        discardBackupMicrophone()
         endMicrophoneUseLock()
         session.message = message
         phase = .failed
@@ -1715,12 +2150,13 @@ final class AppState: ObservableObject {
 
     private func beginMicrophoneUseLock(reason: String) {
         microphoneUseLockHeartbeatTask?.cancel()
-        MicrophoneUseLock.write(reason: reason)
+        let microphoneUseLock = environment.microphoneUseLock
+        microphoneUseLock.write(reason: reason)
         microphoneUseLockHeartbeatTask = Task {
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 10_000_000_000)
                 guard !Task.isCancelled else { return }
-                MicrophoneUseLock.write(reason: reason)
+                microphoneUseLock.write(reason: reason)
             }
         }
     }
@@ -1728,7 +2164,7 @@ final class AppState: ObservableObject {
     private func endMicrophoneUseLock() {
         microphoneUseLockHeartbeatTask?.cancel()
         microphoneUseLockHeartbeatTask = nil
-        MicrophoneUseLock.clear()
+        environment.microphoneUseLock.clear()
     }
 
     private func latestOpenAIRealtimeDiagnostics() -> OpenAIRealtimeDiagnostics? {
@@ -1807,203 +2243,5 @@ private extension RecorderPhase {
         case .idle, .transcribing, .improving, .delivering, .ready, .failed:
             return false
         }
-    }
-}
-
-private final class OpenAIRealtimeAudioSink {
-    private let lock = NSLock()
-    private let maxPendingAudioBytes = 8 * 1024 * 1024
-    private var transcriber: OpenAIRealtimeTranscriber?
-    private var shouldBufferPendingAudio = false
-    private var isReplayingPendingAudio = false
-    private var pendingBuffers: BoundedAudioQueue<AVAudioPCMBuffer>
-    private var firstPendingBufferAt: Date?
-    private var maxReplayLagMs: Double = 0
-
-    init() {
-        pendingBuffers = BoundedAudioQueue<AVAudioPCMBuffer>(
-            maxBytes: maxPendingAudioBytes,
-            byteCount: Self.byteCount
-        )
-    }
-
-    func reset(bufferPendingAudio: Bool) {
-        lock.lock()
-        transcriber = nil
-        shouldBufferPendingAudio = bufferPendingAudio
-        isReplayingPendingAudio = false
-        pendingBuffers.reset()
-        firstPendingBufferAt = nil
-        maxReplayLagMs = 0
-        lock.unlock()
-    }
-
-    @discardableResult
-    func setTranscriber(_ transcriber: OpenAIRealtimeTranscriber) -> Int {
-        lock.lock()
-        self.transcriber = transcriber
-        shouldBufferPendingAudio = false
-        isReplayingPendingAudio = true
-        var buffersToReplay = pendingBuffers.snapshot()
-        var replayBaseLagMs = firstPendingBufferAt.map { Date().timeIntervalSince($0) * 1000 } ?? 0
-        pendingBuffers.removeAll(keepingCapacity: true)
-        firstPendingBufferAt = nil
-        lock.unlock()
-
-        var replayedBufferCount = 0
-        while true {
-            for buffer in buffersToReplay {
-                recordReplayLag(for: buffer, baseLagMs: replayBaseLagMs)
-                transcriber.appendAudioBuffer(buffer)
-            }
-            replayedBufferCount += buffersToReplay.count
-
-            lock.lock()
-            if pendingBuffers.isEmpty {
-                let diagnostics = diagnosticsLinesLocked(replayedBufferCount: replayedBufferCount)
-                isReplayingPendingAudio = false
-                lock.unlock()
-                transcriber.recordCaptureDiagnostics(diagnostics)
-                break
-            }
-            buffersToReplay = pendingBuffers.snapshot()
-            replayBaseLagMs = firstPendingBufferAt.map { Date().timeIntervalSince($0) * 1000 } ?? 0
-            pendingBuffers.removeAll(keepingCapacity: true)
-            firstPendingBufferAt = nil
-            lock.unlock()
-        }
-
-        return replayedBufferCount
-    }
-
-    func appendAudioBuffer(_ buffer: AVAudioPCMBuffer) {
-        lock.lock()
-        if let transcriber, !isReplayingPendingAudio {
-            lock.unlock()
-            transcriber.appendAudioBuffer(buffer)
-            return
-        }
-
-        guard (shouldBufferPendingAudio || isReplayingPendingAudio),
-              let copiedBuffer = Self.copyBuffer(buffer) else {
-            lock.unlock()
-            return
-        }
-
-        if pendingBuffers.isEmpty {
-            firstPendingBufferAt = Date()
-        }
-        let droppedBefore = pendingBuffers.droppedElements
-        pendingBuffers.append(copiedBuffer)
-        if pendingBuffers.droppedElements > droppedBefore {
-            firstPendingBufferAt = Date()
-        }
-        lock.unlock()
-    }
-
-    func discardPendingAudio() {
-        lock.lock()
-        pendingBuffers.reset()
-        firstPendingBufferAt = nil
-        maxReplayLagMs = 0
-        shouldBufferPendingAudio = false
-        isReplayingPendingAudio = false
-        lock.unlock()
-    }
-
-    func clear() {
-        lock.lock()
-        transcriber = nil
-        shouldBufferPendingAudio = false
-        isReplayingPendingAudio = false
-        pendingBuffers.reset()
-        firstPendingBufferAt = nil
-        maxReplayLagMs = 0
-        lock.unlock()
-    }
-
-    private func recordReplayLag(for buffer: AVAudioPCMBuffer, baseLagMs: Double) {
-        let sampleRate = buffer.format.sampleRate
-        guard sampleRate > 0 else { return }
-        let durationMs = Double(buffer.frameLength) / sampleRate * 1000
-        lock.lock()
-        maxReplayLagMs = max(maxReplayLagMs, baseLagMs + durationMs)
-        lock.unlock()
-    }
-
-    private func diagnosticsLinesLocked(replayedBufferCount: Int) -> [String] {
-        var lines: [String] = []
-        lines.append("Realtime pending buffers replayed: \(replayedBufferCount)")
-        lines.append("Realtime pending queue max bytes: \(pendingBuffers.maxObservedPendingBytes)")
-        lines.append("Realtime pending queue dropped buffers: \(pendingBuffers.droppedElements)")
-        lines.append("Realtime pending queue dropped bytes: \(pendingBuffers.droppedBytes)")
-        lines.append("Realtime replay lag max: \(String(format: "%.1f", maxReplayLagMs))ms")
-        return lines
-    }
-
-    private static func byteCount(for buffer: AVAudioPCMBuffer) -> Int {
-        let buffers = UnsafeMutableAudioBufferListPointer(
-            UnsafeMutablePointer(mutating: buffer.audioBufferList)
-        )
-        return buffers.reduce(0) { total, audioBuffer in
-            total + Int(audioBuffer.mDataByteSize)
-        }
-    }
-
-    private static func copyBuffer(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
-        guard let copiedBuffer = AVAudioPCMBuffer(pcmFormat: buffer.format, frameCapacity: buffer.frameLength) else {
-            return nil
-        }
-        copiedBuffer.frameLength = buffer.frameLength
-
-        let sourceBuffers = UnsafeMutableAudioBufferListPointer(
-            UnsafeMutablePointer(mutating: buffer.audioBufferList)
-        )
-        let destinationBuffers = UnsafeMutableAudioBufferListPointer(copiedBuffer.mutableAudioBufferList)
-
-        for index in 0..<min(sourceBuffers.count, destinationBuffers.count) {
-            guard let sourceData = sourceBuffers[index].mData,
-                  let destinationData = destinationBuffers[index].mData else {
-                continue
-            }
-            let byteCount = Int(sourceBuffers[index].mDataByteSize)
-            memcpy(destinationData, sourceData, byteCount)
-            destinationBuffers[index].mDataByteSize = sourceBuffers[index].mDataByteSize
-        }
-
-        return copiedBuffer
-    }
-}
-
-private enum MicrophoneUseLock {
-    private static var directoryURL: URL {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first ??
-            FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support", isDirectory: true)
-        return base.appendingPathComponent("AutoImproveRecorder", isDirectory: true)
-    }
-
-    static var url: URL {
-        directoryURL.appendingPathComponent("mic-active.lock")
-    }
-
-    static func write(reason: String) {
-        let body = """
-        pid=\(ProcessInfo.processInfo.processIdentifier)
-        reason=\(reason)
-        updatedAt=\(ISO8601DateFormatter().string(from: Date()))
-        """
-        let fileManager = FileManager.default
-        try? fileManager.createDirectory(
-            at: directoryURL,
-            withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700]
-        )
-        try? fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directoryURL.path)
-        try? body.write(to: url, atomically: true, encoding: .utf8)
-        try? fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
-    }
-
-    static func clear() {
-        try? FileManager.default.removeItem(at: url)
     }
 }

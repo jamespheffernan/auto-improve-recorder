@@ -1,0 +1,301 @@
+/*
+  TransitionLab — a focused microscope for the waveform -> stage handoff.
+  Slimmed down on purpose: one big pill series, a scrub timeline, slow-mo play.
+*/
+
+:root {
+  --bg-a: #0d0f13;
+  --bg-b: #1b1d23;
+  --ink: rgba(255, 255, 255, 0.92);
+  --muted: rgba(255, 255, 255, 0.5);
+  --line: rgba(255, 255, 255, 0.12);
+  --panel: rgba(20, 22, 28, 0.72);
+  --accent: #f4a53f;
+  --state-color: #f4a53f;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: radial-gradient(120% 90% at 50% -10%, #23262d, var(--bg-a) 62%);
+  color: var(--ink);
+  font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+}
+
+button,
+input,
+output {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+.lab {
+  min-height: 100vh;
+  max-width: 960px;
+  margin: 0 auto;
+  padding: clamp(20px, 4vh, 48px) clamp(18px, 4vw, 40px) 40px;
+  display: grid;
+  grid-template-rows: auto 1fr auto auto auto auto;
+  gap: clamp(16px, 2.6vh, 30px);
+}
+
+.lab-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.eyebrow {
+  margin: 0 0 4px;
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.lab-header h1 {
+  margin: 0;
+  font-size: clamp(20px, 2.6vw, 28px);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.readout {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  text-align: right;
+}
+
+.phase {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.tau {
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* ---- Big stage ---- */
+.stage {
+  position: relative;
+  min-height: clamp(280px, 46vh, 520px);
+  display: grid;
+  place-items: center;
+  border-radius: 22px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.01));
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+
+.baseline {
+  position: absolute;
+  left: 8%;
+  right: 8%;
+  top: 50%;
+  height: 1px;
+  background: repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.22) 0 8px, transparent 8px 16px);
+  opacity: 0.6;
+}
+
+.pills {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: clamp(14px, 2.2vw, 26px);
+  height: 100%;
+}
+
+.pill {
+  width: clamp(14px, 1.4vw, 20px);
+  height: clamp(70px, 16vh, 132px);
+  border-radius: 9px;
+  background: var(--state-color);
+  transform-origin: center;
+  will-change: transform, opacity;
+}
+
+.pill[data-role="active"] {
+  box-shadow: 0 0 30px rgba(244, 165, 63, 0.45);
+}
+
+.stage-caption {
+  position: absolute;
+  inset: auto 8% 14px;
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.28);
+  pointer-events: none;
+}
+
+/* ---- Scrubber ---- */
+.scrubber {
+  display: grid;
+  gap: 8px;
+}
+
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(244, 165, 63, 0.5), rgba(255, 255, 255, 0.16));
+  outline: none;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  border: 3px solid var(--accent);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  cursor: grab;
+}
+
+input[type="range"]::-webkit-slider-thumb:active {
+  cursor: grabbing;
+}
+
+#scrub {
+  height: 8px;
+}
+
+.axis {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.axis-mark {
+  color: var(--accent);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+/* ---- Transport ---- */
+.transport {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.transport button {
+  padding: 9px 14px;
+  border-radius: 11px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--ink);
+  transition: border-color 140ms ease, background 140ms ease;
+}
+
+.transport button:hover {
+  border-color: rgba(255, 255, 255, 0.32);
+}
+
+.transport button.primary {
+  background: var(--accent);
+  border-color: transparent;
+  color: #1a1206;
+  font-weight: 600;
+}
+
+.transport .ghost {
+  font-variant-numeric: tabular-nums;
+}
+
+.loop {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.speed {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.speed input[type="range"] {
+  width: 140px;
+}
+
+.speed output {
+  min-width: 44px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+/* ---- Dials ---- */
+.dials {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px 22px;
+  padding: 16px 18px;
+  border-radius: 16px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+}
+
+.dial {
+  display: grid;
+  gap: 6px;
+}
+
+.dial-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  font-size: 12px;
+}
+
+.dial-head span:first-child {
+  color: var(--ink);
+}
+
+.dial-head output {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+@media (max-width: 720px) {
+  .dials {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

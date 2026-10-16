@@ -1,0 +1,12 @@
+Phonon-2 by Fermion Research
+Model: https://huggingface.co/FermionResearch/Phonon-2
+Weights licensed under Creative Commons Attribution 4.0 International:
+https://creativecommons.org/licenses/by/4.0/
+Derived from NVIDIA Parakeet TDT 0.6B v3, also CC-BY-4.0.
+Fermion Research quantized and trained the five-value encoder. ASR/AIR use
+the published weights unchanged through the Fermion runtime.
+
+fermion-research 0.2.3: Apache License 2.0.
+https://github.com/fermionresearch/phonon
+Runtime dependencies and their versions are in requirements.lock; their
+individual licenses are included in the installed Python distribution metadata.

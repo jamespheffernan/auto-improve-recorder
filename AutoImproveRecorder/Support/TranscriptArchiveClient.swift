@@ -7,6 +7,10 @@ struct TranscriptArchiveContent: Equatable {
     var improveFailed: Bool
     var message: String?
     var dictionarySnapshot: String
+    var recognizerTranscript: String? = nil
+    var postRulesTranscript: String? = nil
+    var deliveredText: String? = nil
+    var deliveredVia: String? = nil
 }
 
 struct TranscriptArchiveMetadata: Equatable {
@@ -70,7 +74,12 @@ struct LiveTranscriptArchiveClient: TranscriptArchiveClient {
             microphoneResolvedID: metadata.microphoneResolvedID,
             microphoneResolvedName: metadata.microphoneResolvedName,
             microphoneUsedFallback: metadata.microphoneUsedFallback,
-            microphoneFallbackReason: metadata.microphoneFallbackReason
+            microphoneFallbackReason: metadata.microphoneFallbackReason,
+            recognizerTranscript: content.recognizerTranscript,
+            postRulesTranscript: content.postRulesTranscript,
+            deliveredText: content.deliveredText,
+            deliveredVia: content.deliveredVia,
+            product: "AIR"
         )
     }
 

@@ -52,6 +52,16 @@ struct TranscriptArchiveRecord: Codable, Equatable {
     var microphoneResolvedName: String?
     var microphoneUsedFallback: Bool
     var microphoneFallbackReason: String?
+    /// The recogniser's output before any replacement rule or normalisation. Absent in records written before 24 Sep 2026.
+    var recognizerTranscript: String?
+    /// The recogniser's output after replacement rules only.
+    var postRulesTranscript: String?
+    /// What reached the destination: AIR's paste or copy, including any preview edit; ASR's sent text. Nil until delivered.
+    var deliveredText: String?
+    /// How `deliveredText` was delivered, for example "auto-paste", "manual-paste", "manual-copy", "sent".
+    var deliveredVia: String?
+    /// "AIR" or "ASR". Absent means AIR.
+    var product: String?
 }
 
 extension TranscriptArchiveRecord {
@@ -77,6 +87,11 @@ extension TranscriptArchiveRecord {
         case microphoneResolvedName
         case microphoneUsedFallback
         case microphoneFallbackReason
+        case recognizerTranscript
+        case postRulesTranscript
+        case deliveredText
+        case deliveredVia
+        case product
     }
 
     init(from decoder: Decoder) throws {
@@ -102,6 +117,53 @@ extension TranscriptArchiveRecord {
         microphoneResolvedName = try container.decodeIfPresent(String.self, forKey: .microphoneResolvedName)
         microphoneUsedFallback = try container.decodeIfPresent(Bool.self, forKey: .microphoneUsedFallback) ?? false
         microphoneFallbackReason = try container.decodeIfPresent(String.self, forKey: .microphoneFallbackReason)
+        recognizerTranscript = try container.decodeIfPresent(String.self, forKey: .recognizerTranscript)
+        postRulesTranscript = try container.decodeIfPresent(String.self, forKey: .postRulesTranscript)
+        deliveredText = try container.decodeIfPresent(String.self, forKey: .deliveredText)
+        deliveredVia = try container.decodeIfPresent(String.self, forKey: .deliveredVia)
+        product = try container.decodeIfPresent(String.self, forKey: .product)
+    }
+
+    /// An ASR recording: no cleanup, no prompt terms, delivered text equals the post-processed text when sent.
+    static func autoSend(
+        id: String,
+        createdAt: Date,
+        updatedAt: Date = Date(),
+        audioURL: URL,
+        outcome: TranscriptRuleOutcome,
+        deliveredText: String?,
+        deliveredVia: String?,
+        message: String?,
+        transcriptionEngine: String?
+    ) -> TranscriptArchiveRecord {
+        TranscriptArchiveRecord(
+            id: id,
+            createdAt: createdAt,
+            updatedAt: updatedAt,
+            audioPath: audioURL.path,
+            rawTranscript: outcome.final,
+            cleanedTranscript: "",
+            finalTranscript: outcome.final,
+            improveFailed: false,
+            message: message,
+            transcriptionMode: "autoSend",
+            transcriptionEngine: transcriptionEngine,
+            improvementMode: "none",
+            cleanupMode: "none",
+            autoImproveMode: "off",
+            thresholdWords: 0,
+            dictionarySnapshot: "",
+            microphonePreferenceID: "",
+            microphoneResolvedID: nil,
+            microphoneResolvedName: nil,
+            microphoneUsedFallback: false,
+            microphoneFallbackReason: nil,
+            recognizerTranscript: outcome.recognizer,
+            postRulesTranscript: outcome.afterRules,
+            deliveredText: deliveredText,
+            deliveredVia: deliveredVia,
+            product: "ASR"
+        )
     }
 }
 
@@ -113,7 +175,7 @@ enum TranscriptArchiveStore {
 
     static func prepareRecording(createdAt: Date = Date()) throws -> TranscriptArchiveDraft {
         let id = UUID().uuidString
-        let directoryURL = archiveRoot()
+        let directoryURL = defaultRoot()
             .appendingPathComponent(id, isDirectory: true)
         try FileManager.default.createDirectory(
             at: directoryURL,
@@ -133,26 +195,26 @@ enum TranscriptArchiveStore {
         try? FileManager.default.removeItem(at: draft.directoryURL)
     }
 
-    static func recordURL(for id: String) -> URL {
-        archiveRoot()
+    static func recordURL(for id: String, root: URL = defaultRoot()) -> URL {
+        root
             .appendingPathComponent(id, isDirectory: true)
             .appendingPathComponent(recordFileName)
     }
 
     @discardableResult
-    static func save(_ record: TranscriptArchiveRecord) -> Bool {
+    static func save(_ record: TranscriptArchiveRecord, root: URL = defaultRoot()) -> Bool {
         do {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             encoder.dateEncodingStrategy = .iso8601
             let data = try encoder.encode(record)
-            let recordURL = recordURL(for: record.id)
+            let recordURL = recordURL(for: record.id, root: root)
             try FileManager.default.createDirectory(
                 at: recordURL.deletingLastPathComponent(),
                 withIntermediateDirectories: true
             )
             try data.write(to: recordURL, options: .atomic)
-            appendIndex(record)
+            appendIndex(record, root: root)
             return true
         } catch {
             NSLog("TranscriptArchiveStore save failed: \(error.localizedDescription)")
@@ -160,7 +222,42 @@ enum TranscriptArchiveStore {
         }
     }
 
-    private static func archiveRoot() -> URL {
+    /// Saves an ASR recording's record, keyed by the audio file's name.
+    @discardableResult
+    static func saveAutoSend(
+        audioURL: URL,
+        outcome: TranscriptRuleOutcome,
+        deliveredText: String?,
+        deliveredVia: String?,
+        message: String?,
+        transcriptionEngine: String?,
+        root: URL = autoSendRoot()
+    ) -> Bool {
+        let name = audioURL.deletingPathExtension().lastPathComponent
+        let record = TranscriptArchiveRecord.autoSend(
+            id: name.isEmpty ? UUID().uuidString : name,
+            createdAt: Date(),
+            audioURL: audioURL,
+            outcome: outcome,
+            deliveredText: deliveredText,
+            deliveredVia: deliveredVia,
+            message: message,
+            transcriptionEngine: transcriptionEngine
+        )
+        return save(record, root: root)
+    }
+
+    /// AIR's archive root.
+    static func defaultRoot() -> URL {
+        root(appDirectoryName: appDirectoryName)
+    }
+
+    /// ASR's archive root, beside its recordings.
+    static func autoSendRoot() -> URL {
+        root(appDirectoryName: "Auto Send Recorder")
+    }
+
+    private static func root(appDirectoryName: String) -> URL {
         let base = FileManager.default.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask
@@ -171,8 +268,8 @@ enum TranscriptArchiveStore {
             .appendingPathComponent(archiveDirectoryName, isDirectory: true)
     }
 
-    private static func appendIndex(_ record: TranscriptArchiveRecord) {
-        let indexURL = archiveRoot().appendingPathComponent(indexFileName)
+    private static func appendIndex(_ record: TranscriptArchiveRecord, root: URL) {
+        let indexURL = root.appendingPathComponent(indexFileName)
         var indexRow = record
         if indexRow.rawTranscript.count > 500 {
             indexRow.rawTranscript = String(indexRow.rawTranscript.prefix(500))
@@ -183,6 +280,9 @@ enum TranscriptArchiveStore {
         if indexRow.finalTranscript.count > 500 {
             indexRow.finalTranscript = String(indexRow.finalTranscript.prefix(500))
         }
+        indexRow.recognizerTranscript = indexRow.recognizerTranscript.map { String($0.prefix(500)) }
+        indexRow.postRulesTranscript = indexRow.postRulesTranscript.map { String($0.prefix(500)) }
+        indexRow.deliveredText = indexRow.deliveredText.map { String($0.prefix(500)) }
 
         do {
             let encoder = JSONEncoder()

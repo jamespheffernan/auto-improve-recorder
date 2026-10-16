@@ -19,14 +19,6 @@ struct OllamaImproveEngine: ImproveEngine {
         dictionarySnapshot: String
     ) async throws -> String {
         let model = model.isEmpty ? Self.defaultModel : model
-        if let bypassText = Self.pasteReadyBypassText(
-            rawTranscript,
-            outputMode: outputMode,
-            dictionarySnapshot: dictionarySnapshot
-        ) {
-            return bypassText
-        }
-
         let prompt = ImprovePrompt.make(
             rawTranscript: rawTranscript,
             outputMode: outputMode,
@@ -91,15 +83,6 @@ struct OllamaImproveEngine: ImproveEngine {
         onDelta: @escaping (String) -> Void
     ) async throws -> String {
         let model = model.isEmpty ? Self.defaultModel : model
-        if let bypassText = Self.pasteReadyBypassText(
-            rawTranscript,
-            outputMode: outputMode,
-            dictionarySnapshot: dictionarySnapshot
-        ) {
-            onDelta(bypassText)
-            return bypassText
-        }
-
         let prompt = ImprovePrompt.make(
             rawTranscript: rawTranscript,
             outputMode: outputMode,
@@ -217,63 +200,6 @@ struct OllamaImproveEngine: ImproveEngine {
             ratio = 0.8
         }
         return min(320, max(96, Int(Double(estimatedInputTokens) * ratio) + 48))
-    }
-
-    private static func pasteReadyBypassText(
-        _ rawTranscript: String,
-        outputMode: OutputMode,
-        dictionarySnapshot: String
-    ) -> String? {
-        guard outputMode == .lightCleanup || outputMode == .verbatim else { return nil }
-        guard dictionarySnapshot.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
-
-        let text = rawTranscript
-            .split(whereSeparator: \.isWhitespace)
-            .joined(separator: " ")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return nil }
-
-        let words = text.split { character in
-            !character.isLetter && !character.isNumber && character != "'"
-        }
-        guard (6...90).contains(words.count) else { return nil }
-        guard !containsPattern(transformRequestPattern, in: text) else { return nil }
-        guard !containsPattern(fillerPattern, in: text) else { return nil }
-        guard !containsPattern(speechArtifactPattern, in: text) else { return nil }
-        guard !hasRepeatedAdjacentWord(words) else { return nil }
-        if words.count > 12 {
-            guard containsPattern(sentencePunctuationPattern, in: text) else { return nil }
-        }
-        guard containsPattern(terminalPunctuationPattern, in: text) else { return nil }
-        if let first = text.first, first.isLowercase {
-            return nil
-        }
-        return text
-    }
-
-    private static let fillerPattern =
-        #"(?i)\b(um+|uh+|er+|ah+|you know|i mean|sort of|kind of|basically|actually)\b"#
-    private static let speechArtifactPattern =
-        #"(?i)\b(wait actually|no sorry|scratch that|start over|what i mean|let me rephrase|new paragraph)\b|\bdot\s+[A-Za-z0-9_]+\b|\bslash\s+[A-Za-z0-9_]+\b"#
-    private static let transformRequestPattern =
-        #"(?i)\b(make this into|turn this into|convert this|rewrite this|clean this up|make it sound|summari[sz]e|format this|structure this|write (?:\w+\s+){0,3}(email|slack|message|prompt|task))\b"#
-    private static let sentencePunctuationPattern = #"[,.!?;:]"#
-    private static let terminalPunctuationPattern = #"[.!?]["')\]]*$"#
-
-    private static func containsPattern(_ pattern: String, in text: String) -> Bool {
-        text.range(of: pattern, options: .regularExpression) != nil
-    }
-
-    private static func hasRepeatedAdjacentWord(_ words: [Substring]) -> Bool {
-        guard words.count > 1 else { return false }
-        for index in words.indices.dropLast() {
-            let current = words[index].lowercased()
-            let next = words[words.index(after: index)].lowercased()
-            if current == next && current.count > 2 {
-                return true
-            }
-        }
-        return false
     }
 
     private func endpointURL() throws -> URL {

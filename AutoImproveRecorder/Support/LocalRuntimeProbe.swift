@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 protocol LocalRuntimeProbe: Sendable {
     func fileExists(atPath path: String) -> Bool
@@ -6,6 +7,8 @@ protocol LocalRuntimeProbe: Sendable {
     func paths(matching pattern: String) -> [String]
     func ollamaModelTags(baseURL: URL) async throws -> [String]
     func operatingSystemVersion() -> OperatingSystemVersion
+    func physicalMemoryBytes() -> UInt64
+    func parakeetLiveRuntimeCapability(libraryPath: String) -> ParakeetLiveRuntimeCapability
 }
 
 struct DefaultLocalRuntimeProbe: LocalRuntimeProbe, @unchecked Sendable {
@@ -61,6 +64,22 @@ struct DefaultLocalRuntimeProbe: LocalRuntimeProbe, @unchecked Sendable {
 
     func operatingSystemVersion() -> OperatingSystemVersion {
         ProcessInfo.processInfo.operatingSystemVersion
+    }
+
+    func physicalMemoryBytes() -> UInt64 {
+        ProcessInfo.processInfo.physicalMemory
+    }
+
+    func parakeetLiveRuntimeCapability(libraryPath: String) -> ParakeetLiveRuntimeCapability {
+        let expandedPath = expandTilde(libraryPath)
+        guard let handle = dlopen(expandedPath, RTLD_NOW | RTLD_LOCAL) else {
+            return .loadFailed
+        }
+        defer { dlclose(handle) }
+        let hasEverySymbol = ParakeetLiveSafetyPolicy.requiredRuntimeSymbols.allSatisfy {
+            dlsym(handle, $0) != nil
+        }
+        return hasEverySymbol ? .ready : .missingSymbols
     }
 
     private func expandTilde(_ path: String) -> String {

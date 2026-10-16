@@ -4,19 +4,46 @@ import Foundation
 protocol AudioArchiveFileWriting {
     var fileURL: URL { get }
     func write(from buffer: AVAudioPCMBuffer) throws
+    func finish() throws
 }
 
 final class AVAudioArchiveFile: AudioArchiveFileWriting {
     let fileURL: URL
-    private let file: AVAudioFile
+    private var file: AVAudioFile?
 
-    init(url: URL, settings: [String: Any]) throws {
+    init(
+        url: URL,
+        settings: [String: Any],
+        commonFormat: AVAudioCommonFormat,
+        interleaved: Bool
+    ) throws {
         self.fileURL = url
-        self.file = try AVAudioFile(forWriting: url, settings: settings)
+        self.file = try AVAudioFile(
+            forWriting: url,
+            settings: settings,
+            commonFormat: commonFormat,
+            interleaved: interleaved
+        )
     }
 
     func write(from buffer: AVAudioPCMBuffer) throws {
+        guard let file else { throw ArchiveAudioFileError.alreadyFinished }
         try file.write(from: buffer)
+    }
+
+    func finish() throws {
+        file = nil
+        // AVAudioFile closes when released. Reopening the file checks that the
+        // final header is readable before callers accept the archive.
+        _ = try AVAudioFile(forReading: fileURL)
+    }
+}
+
+private enum ArchiveAudioFileError: LocalizedError {
+    case alreadyFinished
+
+    var errorDescription: String? {
+        "The audio archive was already finished."
     }
 }
 
@@ -33,13 +60,18 @@ final class ArchiveAudioWriter {
     init(
         url: URL,
         format: AVAudioFormat,
-        fileFactory: @escaping FileFactory = { url, settings in
-            try AVAudioArchiveFile(url: url, settings: settings)
-        }
+        fileFactory: FileFactory? = nil
     ) {
         self.url = url
         self.settings = format.settings
-        self.fileFactory = fileFactory
+        self.fileFactory = fileFactory ?? { url, settings in
+            try AVAudioArchiveFile(
+                url: url,
+                settings: settings,
+                commonFormat: format.commonFormat,
+                interleaved: format.isInterleaved
+            )
+        }
     }
 
     func open() {
@@ -68,10 +100,15 @@ final class ArchiveAudioWriter {
     }
 
     func finish() -> ArchiveStatus {
-        if case .writing = status {
+        guard case .writing = status, let file else { return status }
+        do {
+            try file.finish()
+            self.file = nil
             status = .finished(url)
+        } catch {
+            self.file = nil
+            fail(error)
         }
-        file = nil
         return status
     }
 

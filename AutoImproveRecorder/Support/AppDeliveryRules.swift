@@ -1,22 +1,72 @@
+import ApplicationServices
 import CoreGraphics
 import Foundation
 
 struct FocusedApp: Equatable, Hashable, Identifiable {
     let bundleIdentifier: String
     let displayName: String
+    let processIdentifier: Int32?
 
     var id: String { bundleIdentifier }
 
-    init(bundleIdentifier: String, displayName: String?) {
+    init(bundleIdentifier: String, displayName: String?, processIdentifier: Int32? = nil) {
         self.bundleIdentifier = bundleIdentifier
+        self.processIdentifier = processIdentifier
         let trimmedName = displayName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         self.displayName = trimmedName.isEmpty ? bundleIdentifier : trimmedName
+    }
+}
+
+struct FocusedTextTargetIdentity: Equatable {
+    let rawValue: String
+    private let accessibilityElement: AXUIElement?
+    private let allowsElementReplacement: Bool
+
+    init(rawValue: String) {
+        self.rawValue = rawValue
+        accessibilityElement = nil
+        allowsElementReplacement = false
+    }
+
+    init(
+        rawValue: String,
+        accessibilityElement: AXUIElement,
+        allowsElementReplacement: Bool = false
+    ) {
+        self.rawValue = rawValue
+        self.accessibilityElement = accessibilityElement
+        self.allowsElementReplacement = allowsElementReplacement
+    }
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        if let lhsElement = lhs.accessibilityElement,
+           let rhsElement = rhs.accessibilityElement {
+            if CFEqual(lhsElement, rhsElement) {
+                return true
+            }
+            return lhs.allowsElementReplacement &&
+                rhs.allowsElementReplacement &&
+                lhs.rawValue == rhs.rawValue
+        }
+
+        return lhs.rawValue == rhs.rawValue
     }
 }
 
 struct FocusedTextTarget: Equatable {
     let acceptsText: Bool
     let frame: CGRect?
+    let identity: FocusedTextTargetIdentity?
+
+    init(
+        acceptsText: Bool,
+        frame: CGRect?,
+        identity: FocusedTextTargetIdentity? = nil
+    ) {
+        self.acceptsText = acceptsText
+        self.frame = frame
+        self.identity = identity
+    }
 }
 
 struct DeliveryContext: Equatable {
@@ -48,6 +98,7 @@ enum SubmitBehavior: String, CaseIterable, Codable, Identifiable {
     case followDefault
     case never
     case always
+    case commandEnter
 
     var id: String { rawValue }
 
@@ -58,8 +109,121 @@ enum SubmitBehavior: String, CaseIterable, Codable, Identifiable {
         case .never:
             return "Never"
         case .always:
-            return "Always"
+            return "Enter"
+        case .commandEnter:
+            return "Command-Enter"
         }
+    }
+
+    var sendCommand: SendCommand? {
+        switch self {
+        case .followDefault, .never:
+            return nil
+        case .always:
+            return .enter
+        case .commandEnter:
+            return .commandEnter
+        }
+    }
+}
+
+enum SendCommand: String, CaseIterable, Codable, Equatable, Identifiable {
+    case enter
+    case commandEnter
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .enter:
+            return "Enter"
+        case .commandEnter:
+            return "Command-Enter"
+        }
+    }
+
+    var keyEventDescriptor: SendKeyEventDescriptor {
+        switch self {
+        case .enter:
+            return SendKeyEventDescriptor(virtualKey: 0x24, flags: [])
+        case .commandEnter:
+            return SendKeyEventDescriptor(virtualKey: 0x24, flags: .maskCommand)
+        }
+    }
+}
+
+struct SendKeyEventDescriptor: Equatable {
+    let virtualKey: CGKeyCode
+    let flags: CGEventFlags
+}
+
+struct DeliveryDestination: Equatable {
+    let bundleIdentifier: String
+    let processIdentifier: Int32
+    let focusedTargetIdentity: FocusedTextTargetIdentity
+
+    init?(context: DeliveryContext) {
+        guard let app = context.focusedApp,
+              let processIdentifier = app.processIdentifier,
+              let focusedTargetIdentity = context.focusedTarget?.identity else {
+            return nil
+        }
+
+        self.bundleIdentifier = app.bundleIdentifier
+        self.processIdentifier = processIdentifier
+        self.focusedTargetIdentity = focusedTargetIdentity
+    }
+}
+
+enum UnknownDestinationPolicy: Equatable {
+    case allowSend
+    case suppressSend
+}
+
+enum SendSuppressionReason: Equatable {
+    case destinationUnavailable
+    case destinationChanged
+    case focusChanged
+    case focusIsNotEditable
+    case deliveryCancelled
+    case sendEventFailed
+}
+
+enum SendCommandExecution: Equatable {
+    case notRequested
+    case sent
+    case suppressed(SendSuppressionReason)
+}
+
+enum DeliverySendGuard {
+    static func suppressionReason(
+        expectedDestination: DeliveryDestination?,
+        currentContext: DeliveryContext,
+        unknownDestinationPolicy: UnknownDestinationPolicy
+    ) -> SendSuppressionReason? {
+        guard currentContext.focusedTarget?.acceptsText == true else {
+            return .focusIsNotEditable
+        }
+
+        guard let expectedDestination else {
+            return unknownDestinationPolicy == .suppressSend ? .destinationUnavailable : nil
+        }
+
+        guard let currentApp = currentContext.focusedApp,
+              let currentProcessIdentifier = currentApp.processIdentifier else {
+            return .destinationChanged
+        }
+
+        guard currentApp.bundleIdentifier == expectedDestination.bundleIdentifier,
+              currentProcessIdentifier == expectedDestination.processIdentifier else {
+            return .destinationChanged
+        }
+
+        guard currentContext.focusedTarget?.identity == expectedDestination.focusedTargetIdentity else {
+            return .focusChanged
+        }
+
+        return nil
     }
 }
 
@@ -124,8 +288,11 @@ struct ResolvedDeliveryPolicy: Equatable {
     let shouldCopyToClipboard: Bool
     let wantsPaste: Bool
     let shouldPaste: Bool
-    let shouldSubmit: Bool
-    let submitWasSuppressedByRule: Bool
+    let sendCommand: SendCommand?
+    let sendWasSuppressedByRule: Bool
+
+    var shouldSubmit: Bool { sendCommand != nil }
+    var submitWasSuppressedByRule: Bool { sendWasSuppressedByRule }
 }
 
 enum DeliveryPolicyResolver {
@@ -156,14 +323,16 @@ enum DeliveryPolicyResolver {
 
         let shouldPaste = wantsPaste && context.focusedTarget?.acceptsText == true
 
-        let wantsSubmit: Bool
+        let sendCommand: SendCommand?
         switch matchedRule?.submitBehavior {
         case .always:
-            wantsSubmit = true
+            sendCommand = .enter
+        case .commandEnter:
+            sendCommand = .commandEnter
         case .never:
-            wantsSubmit = false
+            sendCommand = nil
         case .followDefault, .none:
-            wantsSubmit = globalSettings.autoSubmitDetectedTextFields
+            sendCommand = globalSettings.autoSubmitDetectedTextFields ? .enter : nil
         }
 
         return ResolvedDeliveryPolicy(
@@ -171,8 +340,8 @@ enum DeliveryPolicyResolver {
             shouldCopyToClipboard: shouldCopyToClipboard,
             wantsPaste: wantsPaste,
             shouldPaste: shouldPaste,
-            shouldSubmit: shouldPaste && wantsSubmit,
-            submitWasSuppressedByRule: matchedRule?.submitBehavior == .never &&
+            sendCommand: shouldPaste ? sendCommand : nil,
+            sendWasSuppressedByRule: matchedRule?.submitBehavior == .never &&
                 globalSettings.autoSubmitDetectedTextFields
         )
     }

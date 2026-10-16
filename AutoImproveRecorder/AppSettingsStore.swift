@@ -146,12 +146,17 @@ final class UserDefaultsSettingsStore: SettingsStore {
     private func transcriptionMode(forKey key: String) -> TranscriptionMode {
         switch defaults.string(forKey: key) {
         case "localParakeet":
+            // Preserve a user's explicit historical Parakeet selection.
             return .localParakeetCppRecommended
         case let rawValue?:
-            return TranscriptionMode(rawValue: rawValue) ?? .localWhisper
+            return TranscriptionMode(rawValue: rawValue) ?? .localPhonon2
         case nil:
-            return .localWhisper
+            return defaultTranscriptionMode()
         }
+    }
+
+    private func defaultTranscriptionMode() -> TranscriptionMode {
+        .localPhonon2
     }
 
     private enum Keys {

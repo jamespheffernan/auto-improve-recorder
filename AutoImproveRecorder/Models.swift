@@ -530,9 +530,12 @@ struct RecordingHotKey: Equatable, Identifiable, RawRepresentable, Codable {
 }
 
 enum TranscriptionMode: String, CaseIterable, Identifiable, Codable {
+    case localPhonon2
     case localWhisper
     case localParakeetCppFast
     case localParakeetCppRecommended
+    case localParakeetCppResident
+    case localParakeetStreaming
     case appleLocal
     case openAIAPI
     case fastest
@@ -541,18 +544,35 @@ enum TranscriptionMode: String, CaseIterable, Identifiable, Codable {
 
     var label: String {
         switch self {
+        case .localPhonon2:
+            return "Phonon-2 · Neural Engine (Default)"
         case .localWhisper:
             return "Local Whisper"
         case .localParakeetCppFast:
             return "Parakeet.cpp Fast"
         case .localParakeetCppRecommended:
             return "Parakeet.cpp Recommended"
+        case .localParakeetCppResident:
+            return "Parakeet.cpp Resident"
+        case .localParakeetStreaming:
+            return "Parakeet Live"
         case .appleLocal:
             return "Apple Speech"
         case .openAIAPI:
             return "OpenAI API"
         case .fastest:
             return "Cloud Realtime"
+        }
+    }
+
+    /// Whether the recogniser accepts dictionary terms as a prompt. Only the OpenAI modes do.
+    var takesVocabulary: Bool {
+        switch self {
+        case .openAIAPI, .fastest:
+            return true
+        case .localPhonon2, .localWhisper, .localParakeetCppFast, .localParakeetCppRecommended,
+             .localParakeetCppResident, .localParakeetStreaming, .appleLocal:
+            return false
         }
     }
 }
@@ -652,6 +672,14 @@ struct TranscriptSession: Equatable {
     var message: String?
     var improveFailed: Bool
     var dictionarySnapshot: String
+    /// Capped term list for recognisers that take vocabulary (OpenAI modes).
+    var transcriptionVocabulary: String = ""
+    /// The recogniser's output before rules and normalisation, and after rules only.
+    var recognizerTranscript: String = ""
+    var postRulesTranscript: String = ""
+    /// What AIR pasted or copied, including any preview edit. Empty until delivered.
+    var deliveredText: String = ""
+    var deliveredVia: String = ""
 
     static let empty = TranscriptSession(
         audioURL: nil,

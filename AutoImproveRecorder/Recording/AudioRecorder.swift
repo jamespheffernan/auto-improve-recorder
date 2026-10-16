@@ -7,12 +7,12 @@ import AudioToolbox
 #endif
 
 private let audioRecorderStartupLogger = Logger(
-    subsystem: "com.fieldtheory.autoimproverecorder",
+    subsystem: Bundle.main.bundleIdentifier ?? "recorder.audio",
     category: "RecordingStartup"
 )
 
 private let microphoneDeviceLogger = Logger(
-    subsystem: "com.fieldtheory.autoimproverecorder",
+    subsystem: Bundle.main.bundleIdentifier ?? "recorder.audio",
     category: "MicrophoneDevice"
 )
 
@@ -44,13 +44,16 @@ enum AudioRecorderError: LocalizedError {
 }
 
 final class AudioRecorder {
-    typealias AudioBufferHandler = (AVAudioPCMBuffer) -> Void
+    typealias AudioBufferHandler = (AudioCaptureEvent) -> Void
+    typealias ArchiveWriterFactory = (URL, AVAudioFormat) -> ArchiveAudioWriter
 
-    fileprivate static let fileOpenQueue = DispatchQueue(label: "com.fieldtheory.air.fileopen", qos: .userInitiated)
+    fileprivate static let fileOpenQueue = DispatchQueue(label: "recorder.audio.fileopen", qos: .userInitiated)
     static let fastStartBufferSize: AVAudioFrameCount = 256
     private static let pendingArchiveBufferDuration: TimeInterval = 3.0
 
     private let engine = AVAudioEngine()
+    private let capturedBufferFactory: CapturedAudioBufferFactory
+    private let archiveWriterFactory: ArchiveWriterFactory
     fileprivate let stateLock = NSLock()
     fileprivate var archiveWriter: ArchiveAudioWriter?
     fileprivate var archiveStatus: ArchiveStatus = .unavailable
@@ -61,6 +64,7 @@ final class AudioRecorder {
     fileprivate var pendingArchiveFrameCapacity: AVAudioFrameCount = 0
     fileprivate var droppedPendingArchiveBuffers = 0
     fileprivate var nextCapturedAudioSequence: UInt64 = 0
+    fileprivate var captureFailure: AudioCaptureFailure?
     fileprivate var halPrimed = false
     private var observedFirstBuffer = false
     private var tapInstalled = false
@@ -68,10 +72,23 @@ final class AudioRecorder {
     private var installedFormat: AVAudioFormat?
     private var activeStreamHandler: AudioBufferHandler?
     private var activeOnFirstBuffer: (() -> Void)?
+    #if os(macOS)
+    private var inputCapture: HALInputCapture?
+    #endif
     #if os(iOS)
     private var audioSessionConfigured = false
     private var audioSessionActive = false
     #endif
+
+    init(
+        capturedBufferFactory: CapturedAudioBufferFactory = CapturedAudioBufferFactory(),
+        archiveWriterFactory: @escaping ArchiveWriterFactory = { url, format in
+            ArchiveAudioWriter(url: url, format: format)
+        }
+    ) {
+        self.capturedBufferFactory = capturedBufferFactory
+        self.archiveWriterFactory = archiveWriterFactory
+    }
 
     static func makeRecordingURL() -> URL {
         FileManager.default.temporaryDirectory
@@ -116,19 +133,23 @@ final class AudioRecorder {
         #endif
         let tSession = Date()
 
-        let input = engine.inputNode
         #if os(macOS)
-        try setInputDeviceIfNeeded(microphone, input: input)
-        #endif
+        let capture = try openInputCapture(microphone, bufferSize: bufferSize)
         let tDevice = Date()
-
+        let format = capture.format
+        #else
+        let input = engine.inputNode
+        let tDevice = Date()
         let format = input.outputFormat(forBus: 0)
+        #endif
         guard format.sampleRate > 0, format.channelCount > 0 else {
             throw AudioRecorderError.inputUnavailable
         }
         let tFormat = Date()
 
-        let shouldStartEngine = prepareEngine(bufferSize: bufferSize, format: format)
+        #if !os(macOS)
+        let shouldStartEngine = try prepareEngine(bufferSize: bufferSize, format: format)
+        #endif
         let tPrepEng = Date()
 
         stateLock.lock()
@@ -149,6 +170,7 @@ final class AudioRecorder {
         )
         droppedPendingArchiveBuffers = 0
         nextCapturedAudioSequence = 0
+        captureFailure = nil
         observedFirstBuffer = false
         activeStreamHandler = streamHandler
         activeOnFirstBuffer = onFirstBuffer
@@ -158,13 +180,14 @@ final class AudioRecorder {
         // not blocked on file IO. The tap buffers early audio until the writer is ready.
         AudioRecorder.fileOpenQueue.async { [weak self] in
             guard let self else { return }
-            let writer = ArchiveAudioWriter(url: url, format: format)
+            let writer = self.archiveWriterFactory(url, format)
             writer.open()
             self.stateLock.lock()
             if self.currentURL == url {
                 self.archiveWriter = writer
                 self.archiveStatus = writer.status
                 self.archiveDiagnostics = writer.diagnostics
+                self.applyCaptureFailureLocked()
                 let pending = self.pendingBuffers
                 self.pendingBuffers = []
                 self.pendingArchiveBufferedFrames = 0
@@ -183,11 +206,17 @@ final class AudioRecorder {
         }
 
         do {
+            #if os(macOS)
+            let tPrepare = Date()
+            try capture.start()
+            inputCapture = capture
+            #else
             engine.prepare()
             let tPrepare = Date()
             if shouldStartEngine {
                 try engine.start()
             }
+            #endif
             let tEngStart = Date()
             let sessionMS = String(format: "%.2f", tSession.timeIntervalSince(tStart) * 1000)
             let deviceMS = String(format: "%.2f", tDevice.timeIntervalSince(tSession) * 1000)
@@ -201,17 +230,23 @@ final class AudioRecorder {
             )
         } catch {
             clearActiveRecordingState()
+            #if os(macOS)
+            capture.stop()
+            #else
             if engine.isRunning {
                 engine.stop()
             }
             removeInputTap()
+            #endif
             throw AudioRecorderError.engineStartFailed(error.localizedDescription)
         }
         return url
     }
 
     #if os(macOS)
-    private func setInputDeviceIfNeeded(_ microphone: AudioInputDevice?, input: AVAudioInputNode) throws {
+    /// Opens the microphone's own capture unit. It never opens the system default input, unless
+    /// that is the microphone.
+    private func openInputCapture(_ microphone: AudioInputDevice?, bufferSize: AVAudioFrameCount) throws -> HALInputCapture {
         let deviceID: AudioObjectID
         let deviceName: String
         let selectedDeviceID: String
@@ -235,14 +270,15 @@ final class AudioRecorder {
             selectedDeviceID = ""
         }
 
-        if engine.isRunning {
-            engine.stop()
-        }
-        removeInputTap()
+        inputCapture?.stop()
+        inputCapture = nil
 
         let startedAt = Date()
+        let capture: HALInputCapture
         do {
-            try input.auAudioUnit.setDeviceID(deviceID)
+            capture = try HALInputCapture(deviceID: deviceID, chunkFrames: bufferSize) { [weak self] buffer in
+                self?.handleAudioBuffer(buffer)
+            }
         } catch {
             throw AudioRecorderError.inputDeviceUnavailable(
                 deviceName,
@@ -254,6 +290,7 @@ final class AudioRecorder {
         microphoneDeviceLogger.info(
             "Selected microphone id=\(selectedDeviceID, privacy: .public) name=\(deviceName, privacy: .public) coreAudioDeviceID=\(deviceID, privacy: .public) setDevice=\(String(format: "%.2f", elapsedMS), privacy: .public)ms"
         )
+        return capture
     }
     #endif
 
@@ -267,7 +304,7 @@ final class AudioRecorder {
             let format = input.outputFormat(forBus: 0)
             guard format.sampleRate > 0, format.channelCount > 0 else { return }
 
-            let shouldStartEngine = prepareEngine(bufferSize: Self.fastStartBufferSize, format: format)
+            let shouldStartEngine = try prepareEngine(bufferSize: Self.fastStartBufferSize, format: format)
             engine.prepare()
 
             if shouldStartEngine {
@@ -290,7 +327,12 @@ final class AudioRecorder {
         #endif
     }
 
-    private func prepareEngine(bufferSize: AVAudioFrameCount, format: AVAudioFormat) -> Bool {
+    private static func tapFailureMessage(format: AVAudioFormat, input: AVAudioInputNode) -> String {
+        let hardware = input.inputFormat(forBus: 0)
+        return "The microphone runs at \(Int(hardware.sampleRate)) Hz but the recording asked for \(Int(format.sampleRate)) Hz."
+    }
+
+    private func prepareEngine(bufferSize: AVAudioFrameCount, format: AVAudioFormat) throws -> Bool {
         let input = engine.inputNode
 
         if tapInstalled,
@@ -305,8 +347,22 @@ final class AudioRecorder {
 
         removeInputTap()
 
-        input.installTap(onBus: 0, bufferSize: bufferSize, format: format) { [weak self] buffer, _ in
+        // A tap whose format does not match the input hardware raises an Objective-C exception
+        // that ends the app. Report it as an error instead.
+        let tapBlock: AVAudioNodeTapBlock = { [weak self] buffer, _ in
             self?.handleAudioBuffer(buffer)
+        }
+        if #available(macOS 27.0, iOS 27.0, *) {
+            do {
+                try input.__installTap(onBus: 0, bufferSize: bufferSize, format: format, error: (), block: tapBlock)
+            } catch {
+                throw AudioRecorderError.engineStartFailed(Self.tapFailureMessage(format: format, input: input))
+            }
+        } else {
+            guard format.sampleRate == input.inputFormat(forBus: 0).sampleRate else {
+                throw AudioRecorderError.engineStartFailed(Self.tapFailureMessage(format: format, input: input))
+            }
+            input.installTap(onBus: 0, bufferSize: bufferSize, format: format, block: tapBlock)
         }
         tapInstalled = true
         installedBufferSize = bufferSize
@@ -323,7 +379,6 @@ final class AudioRecorder {
     }
 
     private func handleAudioBuffer(_ buffer: AVAudioPCMBuffer) {
-        let copiedArchiveBuffer = Self.copyBuffer(buffer)
         stateLock.lock()
         // Mark HAL as primed regardless of recording state.
         halPrimed = true
@@ -339,9 +394,10 @@ final class AudioRecorder {
         observedFirstBuffer = true
         let sequence = nextCapturedAudioSequence
         nextCapturedAudioSequence += 1
+        let captureEvent = capturedBufferFactory.capture(sequence: sequence, buffer: buffer)
 
-        if let copiedArchiveBuffer {
-            let captured = CapturedAudioBuffer(sequence: sequence, buffer: copiedArchiveBuffer)
+        switch captureEvent {
+        case .captured(let captured):
             if writer == nil {
                 if pendingArchiveBufferedFrames + captured.frameLength <= pendingArchiveFrameCapacity {
                     pendingBuffers.append(captured)
@@ -357,6 +413,16 @@ final class AudioRecorder {
             } else {
                 enqueueArchiveWrite(captured, for: activeURL)
             }
+        case .failure(let failure):
+            if captureFailure == nil {
+                captureFailure = failure
+                NSLog("AudioRecorder capture failed: \(failure.localizedDescription)")
+            }
+            applyCaptureFailureLocked()
+            // A stop can begin as soon as this lock is released. Publish the
+            // terminal failure first so AppState cannot snapshot a healthy
+            // live path and accept an incomplete transcript.
+            streamHandler?(captureEvent)
         }
         stateLock.unlock()
         if isFirstBuffer {
@@ -369,7 +435,9 @@ final class AudioRecorder {
             onFirstBuffer()
         }
 
-        streamHandler?(buffer)
+        if case .captured = captureEvent {
+            streamHandler?(captureEvent)
+        }
     }
 
     private func enqueueArchiveWrite(_ captured: CapturedAudioBuffer, for url: URL) {
@@ -395,6 +463,7 @@ final class AudioRecorder {
         if droppedPendingArchiveBuffers > 0 {
             archiveDiagnostics.archiveFailure = Self.pendingArchiveDropMessage(droppedPendingArchiveBuffers)
         }
+        applyCaptureFailureLocked()
         let status = archiveStatus
         stateLock.unlock()
 
@@ -414,6 +483,7 @@ final class AudioRecorder {
         pendingArchiveFrameCapacity = 0
         droppedPendingArchiveBuffers = 0
         nextCapturedAudioSequence = 0
+        captureFailure = nil
         observedFirstBuffer = false
         activeStreamHandler = nil
         activeOnFirstBuffer = nil
@@ -421,17 +491,20 @@ final class AudioRecorder {
     }
 
     func stop() -> URL? {
+        stopWithResult().audioURL
+    }
+
+    func stopWithResult() -> AudioRecordingStopResult {
         stateLock.lock()
         let url = currentURL
         activeStreamHandler = nil
         activeOnFirstBuffer = nil
         stateLock.unlock()
 
-        #if !os(iOS)
-        if engine.isRunning {
-            engine.stop()
-        }
-        removeInputTap()
+        #if os(macOS)
+        // Returns after the last captured buffer reaches handleAudioBuffer, so the archive gets it.
+        inputCapture?.stop()
+        inputCapture = nil
         #endif
 
         if let url {
@@ -441,16 +514,24 @@ final class AudioRecorder {
         }
 
         stateLock.lock()
+        let result = AudioRecordingStopResult(
+            audioURL: url,
+            archiveStatus: archiveStatus,
+            diagnostics: archiveDiagnostics
+        )
         archiveWriter = nil
+        archiveStatus = .unavailable
+        archiveDiagnostics = AudioCaptureDiagnostics()
         currentURL = nil
         pendingBuffers.removeAll()
         pendingArchiveBufferedFrames = 0
         pendingArchiveFrameCapacity = 0
         droppedPendingArchiveBuffers = 0
         nextCapturedAudioSequence = 0
+        captureFailure = nil
         observedFirstBuffer = false
         stateLock.unlock()
-        return url
+        return result
     }
 
     private func finishArchiveWriter(for url: URL) {
@@ -479,6 +560,11 @@ final class AudioRecorder {
     func releaseWarmResources() {
         clearActiveRecordingState()
 
+        #if os(macOS)
+        inputCapture?.stop()
+        inputCapture = nil
+        #endif
+
         if engine.isRunning {
             engine.stop()
         }
@@ -506,28 +592,13 @@ final class AudioRecorder {
         "Dropped \(droppedBuffers) early archive buffers after buffering \(pendingArchiveBufferDuration)s while the file writer opened."
     }
 
-    private static func copyBuffer(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
-        guard let copiedBuffer = AVAudioPCMBuffer(pcmFormat: buffer.format, frameCapacity: buffer.frameLength) else {
-            return nil
-        }
-        copiedBuffer.frameLength = buffer.frameLength
-
-        let sourceBuffers = UnsafeMutableAudioBufferListPointer(
-            UnsafeMutablePointer(mutating: buffer.audioBufferList)
-        )
-        let destinationBuffers = UnsafeMutableAudioBufferListPointer(copiedBuffer.mutableAudioBufferList)
-
-        for index in 0..<min(sourceBuffers.count, destinationBuffers.count) {
-            guard let sourceData = sourceBuffers[index].mData,
-                  let destinationData = destinationBuffers[index].mData else {
-                continue
-            }
-            let byteCount = Int(sourceBuffers[index].mDataByteSize)
-            memcpy(destinationData, sourceData, byteCount)
-            destinationBuffers[index].mDataByteSize = sourceBuffers[index].mDataByteSize
-        }
-
-        return copiedBuffer
+    /// Must be called while `stateLock` is held.
+    private func applyCaptureFailureLocked() {
+        guard let captureFailure else { return }
+        let message = captureFailure.localizedDescription
+        archiveStatus = .failed(message)
+        archiveDiagnostics.archiveFailure = message
+        archiveDiagnostics.realtimeFailure = message
     }
 
     #if os(iOS)

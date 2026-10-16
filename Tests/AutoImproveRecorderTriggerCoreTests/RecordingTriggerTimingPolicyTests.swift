@@ -1,5 +1,5 @@
 import XCTest
-@testable import AutoImproveRecorderTriggerCore
+@testable import AutoImproveRecorderCore
 
 final class RecordingTriggerTimingPolicyTests: XCTestCase {
     func testDefaultThresholdsMatchPlan() {

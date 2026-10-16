@@ -39,10 +39,14 @@ enum OpenAIRealtimeTranscriptionError: LocalizedError {
 final class OpenAIRealtimeTranscriber {
     private let connection: OpenAIRealtimeTranscriptionConnection
     private let chunker = RealtimePCMChunker()
-    private let audioLock = NSLock()
+    private let admissionLock = NSLock()
+    private let audioQueue = DispatchQueue(
+        label: "com.fieldtheory.air.openai-realtime-audio",
+        qos: .userInitiated
+    )
     private var acceptingAudio = true
+    private var captureFailure: AudioCaptureFailure?
     private var appendChain: Task<Void, Never> = Task {}
-    private var nextCapturedAudioSequence: UInt64 = 0
     private var captureDiagnosticLines: [String] = []
 
     init(apiKey: String, dictionarySnapshot: String = "") {
@@ -63,42 +67,56 @@ final class OpenAIRealtimeTranscriber {
         try await connection.start()
     }
 
-    func appendAudioBuffer(_ buffer: AVAudioPCMBuffer) {
-        audioLock.lock()
-        defer { audioLock.unlock() }
-
-        guard acceptingAudio else { return }
-
-        do {
-            let sequence = nextCapturedAudioSequence
-            nextCapturedAudioSequence += 1
-            let captured = CapturedAudioBuffer(sequence: sequence, buffer: buffer)
-            enqueueChunksLocked(try chunker.append(captured))
-        } catch {
-            Task {
-                await connection.recordFailure(error)
-            }
+    func appendAudioBuffer(_ captured: CapturedAudioBuffer) {
+        admissionLock.lock()
+        guard acceptingAudio else {
+            admissionLock.unlock()
+            return
         }
+        audioQueue.async { [weak self] in
+            self?.appendCapturedOnQueue(captured)
+        }
+        admissionLock.unlock()
     }
 
     func appendRealtimeAudioChunk(_ chunk: RealtimeAudioChunk) {
-        audioLock.lock()
-        defer { audioLock.unlock() }
+        admissionLock.lock()
+        guard acceptingAudio else {
+            admissionLock.unlock()
+            return
+        }
+        audioQueue.async { [weak self] in
+            self?.enqueueChunksOnQueue([chunk])
+        }
+        admissionLock.unlock()
+    }
 
-        guard acceptingAudio else { return }
-        enqueueChunksLocked([chunk])
+    func recordCaptureFailure(_ failure: AudioCaptureFailure) {
+        admissionLock.lock()
+        acceptingAudio = false
+        if captureFailure == nil {
+            captureFailure = failure
+        }
+        admissionLock.unlock()
+        audioQueue.async { [weak self] in
+            self?.captureDiagnosticLines.append(failure.localizedDescription)
+        }
     }
 
     func recordCaptureDiagnostics(_ lines: [String]) {
         guard !lines.isEmpty else { return }
-        audioLock.lock()
-        captureDiagnosticLines.append(contentsOf: lines)
-        audioLock.unlock()
+        audioQueue.async { [weak self] in
+            self?.captureDiagnosticLines.append(contentsOf: lines)
+        }
     }
 
     func finish() async throws -> TranscriptionResult {
-        let pendingAppends = stopAcceptingAudio()
+        let (pendingAppends, captureFailure) = stopAcceptingAudio()
         await pendingAppends.value
+        if let captureFailure {
+            await connection.cancel()
+            throw captureFailure
+        }
         return try await connection.finish()
     }
 
@@ -116,16 +134,29 @@ final class OpenAIRealtimeTranscriber {
         return OpenAIRealtimeDiagnostics(summary: connectionDiagnostics.summary, details: details)
     }
 
-    private func stopAcceptingAudio() -> Task<Void, Never> {
-        audioLock.lock()
+    private func stopAcceptingAudio() -> (Task<Void, Never>, AudioCaptureFailure?) {
+        admissionLock.lock()
         acceptingAudio = false
-        enqueueChunksLocked(chunker.finish())
-        let pendingAppends = appendChain
-        audioLock.unlock()
-        return pendingAppends
+        let pendingAppends = audioQueue.sync {
+            enqueueChunksOnQueue(chunker.finish())
+            return appendChain
+        }
+        let captureFailure = captureFailure
+        admissionLock.unlock()
+        return (pendingAppends, captureFailure)
     }
 
-    private func enqueueChunksLocked(_ chunks: [RealtimeAudioChunk]) {
+    private func appendCapturedOnQueue(_ captured: CapturedAudioBuffer) {
+        do {
+            enqueueChunksOnQueue(try chunker.append(captured))
+        } catch {
+            Task {
+                await connection.recordFailure(error)
+            }
+        }
+    }
+
+    private func enqueueChunksOnQueue(_ chunks: [RealtimeAudioChunk]) {
         guard !chunks.isEmpty else { return }
         let previousAppend = appendChain
         let connection = connection
@@ -138,10 +169,9 @@ final class OpenAIRealtimeTranscriber {
     }
 
     private func realtimeAudioDiagnosticDetails() -> String {
-        audioLock.lock()
-        let diagnostics = chunker.diagnostics
-        let captureDiagnosticLines = captureDiagnosticLines
-        audioLock.unlock()
+        let (diagnostics, captureDiagnosticLines) = audioQueue.sync {
+            (chunker.diagnostics, self.captureDiagnosticLines)
+        }
 
         var lines: [String] = []
         lines.append("Realtime audio chunk size: \(diagnostics.chunkByteCount) bytes")

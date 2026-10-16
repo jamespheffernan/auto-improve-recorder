@@ -15,8 +15,9 @@ Native macOS menu bar app for:
 - Optional preview window with explicit cleaned/raw transcript switch, copy, paste, and re-run improve from the menu bar.
 - Settings window for OpenAI, Gemini, and Anthropic API keys, transcription mode, improvement provider, auto-improve mode, word threshold, cleanup level, completion clipboard behavior, microphone preference, and Parakeet runtime paths.
 - Transcription modes:
-  - `Local Whisper`: local Field Theory `whisper-server` with `ggml-small.en.bin` and low-latency decoding flags.
-  - `Local Parakeet`: local Field Theory Parakeet server mode only.
+  - `Phonon-2 (Default)`: resident English transcription on this Mac, shared by ASR and AIR.
+  - `Local Whisper`: legacy local `whisper-server` with `ggml-small.en.bin` and low-latency decoding flags.
+  - `Local Parakeet`: legacy local Python Parakeet server mode only (AIR compatibility).
   - `Apple Speech`: Apple on-device speech transcription where supported.
   - `OpenAI API`: OpenAI file transcription after recording.
   - `Fastest`: OpenAI Realtime streaming transcription while recording, with Parakeet fallback from the saved WAV.
@@ -28,9 +29,49 @@ Native macOS menu bar app for:
   - `Ollama local`: local Ollama cleanup using model `qwen3:4b-instruct`.
     `qwen3.5:0.8b-mlx` or `qwen3.5:0.8b` can be typed into the model field as
     faster experimental modes, but they are less conservative than the default.
-- Local Parakeet adapter backed by Field Theory's persistent `parakeet-transcribe.py --server` mode.
+- Local live transcription contract with the measured parakeet.cpp C-API and Nemotron model as the current provider.
 - OpenAI Realtime transcription adapter using native `URLSessionWebSocketTask`, PCM16 mono 24 kHz audio chunks, and `gpt-4o-transcribe`.
 - Shared Apple local adapter using `SpeechAnalyzer`/`SpeechTranscriber` for transcription and Foundation Models for cleanup.
+
+## Auto Send Recorder
+
+The `AutoSendRecorder` target builds the separate **Auto Send Recorder** menu bar app with identity `com.turfterrace.autosendrecorder`. See [runtime wiring](Docs/PARAKEET_DISCOVERY.md) and [current verification status](Docs/AUTO_SEND_RECORDER_INSTALLED_VERIFICATION.md). The new identity starts a new preferences domain; existing settings and privacy grants do not migrate automatically. On first launch, its three-step setup guide:
+
+1. checks the selected local transcription runtime;
+2. explains and requests Microphone and Accessibility access; and
+3. provides a local practice field for the first dictation.
+
+The guide is skippable and can be reopened from **Setup Guide…** in the menu bar. Bluetooth stays off until the user enables **Wireless recorder** in the guide or Settings.
+
+Open **Settings…** to change the global **Record and send** and **Cancel** shortcuts. Both require Control, Option, or Command, cannot be identical, and persist across launches. Existing installs keep `Hyper-R` and `Hyper-Escape` until changed.
+
+ASR Settings offers **Phonon-2 · Neural Engine (Default)** and **Parakeet**. Version 1.3 replaces the MLX/Python Phonon-2 backend with FluidAudio 0.17.5 and the Core ML conversion of the same checkpoint. Phonon-2 requires Apple silicon and macOS 15 or newer. A recording keeps the model selected when it starts. Phonon-2 transcribes the saved recording after stop; Parakeet retains its existing live and wireless paths.
+
+The 1.1 website release includes the universal Parakeet speech engine. Its **Install speech models** action downloads and SHA-256 verifies three models (1.75 GB). Setup needs 4 GB of free space. That installer does not install Phonon-2. Its runtime lives at `~/Library/Application Support/AutoSendRecorder/Runtime/20260918`; the shared AIR Parakeet runtime remains a fallback. Source builds need the `SpeechRuntime` resource supplied by `Tools/AutoSendRelease/build-runtime.sh` and `package-archive.sh` to offer Parakeet installation.
+
+### Phonon-2 Neural Engine runtime (1.3)
+
+The portable ASR build includes the native Swift worker and verified Core ML models in `Contents/Resources/PhononCoreML`. It needs no Python installation, external drive, or model download. Each app starts a private worker, warms the models, and reuses them between recordings. The encoder, decoder, and joint use Core ML's CPU/Neural Engine configuration; the preprocessor runs on CPU. First launch compiles the model for the Neural Engine, which can take several minutes. Later launches use Apple's cache. Cancellation, engine failure, and incomplete or empty responses preserve the recording and prevent delivery.
+
+Source builds use `Tools/PhononCoreML/Package.swift` to build `phonon-coreml`, `download-model.py` to download and hash-check the pinned checkpoint, and `bundle.py` to add the worker and models to an archive before signing and notarization. Keep scratch builds, caches, and downloaded models on external agent storage. The worker only calls `AsrModels.loadLocal`; it never downloads models during startup or recording.
+
+Model: [FluidInference/phonon-2-coreml](https://huggingface.co/FluidInference/phonon-2-coreml), revision `a812a0dfef205660787ef6234317ab79acf4d5d6`. Runtime: [FluidAudio 0.17.5](https://github.com/FluidInference/FluidAudio/releases/tag/v0.17.5), pinned in `Tools/PhononCoreML/Package.resolved`. The model is English-only and retains its CC-BY-4.0 attribution. See `Tools/PhononCoreML/THIRD-PARTY-NOTICES.txt` and the bundled licenses.
+
+### Previous MLX Phonon-2 runtime (1.2)
+
+On Apple silicon, install the pinned runtime once for both apps. Run this from the repository with `uv` and Python 3.12 available:
+
+```bash
+python3 Tools/PhononRuntime/install.py "/Volumes/4TB Private/Offloaded/Agent Work/Phonon2-0.2.3"
+```
+
+The installer keeps dependencies, caches, and models on the external volume. It verifies the upstream model archive and every extracted file, runs a load/decode check, and links the completed runtime at `~/Library/Application Support/AutoImproveRecorder/Phonon2`. Keep that volume mounted while using this model. The app does not download models during recording.
+
+The previous 1.2 build uses a private MLX/Python worker. Its tooling remains under `Tools/PhononRuntime` for reproducing that release. Existing AIR model preferences remain saved; new preferences default to Phonon-2. Select Phonon-2 in AIR Settings to change an existing installation.
+
+[Phonon-2](https://huggingface.co/FermionResearch/Phonon-2) is English-only. The weights use CC-BY-4.0 and derive from NVIDIA Parakeet TDT 0.6B v3. See [third-party notices](Tools/PhononRuntime/THIRD-PARTY-NOTICES.txt).
+
+For a portable Apple-silicon build, `Tools/PhononRuntime/bundle.py` copies a verified model, its dependencies, and an Astral standalone Python 3.12 distribution into an archived app. It checks runtime links and library dependencies, signs each native binary, then signs the app. Run it before Developer ID notarization. The app prefers this bundled runtime and keeps writable caches outside the signed bundle. A complete portable build needs no external drive, Homebrew, Python installation, or model download on the receiving Mac.
 
 ## Build
 
@@ -67,11 +108,13 @@ The iOS target is configured for iOS 17.0+. It starts with a touch-first record/
 
 1. Launch the app from Xcode or from the built `.app`.
 2. Open Settings from the menu bar item.
-3. Add an OpenAI API key. It is stored in Keychain under service `com.fieldtheory.autoimproverecorder`.
+3. Add an OpenAI API key. AIR stores it in its existing Keychain service, defined in `AutoImproveRecorder/Support/KeychainStore.swift`. ASR does not use this credential store.
 4. Choose a transcription mode:
-   - `Local Whisper` is the default and keeps audio transcription local.
+   - New installs select `Phonon-2 (Default)`. Install its runtime as described above. Existing explicit model choices remain saved.
+   - `Local Whisper` is an explicit compatibility mode and keeps audio transcription local.
    - `Parakeet.cpp Fast` keeps audio transcription local through AIR's 110M Parakeet.cpp runtime.
-   - `Parakeet.cpp Recommended` keeps audio transcription local through AIR's 0.6B Parakeet.cpp runtime.
+   - `Parakeet Live` keeps Nemotron 0.6B resident and transcribes during recording when the runtime, fallback, and memory gates pass.
+   - `Parakeet.cpp Recommended` remains the explicit one-shot local mode and the saved-WAV fallback for live failures.
    - `Apple Speech` keeps audio transcription local through Apple's Speech framework when supported on this Mac.
    - `OpenAI API` sends the saved recording to OpenAI after recording.
    - `Fastest` streams microphone audio to OpenAI while recording, then finalizes the streaming transcript on stop. If OpenAI streaming cannot start, fails mid-recording, or no API key is saved, the app falls back to Parakeet.cpp Recommended using the temporary WAV.
@@ -108,7 +151,7 @@ The iOS target is configured for iOS 17.0+. It starts with a touch-first record/
 
 ## Transcription behavior
 
-`Parakeet.cpp Fast` and `Parakeet.cpp Recommended` keep transcription local. The app runs AIR's installed `parakeet-cli` against model files under `~/Library/Application Support/AutoImproveRecorder/ParakeetCpp`:
+`Parakeet Live`, `Parakeet.cpp Fast`, and `Parakeet.cpp Recommended` keep transcription local. Live mode uses the resident C API and Nemotron streaming model. The one-shot modes run AIR's installed `parakeet-cli` against model files under `~/Library/Application Support/AutoImproveRecorder/ParakeetCpp`:
 
 ```bash
 "~/Library/Application Support/AutoImproveRecorder/ParakeetCpp/bin/parakeet-cli" \
@@ -139,4 +182,4 @@ See [Docs/MANUAL_TEST_CHECKLIST.md](Docs/MANUAL_TEST_CHECKLIST.md).
 
 ## Discovery notes
 
-See [Docs/PARAKEET_DISCOVERY.md](Docs/PARAKEET_DISCOVERY.md) for exact Field Theory and Parakeet paths found on this Mac.
+See [Docs/PARAKEET_DISCOVERY.md](Docs/PARAKEET_DISCOVERY.md) for current ASR runtime wiring and a separate link to historical discovery evidence. AIR/iOS sections above describe those targets, not ASR requirements.
