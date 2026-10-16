@@ -72,6 +72,9 @@ final class AudioRecorder {
     private var installedFormat: AVAudioFormat?
     private var activeStreamHandler: AudioBufferHandler?
     private var activeOnFirstBuffer: (() -> Void)?
+    #if os(macOS)
+    private var inputCapture: HALInputCapture?
+    #endif
     #if os(iOS)
     private var audioSessionConfigured = false
     private var audioSessionActive = false
@@ -130,19 +133,23 @@ final class AudioRecorder {
         #endif
         let tSession = Date()
 
-        let input = engine.inputNode
         #if os(macOS)
-        try setInputDeviceIfNeeded(microphone, input: input)
-        #endif
+        let capture = try openInputCapture(microphone, bufferSize: bufferSize)
         let tDevice = Date()
-
+        let format = capture.format
+        #else
+        let input = engine.inputNode
+        let tDevice = Date()
         let format = input.outputFormat(forBus: 0)
+        #endif
         guard format.sampleRate > 0, format.channelCount > 0 else {
             throw AudioRecorderError.inputUnavailable
         }
         let tFormat = Date()
 
+        #if !os(macOS)
         let shouldStartEngine = try prepareEngine(bufferSize: bufferSize, format: format)
+        #endif
         let tPrepEng = Date()
 
         stateLock.lock()
@@ -199,11 +206,17 @@ final class AudioRecorder {
         }
 
         do {
+            #if os(macOS)
+            let tPrepare = Date()
+            try capture.start()
+            inputCapture = capture
+            #else
             engine.prepare()
             let tPrepare = Date()
             if shouldStartEngine {
                 try engine.start()
             }
+            #endif
             let tEngStart = Date()
             let sessionMS = String(format: "%.2f", tSession.timeIntervalSince(tStart) * 1000)
             let deviceMS = String(format: "%.2f", tDevice.timeIntervalSince(tSession) * 1000)
@@ -217,17 +230,23 @@ final class AudioRecorder {
             )
         } catch {
             clearActiveRecordingState()
+            #if os(macOS)
+            capture.stop()
+            #else
             if engine.isRunning {
                 engine.stop()
             }
             removeInputTap()
+            #endif
             throw AudioRecorderError.engineStartFailed(error.localizedDescription)
         }
         return url
     }
 
     #if os(macOS)
-    private func setInputDeviceIfNeeded(_ microphone: AudioInputDevice?, input: AVAudioInputNode) throws {
+    /// Opens the microphone's own capture unit. It never opens the system default input, unless
+    /// that is the microphone.
+    private func openInputCapture(_ microphone: AudioInputDevice?, bufferSize: AVAudioFrameCount) throws -> HALInputCapture {
         let deviceID: AudioObjectID
         let deviceName: String
         let selectedDeviceID: String
@@ -251,29 +270,27 @@ final class AudioRecorder {
             selectedDeviceID = ""
         }
 
-        if engine.isRunning {
-            engine.stop()
-        }
-        removeInputTap()
+        inputCapture?.stop()
+        inputCapture = nil
 
         let startedAt = Date()
+        let capture: HALInputCapture
         do {
-            try input.auAudioUnit.setDeviceID(deviceID)
+            capture = try HALInputCapture(deviceID: deviceID, chunkFrames: bufferSize) { [weak self] buffer in
+                self?.handleAudioBuffer(buffer)
+            }
         } catch {
             throw AudioRecorderError.inputDeviceUnavailable(
                 deviceName,
                 error.localizedDescription
             )
         }
-        // The input node keeps the previous device's output format until the engine resets. A
-        // tap in that stale format does not match the new hardware: on an AirPods default input
-        // it reads 24 kHz while a USB microphone runs at 48 kHz.
-        engine.reset()
 
         let elapsedMS = Date().timeIntervalSince(startedAt) * 1000
         microphoneDeviceLogger.info(
             "Selected microphone id=\(selectedDeviceID, privacy: .public) name=\(deviceName, privacy: .public) coreAudioDeviceID=\(deviceID, privacy: .public) setDevice=\(String(format: "%.2f", elapsedMS), privacy: .public)ms"
         )
+        return capture
     }
     #endif
 
@@ -484,11 +501,10 @@ final class AudioRecorder {
         activeOnFirstBuffer = nil
         stateLock.unlock()
 
-        #if !os(iOS)
-        if engine.isRunning {
-            engine.stop()
-        }
-        removeInputTap()
+        #if os(macOS)
+        // Returns after the last captured buffer reaches handleAudioBuffer, so the archive gets it.
+        inputCapture?.stop()
+        inputCapture = nil
         #endif
 
         if let url {
@@ -543,6 +559,11 @@ final class AudioRecorder {
 
     func releaseWarmResources() {
         clearActiveRecordingState()
+
+        #if os(macOS)
+        inputCapture?.stop()
+        inputCapture = nil
+        #endif
 
         if engine.isRunning {
             engine.stop()

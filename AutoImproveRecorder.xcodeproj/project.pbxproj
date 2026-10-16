@@ -12,6 +12,8 @@
 		AIR0000000000000000000012 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR0000000000000000000003 /* AppState.swift */; };
 		AIR0000000000000000000013 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR0000000000000000000004 /* Models.swift */; };
 		AIR0000000000000000000014 /* AudioRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR0000000000000000000005 /* AudioRecorder.swift */; };
+		AIRHAL000000000000000002 /* HALInputCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRHAL000000000000000001 /* HALInputCapture.swift */; };
+		AIRHAL000000000000000003 /* HALInputCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIRHAL000000000000000001 /* HALInputCapture.swift */; };
 		AIR0000000000000000000015 /* TranscriptionEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR0000000000000000000006 /* TranscriptionEngine.swift */; };
 		AIR0000000000000000000016 /* ParakeetTranscriber.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR0000000000000000000007 /* ParakeetTranscriber.swift */; };
 		AIR0000000000000000000017 /* ImproveEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIR0000000000000000000008 /* ImproveEngine.swift */; };
@@ -158,6 +160,7 @@
 		AIR0000000000000000000003 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
 		AIR0000000000000000000004 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		AIR0000000000000000000005 /* AudioRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioRecorder.swift; sourceTree = "<group>"; };
+		AIRHAL000000000000000001 /* HALInputCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HALInputCapture.swift; sourceTree = "<group>"; };
 		AIR0000000000000000000006 /* TranscriptionEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptionEngine.swift; sourceTree = "<group>"; };
 		AIR0000000000000000000007 /* ParakeetTranscriber.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ParakeetTranscriber.swift; sourceTree = "<group>"; };
 		AIR0000000000000000000008 /* ImproveEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImproveEngine.swift; sourceTree = "<group>"; };
@@ -332,6 +335,7 @@
 			isa = PBXGroup;
 			children = (
 				AIR0000000000000000000005 /* AudioRecorder.swift */,
+				AIRHAL000000000000000001 /* HALInputCapture.swift */,
 				AIRRECCLIENT000000000000 /* RecordingClient.swift */,
 				AIRAUD000000000000000000 /* AudioPipelineTypes.swift */,
 				AIRAUD000000000000000002 /* RealtimePCMChunker.swift */,
@@ -606,6 +610,7 @@
 				AIRTS0000000000000000001 /* TranscriptionService.swift in Sources */,
 				AIRIS0000000000000000001 /* ImprovementService.swift in Sources */,
 				AIR0000000000000000000014 /* AudioRecorder.swift in Sources */,
+				AIRHAL000000000000000002 /* HALInputCapture.swift in Sources */,
 				AIRRECCLIENT000000000001 /* RecordingClient.swift in Sources */,
 				AIRAUD000000000000000001 /* AudioPipelineTypes.swift in Sources */,
 				AIRAUD000000000000000003 /* RealtimePCMChunker.swift in Sources */,
@@ -719,6 +724,7 @@
 				ASR0000000000000000000019 /* AutoSendSettingsView.swift in Sources */,
 				ASR000000000000000000001A /* AutoSendState.swift in Sources */,
 				ASR000000000000000000001B /* AudioRecorder.swift in Sources */,
+				AIRHAL000000000000000003 /* HALInputCapture.swift in Sources */,
 				ASR000000000000000000001C /* AudioPipelineTypes.swift in Sources */,
 				ASR000000000000000000001D /* ArchiveAudioWriter.swift in Sources */,
 				ASR000000000000000000001E /* ParakeetCAPI.swift in Sources */,

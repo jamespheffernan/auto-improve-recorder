@@ -6,10 +6,10 @@
 	<string>Auto Send Recorder</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
-	<key>CFBundleIdentifier</key>
-	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>CFBundleIconFile</key>
 	<string>AppIcon</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
@@ -19,15 +19,15 @@
 	<key>CFBundleShortVersionString</key>
 	<string>1.3</string>
 	<key>CFBundleVersion</key>
-	<string>5</string>
+	<string>6</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>13.0</string>
 	<key>LSUIElement</key>
 	<true/>
-	<key>NSMicrophoneUsageDescription</key>
-	<string>Auto Send Recorder needs microphone access to transcribe your speech.</string>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>Auto Send Recorder uses Bluetooth to receive audio from the wireless recorder.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Auto Send Recorder needs microphone access to transcribe your speech.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 </dict>
