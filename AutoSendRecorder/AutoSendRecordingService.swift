@@ -591,12 +591,6 @@ final class AutoSendRecordingService: AutoSendCaptureService, @unchecked Sendabl
         let recovery = microphoneRecovery
         stateLock.unlock()
         let preferences = MicrophonePreferences.fromPreferredMicrophoneID(preferredID)
-        if let automaticRoute = automaticBoyaRoute(
-            devices: devices,
-            preferredMicrophoneID: preferredID
-        ) {
-            return automaticRoute
-        }
         let orderedDevices = devicesWithAnkerFallbackPriority(
             devices,
             preferredMicrophoneID: preferredID
@@ -605,42 +599,6 @@ final class AutoSendRecordingService: AutoSendCaptureService, @unchecked Sendabl
             preferences: preferences,
             devices: orderedDevices,
             now: Date()
-        )
-    }
-
-    private func automaticBoyaRoute(
-        devices: [MicrophoneDevice],
-        preferredMicrophoneID: String
-    ) -> MicrophoneResolution? {
-        guard let preferred = devices.first(where: { $0.id == preferredMicrophoneID }),
-              preferred.name.compare(
-                  AutoSendMicrophoneSelection.boyaMicrophoneName,
-                  options: .caseInsensitive
-              ) == .orderedSame else {
-            return nil
-        }
-
-        let concreteDefault = devices.first {
-            !$0.isSystemDefaultPlaceholder &&
-                $0.isSystemDefault &&
-                $0.isConnected &&
-                $0.isInputCapable
-        }
-        let anker = devices.first {
-            $0.name.compare(
-                AutoSendMicrophoneSelection.ankerMicrophoneName,
-                options: .caseInsensitive
-            ) == .orderedSame &&
-                $0.isConnected &&
-                $0.isInputCapable
-        }
-        guard let route = concreteDefault ?? anker else { return nil }
-        let isPreferred = route.id == preferredMicrophoneID
-        return MicrophoneResolution(
-            requestedID: preferredMicrophoneID,
-            device: route,
-            usedFallback: !isPreferred,
-            reason: isPreferred ? .preferredAvailable : .preferredQuarantined
         )
     }
 
