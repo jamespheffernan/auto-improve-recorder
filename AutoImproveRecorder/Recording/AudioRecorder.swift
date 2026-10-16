@@ -142,7 +142,7 @@ final class AudioRecorder {
         }
         let tFormat = Date()
 
-        let shouldStartEngine = prepareEngine(bufferSize: bufferSize, format: format)
+        let shouldStartEngine = try prepareEngine(bufferSize: bufferSize, format: format)
         let tPrepEng = Date()
 
         stateLock.lock()
@@ -265,6 +265,10 @@ final class AudioRecorder {
                 error.localizedDescription
             )
         }
+        // The input node keeps the previous device's output format until the engine resets. A
+        // tap in that stale format does not match the new hardware: on an AirPods default input
+        // it reads 24 kHz while a USB microphone runs at 48 kHz.
+        engine.reset()
 
         let elapsedMS = Date().timeIntervalSince(startedAt) * 1000
         microphoneDeviceLogger.info(
@@ -283,7 +287,7 @@ final class AudioRecorder {
             let format = input.outputFormat(forBus: 0)
             guard format.sampleRate > 0, format.channelCount > 0 else { return }
 
-            let shouldStartEngine = prepareEngine(bufferSize: Self.fastStartBufferSize, format: format)
+            let shouldStartEngine = try prepareEngine(bufferSize: Self.fastStartBufferSize, format: format)
             engine.prepare()
 
             if shouldStartEngine {
@@ -306,7 +310,12 @@ final class AudioRecorder {
         #endif
     }
 
-    private func prepareEngine(bufferSize: AVAudioFrameCount, format: AVAudioFormat) -> Bool {
+    private static func tapFailureMessage(format: AVAudioFormat, input: AVAudioInputNode) -> String {
+        let hardware = input.inputFormat(forBus: 0)
+        return "The microphone runs at \(Int(hardware.sampleRate)) Hz but the recording asked for \(Int(format.sampleRate)) Hz."
+    }
+
+    private func prepareEngine(bufferSize: AVAudioFrameCount, format: AVAudioFormat) throws -> Bool {
         let input = engine.inputNode
 
         if tapInstalled,
@@ -321,8 +330,22 @@ final class AudioRecorder {
 
         removeInputTap()
 
-        input.installTap(onBus: 0, bufferSize: bufferSize, format: format) { [weak self] buffer, _ in
+        // A tap whose format does not match the input hardware raises an Objective-C exception
+        // that ends the app. Report it as an error instead.
+        let tapBlock: AVAudioNodeTapBlock = { [weak self] buffer, _ in
             self?.handleAudioBuffer(buffer)
+        }
+        if #available(macOS 27.0, iOS 27.0, *) {
+            do {
+                try input.__installTap(onBus: 0, bufferSize: bufferSize, format: format, error: (), block: tapBlock)
+            } catch {
+                throw AudioRecorderError.engineStartFailed(Self.tapFailureMessage(format: format, input: input))
+            }
+        } else {
+            guard format.sampleRate == input.inputFormat(forBus: 0).sampleRate else {
+                throw AudioRecorderError.engineStartFailed(Self.tapFailureMessage(format: format, input: input))
+            }
+            input.installTap(onBus: 0, bufferSize: bufferSize, format: format, block: tapBlock)
         }
         tapInstalled = true
         installedBufferSize = bufferSize
